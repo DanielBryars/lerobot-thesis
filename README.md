@@ -24,8 +24,10 @@ lerobot-thesis/
 │   ├── vr_openxr_viewer.py # VR renderer with full controls
 │   ├── record_sim_vr_pickplace.py  # Record pick-and-place demos
 │   └── upload_dataset.py   # Upload datasets to HuggingFace
-└── src/
-    └── lerobot_robot_sim/  # LeRobot plugin for simulation
+├── src/
+│   └── lerobot_robot_sim/  # LeRobot plugin for simulation
+└── vendor/
+    └── scservo_sdk/        # Feetech servo SDK (for motor control)
 ```
 
 ## Prerequisites
@@ -51,8 +53,7 @@ lerobot-thesis/
 
 3. **Install dependencies**:
    ```bash
-   pip install mujoco numpy pyopenxr glfw PyOpenGL pyttsx3
-   pip install lerobot  # For dataset recording
+   pip install -r requirements.txt
    ```
 
 4. **Install the simulation plugin**:

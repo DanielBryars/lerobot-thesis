@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scservo_sdk"
+version = "1.0.0"
+description = "Feetech SCServo SDK for Python"
+requires-python = ">=3.8"
+dependencies = ["pyserial>=3.5"]
+
+[tool.setuptools]
+packages = ["scservo_sdk"]

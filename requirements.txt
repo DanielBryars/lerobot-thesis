@@ -1,0 +1,21 @@
+# Core simulation
+mujoco>=3.0.0
+numpy>=1.24.0
+
+# VR support (Windows only)
+pyopenxr>=1.0.0
+glfw>=2.6.0
+PyOpenGL>=3.1.0
+
+# Text-to-speech (optional, for audio prompts)
+pyttsx3>=2.90
+
+# LeRobot (robot learning framework)
+lerobot>=0.4.0
+
+# Feetech servo SDK (for physical arm control)
+# Included in vendor/ directory
+-e vendor/scservo_sdk
+
+# Dataset upload
+huggingface-hub>=0.20.0
