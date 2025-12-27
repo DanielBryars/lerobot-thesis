@@ -1,0 +1,10 @@
+{
+  "leader": {
+    "port": "COM8",
+    "id": "leader_so100"
+  },
+  "follower": {
+    "port": "COM7",
+    "id": "follower_so100"
+  }
+}

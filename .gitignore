@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+MUJOCO_LOG.TXT
+datasets/
+wandb/
+.vr_stereo_settings.json
+.wrist_camera_settings.json
