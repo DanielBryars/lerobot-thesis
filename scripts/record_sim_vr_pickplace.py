@@ -474,9 +474,11 @@ def main():
                 import subprocess
                 import sys
                 upload_script = Path(__file__).parent / "upload_dataset.py"
+                # Dataset is stored at root_dir / repo_id (LeRobot convention)
+                # Use absolute path so it works regardless of cwd
+                dataset_path = (root_dir / repo_id).resolve()
                 result = subprocess.run(
-                    [sys.executable, str(upload_script), str(root_dir), repo_id],
-                    cwd=Path(__file__).parent
+                    [sys.executable, str(upload_script), str(dataset_path), repo_id],
                 )
                 if result.returncode == 0:
                     speak("Upload complete")
@@ -486,7 +488,7 @@ def main():
                 speak("Upload failed")
                 print(f"❌ Upload failed: {e}")
                 print(f"Upload manually with:")
-                print(f"  python upload_dataset.py {root_dir} {repo_id}")
+                print(f"  python upload_dataset.py {dataset_path} {repo_id}")
         elif successful_episodes == 0:
             print("\nNo episodes to upload.")
 
