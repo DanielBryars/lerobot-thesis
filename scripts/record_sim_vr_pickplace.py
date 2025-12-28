@@ -7,8 +7,15 @@ Episode automatically ends when task is complete (duplo in bowl).
 
 Saves to LeRobot dataset format v3.0.
 
+This version runs the simulation continuously (never freezes VR view).
+
 Usage:
     python record_sim_vr_pickplace.py --task "Pick up Duplo" --num_episodes 10
+
+Controls:
+    ENTER - Start recording / Save episode and continue
+    D     - Discard current episode
+    Q     - Quit (saves current progress)
 """
 
 import argparse
@@ -16,11 +23,12 @@ import json
 import logging
 import sys
 import time
-import threading
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 import numpy as np
+import msvcrt
 
 # Add src to path for lerobot_robot_sim
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -39,37 +47,43 @@ except ImportError:
 
 
 def speak(text: str):
-    """Speak text aloud and print it."""
+    """Speak text aloud (non-blocking) and print it."""
     print(f"\n🔊 {text}")
     if _tts_available:
         try:
-            # Use subprocess to avoid COM threading conflicts with VR/OpenGL
             import subprocess
-            # Use run() to wait for completion (avoids overlapping speech)
-            subprocess.run(
-                ['powershell', '-Command', f'Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("{text}")'],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=10
-            )
+            import threading
+            # Run TTS in background thread so it doesn't block the main loop
+            def _speak_thread():
+                try:
+                    subprocess.run(
+                        ['powershell', '-Command', f'Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("{text}")'],
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        timeout=10
+                    )
+                except:
+                    pass
+            thread = threading.Thread(target=_speak_thread, daemon=True)
+            thread.start()
         except Exception as e:
-            # Fallback to pyttsx3
-            try:
-                engine = pyttsx3.init()
-                engine.setProperty('rate', 180)
-                engine.say(text)
-                engine.runAndWait()
-                engine.stop()
-            except Exception as e2:
-                print(f"  (TTS failed: {e2})")
+            print(f"  (TTS failed: {e})")
 
 
-# Import the sim plugin (registers so100_sim)
+# Import the sim plugin
 import lerobot_robot_sim
 from lerobot_robot_sim import SO100Sim, SO100SimConfig, MOTOR_NAMES
 
 # Import LeRobot dataset utilities
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features, build_dataset_frame
+
+
+class State(Enum):
+    """Recording state machine states."""
+    SETUP = "setup"              # Initial setup, waiting for headset
+    READY = "ready"              # Between episodes, waiting to start recording
+    RECORDING = "recording"      # Actively recording an episode
+    FINISHED = "finished"        # All done
 
 
 def load_config():
@@ -119,167 +133,20 @@ def create_leader_bus(port: str):
     return bus
 
 
-def record_episode(
-    sim_robot: SO100Sim,
-    leader_bus,
-    dataset: LeRobotDataset,
-    episode_idx: int,
-    task: str,
-    fps: int = 30,
-    max_duration: float = 60.0
-):
-    """Record a single episode until task completion or timeout."""
-    print(f"\n{'='*50}")
-    print(f"Episode {episode_idx + 1}")
-    print(f"{'='*50}")
-
-    speak("Move leader arm to starting position")
-    speak("Press Enter to start recording")
-    input()
-
-    # Start episode buffer
-    dataset.create_episode_buffer()
-
-    frame_time = 1.0 / fps
-    start_time = time.time()
-
-    speak("Recording started")
-    print("(auto-stops when Duplo lands in bowl)")
-    print("Press 'q' to stop, 'd' to discard")
-
-    # For keyboard input
-    stop_flag = threading.Event()
-    discard_flag = threading.Event()
-
-    def check_keyboard():
-        import msvcrt
-        while not stop_flag.is_set():
-            if msvcrt.kbhit():
-                key = msvcrt.getch().decode('utf-8', errors='ignore').lower()
-                if key == 'q':
-                    stop_flag.set()
-                elif key == 'd':
-                    discard_flag.set()
-                    stop_flag.set()
-            time.sleep(0.05)
-
-    kb_thread = threading.Thread(target=check_keyboard, daemon=True)
-    kb_thread.start()
-
-    step = 0
-    task_complete = False
-    task_complete_frames = 0
-    consecutive_errors = 0
-    last_action = None
-
-    while not stop_flag.is_set():
-        loop_start = time.time()
-        elapsed_total = loop_start - start_time
-
-        # Check timeout
-        if elapsed_total > max_duration:
-            speak("Timeout")
-            break
-
-        # Read leader arm (with error recovery)
-        try:
-            positions = leader_bus.sync_read("Present_Position")
-            action = {f"{motor}.pos": positions[motor] for motor in MOTOR_NAMES}
-            last_action = action.copy()
-            consecutive_errors = 0
-        except ConnectionError:
-            consecutive_errors += 1
-            if consecutive_errors == 1:
-                print("\n[!] Leader arm read failed, using last action...")
-            if consecutive_errors > 30:
-                print("\n[!] Too many errors, stopping...")
-                break
-            if last_action:
-                action = last_action
-            else:
-                continue
-
-        # Send to simulation
-        sim_robot.send_action(action)
-
-        # Get observation from simulation
-        observation = sim_robot.get_observation()
-
-        # Build frames using LeRobot utilities
-        obs_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
-        action_frame = build_dataset_frame(dataset.features, action, prefix="action")
-
-        # Add frame to dataset
-        dataset.add_frame({
-            **obs_frame,
-            **action_frame,
-            "task": task,
-        })
-
-        step += 1
-
-        # Check task completion
-        if sim_robot.is_task_complete():
-            task_complete_frames += 1
-            if task_complete_frames >= 10:  # Debounce: 10 frames (~0.3s)
-                task_complete = True
-                speak("Task complete! Duplo is in the bowl!")
-                # Record a few more frames then stop
-                for _ in range(15):  # ~0.5s extra
-                    time.sleep(frame_time)
-                    try:
-                        positions = leader_bus.sync_read("Present_Position")
-                        action = {f"{motor}.pos": positions[motor] for motor in MOTOR_NAMES}
-                    except:
-                        pass
-                    sim_robot.send_action(action)
-                    observation = sim_robot.get_observation()
-                    obs_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
-                    action_frame = build_dataset_frame(dataset.features, action, prefix="action")
-                    dataset.add_frame({**obs_frame, **action_frame, "task": task})
-                    step += 1
-                break
-        else:
-            task_complete_frames = 0
-
-        # Progress update
-        if step % 30 == 0:
-            print(f"  Step {step:4d} | Time: {elapsed_total:5.1f}s", end="\r")
-
-        # Maintain frame rate
-        elapsed = time.time() - loop_start
-        if elapsed < frame_time:
-            time.sleep(frame_time - elapsed)
-
-    stop_flag.set()
-    print()
-
-    # Check if discarded
-    if discard_flag.is_set():
-        speak("Episode discarded")
-        dataset.clear_episode_buffer()
-        return False, False
-
-    print(f"\nRecorded {step} frames ({step/fps:.1f}s)")
-    print(f"Task completed: {'YES' if task_complete else 'NO'}")
-
-    # Ask to save if task incomplete
-    if not task_complete:
-        speak("Task incomplete. Save anyway?")
-        save = input("Save? [y/N]: ").strip().lower()
-        if save != 'y':
-            speak("Episode discarded")
-            dataset.clear_episode_buffer()
-            return False, False
-
-    # Save episode
-    dataset.save_episode()
-    speak("Episode saved")
-    return True, task_complete
+def check_key():
+    """Non-blocking keyboard check. Returns key or None."""
+    if msvcrt.kbhit():
+        key = msvcrt.getch()
+        # Handle special keys (arrows, etc.)
+        if key == b'\xe0':
+            msvcrt.getch()  # Consume the second byte
+            return None
+        return key
+    return None
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Record pick-place demos with VR")
+    parser = argparse.ArgumentParser(description="Record pick-place demos with VR (continuous sim)")
     parser.add_argument("--task", "-t", type=str, default="Pick up the Duplo block and place it in the bowl")
     parser.add_argument("--num_episodes", "-n", type=int, default=10)
     parser.add_argument("--fps", type=int, default=30)
@@ -288,8 +155,8 @@ def main():
     parser.add_argument("--leader_port", type=str, default=None)
     parser.add_argument("--max_duration", type=float, default=60.0, help="Max episode duration in seconds")
     parser.add_argument("--no-upload", action="store_true", help="Don't upload to HuggingFace")
-    parser.add_argument("--pos_range", type=float, default=2.0, help="Position randomization range in cm (default 2)")
-    parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization range in degrees (default 180)")
+    parser.add_argument("--pos_range", type=float, default=2.0, help="Position randomization range in cm")
+    parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization range in degrees")
     parser.add_argument("--no-randomize", action="store_true", help="Disable position/rotation randomization")
 
     args = parser.parse_args()
@@ -306,12 +173,10 @@ def main():
 
     # Generate repo ID with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    repo_id = args.repo_id
-    if repo_id is None:
-        repo_id = f"danbhf/sim_pick_place_{timestamp}"
+    repo_id = args.repo_id or f"danbhf/sim_pick_place_{timestamp}"
     print(f"Dataset: {repo_id}")
 
-    # Use timestamped root directory to avoid conflicts
+    # Use timestamped root directory
     root_dir = Path(args.root) / timestamp
     print(f"Storage: {root_dir}")
 
@@ -337,10 +202,8 @@ def main():
     leader_bus.disable_torque()
     speak("Leader arm connected")
 
-    # Create dataset using LeRobot v3.0 API
+    # Create dataset
     print(f"\nCreating dataset: {repo_id}")
-
-    # Get features from robot
     action_features = hw_to_dataset_features(sim_robot.action_features, "action")
     obs_features = hw_to_dataset_features(sim_robot.observation_features, "observation")
     features = {**action_features, **obs_features}
@@ -357,140 +220,278 @@ def main():
     # Add scene info to metadata
     scene_info = sim_robot.get_scene_info()
     dataset.meta.info["scene"] = scene_info
-    # Save updated info.json
+    # LeRobot stores files at root_dir directly (repo_id is just HF metadata)
     info_path = root_dir / "meta" / "info.json"
+    info_path.parent.mkdir(parents=True, exist_ok=True)
     with open(info_path, "w") as f:
         json.dump(dataset.meta.info, f, indent=4)
-    print("Dataset created (LeRobot v3.0 format)")
-    print(f"Scene: duplo at ({scene_info['objects']['duplo']['position']['x']:.3f}, "
-          f"{scene_info['objects']['duplo']['position']['y']:.3f}, "
-          f"{scene_info['objects']['duplo']['position']['z']:.3f})")
 
-    print("\n" + "="*60)
-    print(f"RECORDING: {args.task}")
+    print("Dataset created (LeRobot v3.0 format)")
+
+    # Print instructions
+    print("\n" + "=" * 60)
+    print("CONTINUOUS VR RECORDING")
+    print("=" * 60)
+    print(f"Task: {args.task}")
     print(f"Episodes: {args.num_episodes}")
     print(f"FPS: {args.fps}")
     if not args.no_randomize:
         print(f"Randomization: ±{args.pos_range}cm position, ±{args.rot_range}° rotation")
-    else:
-        print("Randomization: disabled")
-    print("="*60)
-    print("\nControls during recording:")
-    print("  'q' - Stop recording (keep episode)")
-    print("  'd' - Discard current episode")
+    print("=" * 60)
+    print("\nControls:")
+    print("  ENTER - Start recording / Save episode")
+    print("  D     - Discard current episode")
+    print("  R     - Reset scene (when not recording)")
+    print("  Q     - Quit")
     print("\nTask auto-completes when Duplo lands in bowl!")
-    print("="*60)
+    print("=" * 60)
 
-    # Step 1: Put headset on
-    speak("Put headset on")
-    print("\nPut your VR headset on.")
-    speak("Press ENTER when headset is on to start the simulation")
-    input("Press ENTER when headset is on...")
-
-    # Step 2: Get into position (with rendering so user can see)
-    speak("Position the view and then")
-    print("\nSimulation is running - get into position.")
-    speak("Press Enter when ready to start recording")
-    print("Press ENTER when ready to start recording...")
-
-    import msvcrt
-    ready = False
-    while not ready:
-        # Keep VR rendering
-        sim_robot.render_vr()
-        time.sleep(0.03)  # ~30fps
-        # Check for Enter key (non-blocking)
-        if msvcrt.kbhit():
-            key = msvcrt.getch()
-            if key == b'\r':  # Enter key
-                ready = True
-
-    speak("Starting")
-
-    # Record episodes
+    # State machine variables
+    state = State.SETUP
     successful_episodes = 0
     completed_tasks = 0
 
+    # Recording state
+    episode_start_time = None
+    episode_frames = 0
+    task_complete_frames = 0
+    last_action = None
+    consecutive_errors = 0
+
+    frame_time = 1.0 / args.fps
+    last_frame_time = time.time()
+
+    speak("Put on VR headset. Press ENTER when ready.")
+
     try:
-        ep_idx = 0
-        while successful_episodes < args.num_episodes:
-            # Reset scene for new episode (with optional randomization)
-            sim_robot.reset_scene(
-                randomize=not args.no_randomize,
-                pos_range=args.pos_range / 100.0,  # cm to meters
-                rot_range=np.radians(args.rot_range)  # degrees to radians
-            )
+        while state != State.FINISHED:
+            loop_start = time.time()
 
-            # Get and display the starting position
-            scene = sim_robot.get_scene_info()
-            duplo_pos = scene['objects']['duplo']['position']
-            print(f"\nDuplo start: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
+            # Always render VR and step simulation
+            sim_robot.render_vr()
 
-            saved, task_complete = record_episode(
-                sim_robot, leader_bus, dataset, ep_idx,
-                task=args.task,
-                fps=args.fps,
-                max_duration=args.max_duration
-            )
+            # Read leader arm (always, for live preview)
+            try:
+                positions = leader_bus.sync_read("Present_Position")
+                action = {f"{motor}.pos": positions[motor] for motor in MOTOR_NAMES}
+                last_action = action.copy()
+                consecutive_errors = 0
+            except ConnectionError:
+                consecutive_errors += 1
+                if consecutive_errors > 30:
+                    print("\n[!] Leader arm connection lost!")
+                if last_action:
+                    action = last_action
+                else:
+                    action = None
 
-            if saved:
-                successful_episodes += 1
-                if task_complete:
-                    completed_tasks += 1
-                print(f"\nProgress: {successful_episodes}/{args.num_episodes} episodes")
-                print(f"Tasks completed: {completed_tasks}/{successful_episodes}")
+            # Send action to simulation (live preview)
+            if action:
+                sim_robot.send_action(action)
 
-            ep_idx += 1
+            # Check keyboard input
+            key = check_key()
 
-            if successful_episodes < args.num_episodes:
-                speak(f"Episode {successful_episodes} of {args.num_episodes} complete. Press Enter for next episode.")
-                cont = input("\nPress ENTER for next episode, 'q' to finish: ").strip().lower()
-                if cont == 'q':
-                    break
+            # State machine
+            if state == State.SETUP:
+                # Waiting for user to put on headset and press Enter
+                if key == b'\r':
+                    state = State.READY
+                    # Reset scene for first episode
+                    sim_robot.reset_scene(
+                        randomize=not args.no_randomize,
+                        pos_range=args.pos_range / 100.0,
+                        rot_range=np.radians(args.rot_range)
+                    )
+                    scene = sim_robot.get_scene_info()
+                    duplo_pos = scene['objects']['duplo']['position']
+                    print(f"\nDuplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
+                    speak(f"Ready. Episode {successful_episodes + 1} of {args.num_episodes}. Press ENTER to record.")
+                elif key == b'q':
+                    state = State.FINISHED
+
+            elif state == State.READY:
+                # Between episodes, waiting to start recording
+                if key == b'\r':
+                    # Start recording
+                    state = State.RECORDING
+                    dataset.create_episode_buffer()
+                    episode_start_time = time.time()
+                    episode_frames = 0
+                    task_complete_frames = 0
+                    speak("Recording")
+                    print(f"\nRecording episode {successful_episodes + 1}...")
+                elif key == b'r':
+                    # Reset scene
+                    sim_robot.reset_scene(
+                        randomize=not args.no_randomize,
+                        pos_range=args.pos_range / 100.0,
+                        rot_range=np.radians(args.rot_range)
+                    )
+                    scene = sim_robot.get_scene_info()
+                    duplo_pos = scene['objects']['duplo']['position']
+                    print(f"\nScene reset. Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
+                elif key == b'q':
+                    state = State.FINISHED
+
+            elif state == State.RECORDING:
+                elapsed = time.time() - episode_start_time
+
+                # Record frame at target FPS
+                if time.time() - last_frame_time >= frame_time:
+                    last_frame_time = time.time()
+
+                    # Get observation
+                    observation = sim_robot.get_observation()
+
+                    # Build and add frame
+                    obs_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+                    action_frame = build_dataset_frame(dataset.features, action, prefix="action")
+                    dataset.add_frame({
+                        **obs_frame,
+                        **action_frame,
+                        "task": args.task,
+                    })
+                    episode_frames += 1
+
+                    # Progress display
+                    if episode_frames % 30 == 0:
+                        print(f"  Frames: {episode_frames:4d} | Time: {elapsed:5.1f}s", end="\r")
+
+                # Check task completion
+                if sim_robot.is_task_complete():
+                    task_complete_frames += 1
+                    if task_complete_frames >= 10:  # Debounce
+                        speak("Task complete!")
+                        completed_tasks += 1
+                        # Save episode
+                        dataset.save_episode()
+                        successful_episodes += 1
+                        print(f"\n\nEpisode {successful_episodes} saved ({episode_frames} frames, task completed)")
+
+                        if successful_episodes >= args.num_episodes:
+                            state = State.FINISHED
+                            speak("All episodes recorded!")
+                        else:
+                            state = State.READY
+                            # Reset for next episode
+                            sim_robot.reset_scene(
+                                randomize=not args.no_randomize,
+                                pos_range=args.pos_range / 100.0,
+                                rot_range=np.radians(args.rot_range)
+                            )
+                            scene = sim_robot.get_scene_info()
+                            duplo_pos = scene['objects']['duplo']['position']
+                            print(f"Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
+                            speak(f"Episode {successful_episodes + 1} of {args.num_episodes}. Press ENTER to record.")
+                else:
+                    task_complete_frames = 0
+
+                # Check timeout
+                if elapsed > args.max_duration:
+                    speak("Timeout")
+                    print(f"\n\nTimeout after {elapsed:.1f}s")
+                    # Ask to save (but non-blocking style - just save incomplete)
+                    dataset.save_episode()
+                    successful_episodes += 1
+                    print(f"Episode {successful_episodes} saved ({episode_frames} frames, incomplete)")
+
+                    if successful_episodes >= args.num_episodes:
+                        state = State.FINISHED
+                    else:
+                        state = State.READY
+                        sim_robot.reset_scene(
+                            randomize=not args.no_randomize,
+                            pos_range=args.pos_range / 100.0,
+                            rot_range=np.radians(args.rot_range)
+                        )
+                        speak(f"Episode {successful_episodes + 1}. Press ENTER to record.")
+
+                # Handle keys during recording
+                if key == b'\r':
+                    # Manual stop - save episode
+                    dataset.save_episode()
+                    successful_episodes += 1
+                    print(f"\n\nEpisode {successful_episodes} saved ({episode_frames} frames, manual stop)")
+
+                    if successful_episodes >= args.num_episodes:
+                        state = State.FINISHED
+                        speak("All episodes recorded!")
+                    else:
+                        state = State.READY
+                        sim_robot.reset_scene(
+                            randomize=not args.no_randomize,
+                            pos_range=args.pos_range / 100.0,
+                            rot_range=np.radians(args.rot_range)
+                        )
+                        scene = sim_robot.get_scene_info()
+                        duplo_pos = scene['objects']['duplo']['position']
+                        print(f"Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
+                        speak(f"Episode {successful_episodes + 1}. Press ENTER to record.")
+
+                elif key == b'd':
+                    # Discard episode
+                    dataset.clear_episode_buffer()
+                    speak("Episode discarded")
+                    print("\n\nEpisode discarded")
+                    state = State.READY
+                    sim_robot.reset_scene(
+                        randomize=not args.no_randomize,
+                        pos_range=args.pos_range / 100.0,
+                        rot_range=np.radians(args.rot_range)
+                    )
+                    speak(f"Press ENTER to record episode {successful_episodes + 1}.")
+
+                elif key == b'q':
+                    # Quit - discard current and exit
+                    dataset.clear_episode_buffer()
+                    print("\n\nQuitting (current episode discarded)")
+                    state = State.FINISHED
+
+            # Maintain roughly consistent loop timing
+            elapsed = time.time() - loop_start
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
 
     except KeyboardInterrupt:
-        print("\n\nRecording interrupted.")
+        print("\n\nInterrupted.")
+        if state == State.RECORDING:
+            dataset.clear_episode_buffer()
 
     finally:
         # Summary
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("RECORDING COMPLETE")
-        print("="*60)
+        print("=" * 60)
         print(f"Episodes saved: {successful_episodes}")
         print(f"Tasks completed: {completed_tasks}")
-        print(f"Dataset: {root_dir / repo_id}")
+        print(f"Dataset: {root_dir}")
 
-        # Finalize dataset (writes all metadata files including episodes parquet)
+        # Finalize and upload
         if successful_episodes > 0:
             print("\nFinalizing dataset...")
             dataset.finalize()
             print("Dataset finalized.")
 
-        # Auto-upload to HuggingFace
-        if successful_episodes > 0 and not args.no_upload:
-            speak("Uploading to HuggingFace")
-            print("\nUploading to HuggingFace Hub...")
-            try:
-                import subprocess
-                import sys
-                upload_script = Path(__file__).parent / "upload_dataset.py"
-                # Dataset is stored at root_dir / repo_id (LeRobot convention)
-                # Use absolute path so it works regardless of cwd
-                dataset_path = (root_dir / repo_id).resolve()
-                result = subprocess.run(
-                    [sys.executable, str(upload_script), str(dataset_path), repo_id],
-                )
-                if result.returncode == 0:
-                    speak("Upload complete")
-                else:
+            if not args.no_upload:
+                speak("Uploading to HuggingFace")
+                print("\nUploading to HuggingFace Hub...")
+                try:
+                    import subprocess
+                    upload_script = Path(__file__).parent / "upload_dataset.py"
+                    # LeRobot stores files at root_dir directly (repo_id is just HF metadata)
+                    dataset_path = root_dir.resolve()
+                    result = subprocess.run(
+                        [sys.executable, str(upload_script), str(dataset_path), repo_id],
+                    )
+                    if result.returncode == 0:
+                        speak("Upload complete")
+                    else:
+                        speak("Upload failed")
+                except Exception as e:
                     speak("Upload failed")
-            except Exception as e:
-                speak("Upload failed")
-                print(f"❌ Upload failed: {e}")
-                print(f"Upload manually with:")
-                print(f"  python upload_dataset.py {dataset_path} {repo_id}")
-        elif successful_episodes == 0:
-            print("\nNo episodes to upload.")
+                    print(f"Upload failed: {e}")
+                    print(f"Upload manually: python upload_dataset.py {dataset_path} {repo_id}")
 
         # Cleanup
         sim_robot.disconnect()
