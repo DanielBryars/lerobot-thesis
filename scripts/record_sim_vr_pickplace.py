@@ -73,6 +73,9 @@ def speak(text: str):
 import lerobot_robot_sim
 from lerobot_robot_sim import SO100Sim, SO100SimConfig, MOTOR_NAMES
 
+# Import leader arm (same class used by teleoperate_so100.py)
+from SO100LeaderSTS3250 import SO100LeaderSTS3250, SO100LeaderSTS3250Config
+
 # Import LeRobot dataset utilities
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features, build_dataset_frame
@@ -98,39 +101,6 @@ def load_config():
             with open(path) as f:
                 return json.load(f)
     return None
-
-
-def load_calibration(arm_id: str = "leader_so100"):
-    """Load calibration from JSON file."""
-    import draccus
-    from lerobot.motors import MotorCalibration
-    from lerobot.utils.constants import HF_LEROBOT_CALIBRATION
-
-    calib_path = HF_LEROBOT_CALIBRATION / "teleoperators" / "so100_leader_sts3250" / f"{arm_id}.json"
-    if not calib_path.exists():
-        raise FileNotFoundError(f"Calibration not found: {calib_path}")
-
-    with open(calib_path) as f, draccus.config_type("json"):
-        return draccus.load(dict[str, MotorCalibration], f)
-
-
-def create_leader_bus(port: str):
-    """Create motor bus for leader arm."""
-    from lerobot.motors import Motor, MotorNormMode
-    from lerobot.motors.feetech import FeetechMotorsBus
-
-    bus = FeetechMotorsBus(
-        port=port,
-        motors={
-            "shoulder_pan": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
-            "shoulder_lift": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
-            "elbow_flex": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
-            "wrist_flex": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
-            "wrist_roll": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
-            "gripper": Motor(6, "sts3250", MotorNormMode.RANGE_0_100),
-        },
-    )
-    return bus
 
 
 def check_key():
@@ -161,15 +131,16 @@ def main():
 
     args = parser.parse_args()
 
-    # Get leader port
+    # Get leader config
+    config = load_config()
     leader_port = args.leader_port
     if leader_port is None:
-        config = load_config()
         if config and "leader" in config:
             leader_port = config["leader"]["port"]
         else:
             leader_port = "COM8"
-    print(f"Leader port: {leader_port}")
+    leader_id = config["leader"]["id"] if config and "leader" in config else "leader_so100"
+    print(f"Leader port: {leader_port}, ID: {leader_id}")
 
     # Generate repo ID with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -194,12 +165,11 @@ def main():
     sim_robot.connect()
     speak("Simulation ready")
 
-    # Connect leader arm
+    # Connect leader arm (using same class as teleoperate_so100.py for consistency)
     print(f"\nConnecting leader arm on {leader_port}...")
-    leader_bus = create_leader_bus(leader_port)
-    leader_bus.connect()
-    leader_bus.calibration = load_calibration("leader_so100")
-    leader_bus.disable_torque()
+    leader_config = SO100LeaderSTS3250Config(port=leader_port, id=leader_id)
+    leader = SO100LeaderSTS3250(leader_config)
+    leader.connect()
     speak("Leader arm connected")
 
     # Create dataset
@@ -276,8 +246,7 @@ def main():
 
             # Read leader arm (always, for live preview)
             try:
-                positions = leader_bus.sync_read("Present_Position")
-                action = {f"{motor}.pos": positions[motor] for motor in MOTOR_NAMES}
+                action = leader.get_action()
                 last_action = action.copy()
                 consecutive_errors = 0
             except ConnectionError:
@@ -510,7 +479,7 @@ def main():
 
         # Cleanup
         sim_robot.disconnect()
-        leader_bus.disconnect()
+        leader.disconnect()
         speak("Done")
 
 
