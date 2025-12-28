@@ -258,8 +258,45 @@ class SO100Sim(Robot):
 
         logger.info("Scene reset")
 
+    def set_duplo_position(self, x: float, y: float, z: float = None, quat: list = None) -> None:
+        """Set the duplo block position and orientation.
+
+        Args:
+            x: X position in meters
+            y: Y position in meters
+            z: Z position in meters (optional, keeps current if None)
+            quat: Quaternion [w, x, y, z] (optional, resets to upright if None)
+        """
+        if not self.is_connected:
+            return
+
+        # Duplo free joint is at qpos[0:7]: pos(3) + quat(4)
+        self.mj_data.qpos[0] = x
+        self.mj_data.qpos[1] = y
+        if z is not None:
+            self.mj_data.qpos[2] = z
+
+        # Set quaternion (or reset to upright)
+        if quat is not None and len(quat) == 4:
+            self.mj_data.qpos[3] = quat[0]  # w
+            self.mj_data.qpos[4] = quat[1]  # x
+            self.mj_data.qpos[5] = quat[2]  # y
+            self.mj_data.qpos[6] = quat[3]  # z
+        else:
+            # Default to upright
+            self.mj_data.qpos[3] = 1.0  # w
+            self.mj_data.qpos[4] = 0.0  # x
+            self.mj_data.qpos[5] = 0.0  # y
+            self.mj_data.qpos[6] = 0.0  # z
+
+        # Step to settle
+        for _ in range(10):
+            mujoco.mj_step(self.mj_model, self.mj_data)
+
+        logger.info(f"Duplo set to pos=({x:.3f}, {y:.3f}), quat={quat if quat else 'upright'}")
+
     def get_scene_info(self) -> dict:
-        """Get initial positions of scene objects for metadata."""
+        """Get initial positions and orientations of scene objects for metadata."""
         if not self.is_connected:
             return {}
 
@@ -273,9 +310,15 @@ class SO100Sim(Robot):
             try:
                 body_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
                 pos = self.mj_data.xpos[body_id].tolist()
-                scene_info["objects"][body_name] = {
+                obj_info = {
                     "position": {"x": pos[0], "y": pos[1], "z": pos[2]}
                 }
+                # For duplo, also save orientation (from qpos of free joint)
+                if body_name == "duplo":
+                    # Duplo free joint quat is at qpos[3:7]
+                    quat = self.mj_data.qpos[3:7].tolist()
+                    obj_info["quaternion"] = {"w": quat[0], "x": quat[1], "y": quat[2], "z": quat[3]}
+                scene_info["objects"][body_name] = obj_info
             except Exception:
                 pass
 
@@ -392,6 +435,21 @@ class SO100Sim(Robot):
                 return False
         return True
 
+    def render(self) -> bool:
+        """Render to screen using MuJoCo passive viewer. Returns False if window closed."""
+        if not hasattr(self, '_viewer') or self._viewer is None:
+            # Lazy init viewer
+            import mujoco.viewer
+            self._viewer = mujoco.viewer.launch_passive(self.mj_model, self.mj_data)
+            logger.info("Launched MuJoCo viewer")
+
+        if self._viewer.is_running():
+            self._viewer.sync()
+            return True
+        else:
+            self._viewer = None
+            return False
+
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -399,6 +457,10 @@ class SO100Sim(Robot):
         if self.vr_renderer:
             self.vr_renderer.cleanup()
             self.vr_renderer = None
+
+        if hasattr(self, '_viewer') and self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
 
         del self.mj_renderer, self.mj_data, self.mj_model
         self.mj_renderer = self.mj_data = self.mj_model = None

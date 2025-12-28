@@ -478,7 +478,10 @@ class VRRenderer:
         sync_info = xr.ActionsSyncInfo(active_action_sets=[active_action_set])
         try:
             xr.sync_actions(self.session, sync_info)
-        except:
+        except Exception as e:
+            if not hasattr(self, '_sync_error_shown'):
+                print(f"Warning: Controller sync failed: {e}")
+                self._sync_error_shown = True
             return
 
         # Movement speed
@@ -490,8 +493,10 @@ class VRRenderer:
             state = xr.get_action_state_float(self.session, state_info)
             if state.is_active and abs(state.current_state) > 0.1:
                 self.base_pos[1] -= state.current_state * move_speed  # Left/right
-        except:
-            pass
+        except Exception as e:
+            if not hasattr(self, '_thumbstick_x_error_shown'):
+                print(f"Warning: Left thumbstick X read failed: {e}")
+                self._thumbstick_x_error_shown = True
 
         # Get thumbstick Y (forward/back in MuJoCo = X axis)
         try:
@@ -499,8 +504,10 @@ class VRRenderer:
             state = xr.get_action_state_float(self.session, state_info)
             if state.is_active and abs(state.current_state) > 0.1:
                 self.base_pos[0] += state.current_state * move_speed  # Forward/back
-        except:
-            pass
+        except Exception as e:
+            if not hasattr(self, '_thumbstick_y_error_shown'):
+                print(f"Warning: Left thumbstick Y read failed: {e}")
+                self._thumbstick_y_error_shown = True
 
         # Right thumbstick X: rotate view around robot (orbit)
         try:
@@ -510,7 +517,9 @@ class VRRenderer:
                 rot_speed = 0.03  # radians per frame
                 self.view_yaw += state.current_state * rot_speed
         except Exception as e:
-            pass
+            if not hasattr(self, '_right_x_error_shown'):
+                print(f"Warning: Right thumbstick X read failed: {e}")
+                self._right_x_error_shown = True
 
         # Right thumbstick Y (up/down in MuJoCo = Z axis)
         try:
@@ -519,7 +528,9 @@ class VRRenderer:
             if state.is_active and abs(state.current_state) > 0.1:
                 self.base_pos[2] += state.current_state * move_speed  # Up/down
         except Exception as e:
-            pass
+            if not hasattr(self, '_right_y_error_shown'):
+                print(f"Warning: Right thumbstick Y read failed: {e}")
+                self._right_y_error_shown = True
 
         # Get recenter button (X on left controller)
         try:
@@ -527,8 +538,42 @@ class VRRenderer:
             state = xr.get_action_state_boolean(self.session, state_info)
             if state.is_active and state.current_state and state.changed_since_last_sync:
                 self._recenter_scene()
-        except:
-            pass
+        except Exception as e:
+            if not hasattr(self, '_recenter_error_shown'):
+                print(f"Warning: Recenter button read failed: {e}")
+                self._recenter_error_shown = True
+
+    def _debug_controller_status(self):
+        """Print controller status for debugging."""
+        if self.action_set is None:
+            print("Controller debug: action_set is None")
+            return
+
+        try:
+            # Try to get state of left thumbstick
+            state_info = xr.ActionStateGetInfo(action=self.thumbstick_x_action, subaction_path=self.hand_paths[0])
+            state = xr.get_action_state_float(self.session, state_info)
+            left_active = state.is_active
+            left_x = state.current_state if state.is_active else 0
+
+            state_info = xr.ActionStateGetInfo(action=self.thumbstick_y_action, subaction_path=self.hand_paths[0])
+            state = xr.get_action_state_float(self.session, state_info)
+            left_y = state.current_state if state.is_active else 0
+
+            state_info = xr.ActionStateGetInfo(action=self.right_thumbstick_x_action, subaction_path=self.hand_paths[1])
+            state = xr.get_action_state_float(self.session, state_info)
+            right_active = state.is_active
+            right_x = state.current_state if state.is_active else 0
+
+            state_info = xr.ActionStateGetInfo(action=self.right_thumbstick_y_action, subaction_path=self.hand_paths[1])
+            state = xr.get_action_state_float(self.session, state_info)
+            right_y = state.current_state if state.is_active else 0
+
+            print(f"Controller status: Left={'active' if left_active else 'INACTIVE'}({left_x:.2f},{left_y:.2f}) "
+                  f"Right={'active' if right_active else 'INACTIVE'}({right_x:.2f},{right_y:.2f}) "
+                  f"base_pos=[{self.base_pos[0]:.2f},{self.base_pos[1]:.2f},{self.base_pos[2]:.2f}]")
+        except Exception as e:
+            print(f"Controller debug failed: {e}")
 
     def _recenter_scene(self):
         """Move scene so robot is 30cm in front at waist height, aligned with user's facing direction."""
@@ -600,6 +645,15 @@ class VRRenderer:
 
         # Poll controller input
         self._handle_controller_input(frame_state.predicted_display_time)
+
+        # Debug: show controller status on first frame and periodically
+        if not hasattr(self, '_frame_count'):
+            self._frame_count = 0
+            print("First VR frame - checking controller status...")
+            self._debug_controller_status()
+        self._frame_count += 1
+        if self._frame_count % 300 == 0:  # Every ~10 seconds at 30fps
+            self._debug_controller_status()
 
         # Render each eye
         projection_views = []

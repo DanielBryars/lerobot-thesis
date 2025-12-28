@@ -2,8 +2,19 @@
 """Standalone script to upload a dataset to HuggingFace Hub."""
 
 import argparse
+import json
 from pathlib import Path
 from huggingface_hub import HfApi, upload_folder, list_repo_files
+
+
+def get_codebase_version(local_path: Path) -> str:
+    """Read codebase_version from info.json."""
+    info_path = local_path / "meta" / "info.json"
+    if info_path.exists():
+        with open(info_path) as f:
+            info = json.load(f)
+            return info.get("codebase_version", "v3.0")
+    return "v3.0"  # Default
 
 
 def upload_dataset(local_path: Path, repo_id: str, dry_run: bool = False):
@@ -41,6 +52,20 @@ def upload_dataset(local_path: Path, repo_id: str, dry_run: bool = False):
     )
 
     print("\nUpload complete!")
+
+    # Tag with codebase version for LeRobot compatibility
+    version = get_codebase_version(local_path)
+    print(f"\nTagging with version: {version}")
+    try:
+        api.create_tag(repo_id=repo_id, tag=version, repo_type="dataset")
+        print(f"Created tag: {version}")
+    except Exception as e:
+        # Tag might already exist
+        if "already exists" in str(e).lower():
+            print(f"Tag {version} already exists")
+        else:
+            print(f"Warning: Could not create tag: {e}")
+
     print()
 
     # List remote files to verify

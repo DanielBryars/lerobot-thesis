@@ -258,6 +258,10 @@ def main():
     last_action = None
     consecutive_errors = 0
 
+    # Per-episode scene info tracking
+    episode_scenes = {}
+    current_episode_scene = None
+
     frame_time = 1.0 / args.fps
     last_frame_time = time.time()
 
@@ -303,8 +307,8 @@ def main():
                         pos_range=args.pos_range / 100.0,
                         rot_range=np.radians(args.rot_range)
                     )
-                    scene = sim_robot.get_scene_info()
-                    duplo_pos = scene['objects']['duplo']['position']
+                    current_episode_scene = sim_robot.get_scene_info()
+                    duplo_pos = current_episode_scene['objects']['duplo']['position']
                     print(f"\nDuplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
                     speak(f"Ready. Episode {successful_episodes + 1} of {args.num_episodes}. Press ENTER to record.")
                 elif key == b'q':
@@ -313,7 +317,7 @@ def main():
             elif state == State.READY:
                 # Between episodes, waiting to start recording
                 if key == b'\r':
-                    # Start recording
+                    # Start recording - capture scene info for this episode
                     state = State.RECORDING
                     dataset.create_episode_buffer()
                     episode_start_time = time.time()
@@ -328,8 +332,8 @@ def main():
                         pos_range=args.pos_range / 100.0,
                         rot_range=np.radians(args.rot_range)
                     )
-                    scene = sim_robot.get_scene_info()
-                    duplo_pos = scene['objects']['duplo']['position']
+                    current_episode_scene = sim_robot.get_scene_info()
+                    duplo_pos = current_episode_scene['objects']['duplo']['position']
                     print(f"\nScene reset. Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
                 elif key == b'q':
                     state = State.FINISHED
@@ -364,7 +368,8 @@ def main():
                     if task_complete_frames >= 10:  # Debounce
                         speak("Task complete!")
                         completed_tasks += 1
-                        # Save episode
+                        # Save episode and scene info
+                        episode_scenes[successful_episodes] = current_episode_scene
                         dataset.save_episode()
                         successful_episodes += 1
                         print(f"\n\nEpisode {successful_episodes} saved ({episode_frames} frames, task completed)")
@@ -380,8 +385,8 @@ def main():
                                 pos_range=args.pos_range / 100.0,
                                 rot_range=np.radians(args.rot_range)
                             )
-                            scene = sim_robot.get_scene_info()
-                            duplo_pos = scene['objects']['duplo']['position']
+                            current_episode_scene = sim_robot.get_scene_info()
+                            duplo_pos = current_episode_scene['objects']['duplo']['position']
                             print(f"Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
                             speak(f"Episode {successful_episodes + 1} of {args.num_episodes}. Press ENTER to record.")
                 else:
@@ -391,7 +396,8 @@ def main():
                 if elapsed > args.max_duration:
                     speak("Timeout")
                     print(f"\n\nTimeout after {elapsed:.1f}s")
-                    # Ask to save (but non-blocking style - just save incomplete)
+                    # Save episode and scene info
+                    episode_scenes[successful_episodes] = current_episode_scene
                     dataset.save_episode()
                     successful_episodes += 1
                     print(f"Episode {successful_episodes} saved ({episode_frames} frames, incomplete)")
@@ -405,11 +411,13 @@ def main():
                             pos_range=args.pos_range / 100.0,
                             rot_range=np.radians(args.rot_range)
                         )
+                        current_episode_scene = sim_robot.get_scene_info()
                         speak(f"Episode {successful_episodes + 1}. Press ENTER to record.")
 
                 # Handle keys during recording
                 if key == b'\r':
-                    # Manual stop - save episode
+                    # Manual stop - save episode and scene info
+                    episode_scenes[successful_episodes] = current_episode_scene
                     dataset.save_episode()
                     successful_episodes += 1
                     print(f"\n\nEpisode {successful_episodes} saved ({episode_frames} frames, manual stop)")
@@ -424,8 +432,8 @@ def main():
                             pos_range=args.pos_range / 100.0,
                             rot_range=np.radians(args.rot_range)
                         )
-                        scene = sim_robot.get_scene_info()
-                        duplo_pos = scene['objects']['duplo']['position']
+                        current_episode_scene = sim_robot.get_scene_info()
+                        duplo_pos = current_episode_scene['objects']['duplo']['position']
                         print(f"Duplo at: ({duplo_pos['x']:.3f}, {duplo_pos['y']:.3f})")
                         speak(f"Episode {successful_episodes + 1}. Press ENTER to record.")
 
@@ -440,6 +448,7 @@ def main():
                         pos_range=args.pos_range / 100.0,
                         rot_range=np.radians(args.rot_range)
                     )
+                    current_episode_scene = sim_robot.get_scene_info()
                     speak(f"Press ENTER to record episode {successful_episodes + 1}.")
 
                 elif key == b'q':
@@ -471,6 +480,12 @@ def main():
         if successful_episodes > 0:
             print("\nFinalizing dataset...")
             dataset.finalize()
+
+            # Save per-episode scene info
+            episode_scenes_path = root_dir / "meta" / "episode_scenes.json"
+            with open(episode_scenes_path, "w") as f:
+                json.dump(episode_scenes, f, indent=2)
+            print(f"Saved scene info for {len(episode_scenes)} episodes")
             print("Dataset finalized.")
 
             if not args.no_upload:
