@@ -10,6 +10,13 @@ Usage:
     python train_act.py danbhf/sim_pick_place_20251229_101340 --batch_size 4 --steps 5000
 """
 
+# Suppress noisy warnings before importing anything else
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.io")
+warnings.filterwarnings("ignore", message=".*UnsupportedFieldAttributeWarning.*")
+warnings.filterwarnings("ignore", message=".*video decoding.*deprecated.*")
+
 import argparse
 from pathlib import Path
 from datetime import datetime
