@@ -89,6 +89,170 @@ class State(Enum):
     FINISHED = "finished"        # All done
 
 
+def get_git_info() -> dict:
+    """Get git repository information."""
+    import subprocess
+
+    repo_root = Path(__file__).parent.parent
+
+    def run_git(args):
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.stdout.strip() if result.returncode == 0 else None
+        except:
+            return None
+
+    return {
+        "commit_hash": run_git(["rev-parse", "HEAD"]),
+        "commit_short": run_git(["rev-parse", "--short", "HEAD"]),
+        "branch": run_git(["rev-parse", "--abbrev-ref", "HEAD"]),
+        "remote_url": run_git(["remote", "get-url", "origin"]),
+        "is_dirty": run_git(["status", "--porcelain"]) != "",
+        "last_commit_message": run_git(["log", "-1", "--pretty=%s"]),
+        "last_commit_date": run_git(["log", "-1", "--pretty=%ci"]),
+    }
+
+
+def read_motor_eeprom(bus, motor_name: str) -> dict:
+    """Read EEPROM values from a motor."""
+    try:
+        eeprom = {}
+        # Key EEPROM registers for calibration
+        registers = [
+            "Homing_Offset",
+            "Min_Position_Limit",
+            "Max_Position_Limit",
+            "Max_Torque_Limit",
+            "Protection_Current",
+            "Operating_Mode",
+            "P_Coefficient",
+            "I_Coefficient",
+            "D_Coefficient",
+        ]
+        for reg in registers:
+            try:
+                value = bus.read(reg, motor_name)
+                eeprom[reg] = int(value) if value is not None else None
+            except:
+                eeprom[reg] = None
+
+        # Also read current position
+        try:
+            pos = bus.read("Present_Position", motor_name)
+            eeprom["Present_Position"] = int(pos) if pos is not None else None
+        except:
+            eeprom["Present_Position"] = None
+
+        return eeprom
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_leader_metadata(leader: SO100LeaderSTS3250) -> dict:
+    """Get comprehensive metadata from leader arm."""
+    metadata = {
+        "type": leader.name,
+        "port": leader.config.port,
+        "id": leader.config.id,
+        "calibration": {},
+        "eeprom": {},
+        "motor_models": {},
+    }
+
+    # Get calibration data
+    if hasattr(leader, 'calibration') and leader.calibration:
+        for motor, calib in leader.calibration.items():
+            metadata["calibration"][motor] = {
+                "id": calib.id,
+                "drive_mode": calib.drive_mode,
+                "homing_offset": calib.homing_offset,
+                "range_min": calib.range_min,
+                "range_max": calib.range_max,
+            }
+
+    # Get EEPROM values
+    if hasattr(leader, 'bus') and leader.bus:
+        for motor in MOTOR_NAMES:
+            metadata["eeprom"][motor] = read_motor_eeprom(leader.bus, motor)
+            # Get motor model info
+            if motor in leader.bus.motors:
+                m = leader.bus.motors[motor]
+                metadata["motor_models"][motor] = {
+                    "id": m.id,
+                    "model": m.model,
+                    "norm_mode": str(m.norm_mode),
+                }
+
+    return metadata
+
+
+def get_recording_metadata(
+    leader: SO100LeaderSTS3250,
+    sim_robot: SO100Sim,
+    args,
+    repo_id: str,
+    timestamp: str,
+) -> dict:
+    """Gather all metadata for the recording session."""
+
+    # Read scene XML content
+    scene_xml_path = sim_robot.scene_xml
+    scene_xml_content = None
+    if scene_xml_path.exists():
+        try:
+            scene_xml_content = scene_xml_path.read_text()
+        except:
+            pass
+
+    metadata = {
+        "recording_info": {
+            "timestamp": timestamp,
+            "repo_id": repo_id,
+            "task": args.task,
+            "fps": args.fps,
+            "max_duration": args.max_duration,
+            "num_episodes_target": args.num_episodes,
+            "randomization": {
+                "enabled": not args.no_randomize,
+                "pos_range_cm": args.pos_range,
+                "rot_range_deg": args.rot_range,
+            },
+        },
+        "git": get_git_info(),
+        "leader_arm": get_leader_metadata(leader),
+        "simulation": {
+            "type": sim_robot.name,
+            "scene_xml_path": str(scene_xml_path),
+            "scene_xml_content": scene_xml_content,
+            "config": {
+                "n_sim_steps": sim_robot.config.n_sim_steps,
+                "camera_width": sim_robot.config.camera_width,
+                "camera_height": sim_robot.config.camera_height,
+                "sim_cameras": sim_robot.config.sim_cameras,
+                "use_degrees": sim_robot.config.use_degrees,
+            },
+            "action_space": {
+                "low": [-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453],
+                "high": [1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533],
+                "motor_names": MOTOR_NAMES,
+            },
+        },
+        "environment": {
+            "platform": sys.platform,
+            "python_version": sys.version,
+            "working_directory": str(Path.cwd()),
+        },
+    }
+
+    return metadata
+
+
 def load_config():
     """Load config.json for leader arm port."""
     repo_root = Path(__file__).parent.parent
@@ -205,6 +369,16 @@ def main():
         json.dump(dataset.meta.info, f, indent=4)
 
     print("Dataset created (LeRobot v3.0 format)")
+
+    # Gather and save comprehensive recording metadata
+    print("Gathering recording metadata (calibration, EEPROM, git info)...")
+    recording_metadata = get_recording_metadata(leader, sim_robot, args, repo_id, timestamp)
+    metadata_path = root_dir / "meta" / "recording_metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(recording_metadata, f, indent=2)
+    print(f"  Git: {recording_metadata['git']['commit_short']} ({recording_metadata['git']['branch']})")
+    print(f"  Leader calibration: {len(recording_metadata['leader_arm']['calibration'])} motors")
+    print(f"  Scene XML: {recording_metadata['simulation']['scene_xml_path']}")
 
     # Keep VR alive during initialization
     for _ in range(10):
@@ -472,6 +646,10 @@ def main():
                 json.dump(episode_scenes, f, indent=2)
             print(f"Saved scene info for {len(episode_scenes)} episodes")
             print("Dataset finalized.")
+            print("\nMetadata saved:")
+            print(f"  - recording_metadata.json (calibration, EEPROM, git, scene XML)")
+            print(f"  - episode_scenes.json (per-episode object positions)")
+            print(f"  - info.json (LeRobot dataset info)")
 
             if not args.no_upload:
                 speak("Uploading to HuggingFace")
