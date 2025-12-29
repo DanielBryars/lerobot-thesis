@@ -125,6 +125,10 @@ class VRRenderer:
         self.recenter_action = None
         self.hand_paths = []
 
+        # Session state tracking
+        self.session_state = None
+        self.is_focused = False
+
         # Scene positioning (MuJoCo coords: X=forward, Y=left, Z=up)
         # Z=0.5 puts camera ~0.5m above the floor (table height)
         self.base_pos = np.array([0.4, 0.3, 0.5], dtype=np.float64)
@@ -354,10 +358,33 @@ class VRRenderer:
         self.mj_scene = mujoco.MjvScene(self.model, maxgeom=10000)
         self.mj_context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
 
+    def _poll_session_events(self):
+        """Poll and process OpenXR session events."""
+        while True:
+            try:
+                event = xr.poll_event(self.instance)
+                if event is None:
+                    break
+                if isinstance(event, xr.EventDataSessionStateChanged):
+                    self.session_state = event.state
+                    was_focused = self.is_focused
+                    self.is_focused = (event.state == xr.SessionState.FOCUSED)
+                    if self.is_focused and not was_focused:
+                        print("Session FOCUSED - controllers now active")
+                    elif not self.is_focused and was_focused:
+                        print(f"Session lost focus (state: {event.state})")
+            except xr.exception.EventUnavailable:
+                break
+            except:
+                break
+
     def _init_reference_space(self):
         # Begin session
         session_begin_info = xr.SessionBeginInfo(primary_view_configuration_type=self.view_config_type)
         xr.begin_session(self.session, session_begin_info)
+
+        # Poll events to catch early session state changes
+        self._poll_session_events()
 
         # Use STAGE for roomscale
         try:
@@ -379,6 +406,10 @@ class VRRenderer:
                 break
             except:
                 continue
+
+        # Poll again after setup
+        self._poll_session_events()
+        print(f"Initial session state: {self.session_state}, focused: {self.is_focused}")
 
     def quat_rotate(self, quat, v):
         """Rotate vector by OpenXR quaternion (x,y,z,w)."""
@@ -473,15 +504,20 @@ class VRRenderer:
         if self.action_set is None:
             return
 
-        # Sync actions
+        # Try to sync actions - this will fail if session is not focused
         active_action_set = xr.ActiveActionSet(action_set=self.action_set, subaction_path=xr.NULL_PATH)
         sync_info = xr.ActionsSyncInfo(active_action_sets=[active_action_set])
         try:
             xr.sync_actions(self.session, sync_info)
+            # Sync succeeded - session must be focused
+            if not self.is_focused:
+                self.is_focused = True
+                print("Session FOCUSED - controllers now active (detected via sync)")
         except Exception as e:
-            if not hasattr(self, '_sync_error_shown'):
-                print(f"Warning: Controller sync failed: {e}")
-                self._sync_error_shown = True
+            # Sync failed - session probably not focused, silently skip
+            if self.is_focused:
+                self.is_focused = False
+                print(f"Controller sync failed (session lost focus?): {e}")
             return
 
         # Movement speed
@@ -549,6 +585,10 @@ class VRRenderer:
             print("Controller debug: action_set is None")
             return
 
+        if not self.is_focused:
+            print(f"Controller status: Waiting for focus (state: {self.session_state}) - put on headset")
+            return
+
         try:
             # Try to get state of left thumbstick
             state_info = xr.ActionStateGetInfo(action=self.thumbstick_x_action, subaction_path=self.hand_paths[0])
@@ -610,18 +650,9 @@ class VRRenderer:
             return False
 
         # Poll OpenXR events
-        while True:
-            try:
-                event = xr.poll_event(self.instance)
-                if event is None:
-                    break
-                if isinstance(event, xr.EventDataSessionStateChanged):
-                    if event.state in [xr.SessionState.STOPPING, xr.SessionState.EXITING, xr.SessionState.LOSS_PENDING]:
-                        return False
-            except xr.exception.EventUnavailable:
-                break
-            except:
-                break
+        self._poll_session_events()
+        if self.session_state in [xr.SessionState.STOPPING, xr.SessionState.EXITING, xr.SessionState.LOSS_PENDING]:
+            return False
 
         # Wait for frame
         frame_state = xr.wait_frame(self.session)

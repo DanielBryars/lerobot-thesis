@@ -125,7 +125,7 @@ def main():
     parser.add_argument("--leader_port", type=str, default=None)
     parser.add_argument("--max_duration", type=float, default=60.0, help="Max episode duration in seconds")
     parser.add_argument("--no-upload", action="store_true", help="Don't upload to HuggingFace")
-    parser.add_argument("--pos_range", type=float, default=2.0, help="Position randomization range in cm")
+    parser.add_argument("--pos_range", type=float, default=4.0, help="Position randomization range in cm")
     parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization range in degrees")
     parser.add_argument("--no-randomize", action="store_true", help="Disable position/rotation randomization")
 
@@ -165,12 +165,20 @@ def main():
     sim_robot.connect()
     speak("Simulation ready")
 
+    # Keep VR alive during initialization
+    for _ in range(10):
+        sim_robot.render_vr()
+
     # Connect leader arm (using same class as teleoperate_so100.py for consistency)
     print(f"\nConnecting leader arm on {leader_port}...")
     leader_config = SO100LeaderSTS3250Config(port=leader_port, id=leader_id)
     leader = SO100LeaderSTS3250(leader_config)
     leader.connect()
     speak("Leader arm connected")
+
+    # Keep VR alive during initialization
+    for _ in range(10):
+        sim_robot.render_vr()
 
     # Create dataset
     print(f"\nCreating dataset: {repo_id}")
@@ -198,6 +206,10 @@ def main():
 
     print("Dataset created (LeRobot v3.0 format)")
 
+    # Keep VR alive during initialization
+    for _ in range(10):
+        sim_robot.render_vr()
+
     # Print instructions
     print("\n" + "=" * 60)
     print("CONTINUOUS VR RECORDING")
@@ -215,6 +227,10 @@ def main():
     print("  Q     - Quit")
     print("\nTask auto-completes when Duplo lands in bowl!")
     print("=" * 60)
+
+    # Keep VR alive before entering main loop
+    for _ in range(30):
+        sim_robot.render_vr()
 
     # State machine variables
     state = State.SETUP
