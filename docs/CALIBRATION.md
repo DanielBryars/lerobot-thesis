@@ -11,7 +11,7 @@ This document summarizes calibration options, past approaches, and the current s
 | Simulation | Radians internally | Converts from normalized |
 | Dataset | Normalized (-100 to +100) | Stored as-is |
 
-Calibration files: `~/.cache/huggingface/lerobot/calibration/`
+Calibration files: `calibration/` (in this repo, also copied to `~/.cache/huggingface/lerobot/calibration/`)
 
 ---
 
@@ -55,9 +55,15 @@ SIM_ACTION_HIGH = [+1.91986, +1.74533, +1.69, +1.65806, +2.84121, +1.74533]
 
 Stores calibration in JSON files rather than motor EEPROM.
 
-**Location**: `~/.cache/huggingface/lerobot/calibration/`
+**Location (this repo)**: `calibration/`
+- Leader: `calibration/leader_so100.json`
+- Follower: `calibration/follower_so100.json`
+
+**LeRobot cache location**: `~/.cache/huggingface/lerobot/calibration/`
 - Leader: `teleoperators/so100_leader_sts3250/leader_so100.json`
 - Follower: `robots/so100_follower_sts3250/follower_so100.json`
+
+The scripts in this repo use the LeRobot cache location. Copy calibration files there before first use.
 
 **Example calibration file**:
 ```json
@@ -269,17 +275,17 @@ def normalized_to_radians(normalized: dict, use_degrees=False) -> np.ndarray:
 
 | File | Purpose |
 |------|---------|
-| `scripts/SO100LeaderSTS3250.py` | Leader arm class with file-based calibration |
-| `scripts/SO100FollowerSTS3250.py` | Follower arm class with file-based calibration |
-| `scripts/teleoperate_so100.py` | Leader→Follower teleoperation |
-| `scripts/record_sim_vr_pickplace.py` | Record with leader→simulation |
-| `scripts/playback_real_robot.py` | Playback dataset on real follower |
+| `calibration/leader_so100.json` | Leader arm calibration data |
+| `calibration/follower_so100.json` | Follower arm calibration data |
+| `recording/SO100LeaderSTS3250.py` | Leader arm class with file-based calibration |
+| `recording/SO100FollowerSTS3250.py` | Follower arm class with file-based calibration |
+| `recording/teleoperate_so100.py` | Leader→Follower teleoperation |
+| `recording/record_sim_vr_pickplace.py` | Record with leader→simulation |
+| `recording/playback_real_robot.py` | Playback dataset on real follower |
 | `configs/config.json` | COM ports and arm IDs |
 
 ---
 
 ## References
 
-- LeRobot calibration: `~/.cache/huggingface/lerobot/calibration/`
 - lerobot-scratch calibration scripts: `E:/git/ai/lerobot-scratch/calibration/`
-- lerobot-gym calibration check: `E:/git/ai/lerobot-gym/calibration_check.py`

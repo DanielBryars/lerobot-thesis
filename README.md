@@ -7,6 +7,7 @@ VR-based teleoperation and training data recording for the SO100/SO101 robot arm
 This repository provides tools for:
 - **VR Teleoperation**: Control a simulated robot arm using a physical leader arm while viewing the scene in VR
 - **Dataset Recording**: Record demonstration episodes in LeRobot v3.0 format with automatic task completion detection
+- **Real Robot Playback**: Play back recorded episodes on a physical follower arm
 - **HuggingFace Upload**: Upload recorded datasets to HuggingFace Hub for training
 
 ## Repository Structure
@@ -14,20 +15,34 @@ This repository provides tools for:
 ```
 lerobot-thesis/
 ├── assets/
-│   └── SO-ARM100/          # Robot meshes (git submodule)
+│   └── SO-ARM100/              # Robot meshes (git submodule)
+├── calibration/
+│   ├── leader_so100.json       # Leader arm calibration
+│   └── follower_so100.json     # Follower arm calibration
 ├── configs/
-│   └── config.json         # Serial port configuration
+│   └── config.json             # Serial port configuration
+├── docs/
+│   ├── CALIBRATION.md          # Detailed calibration guide
+│   └── EXPERIMENTS.md          # Experiment log
 ├── scenes/
-│   └── so101_with_wrist_cam.xml  # MuJoCo scene with robot, table, objects
-├── scripts/
-│   ├── teleop_sim_vr.py    # VR teleoperation (standalone)
-│   ├── vr_openxr_viewer.py # VR renderer with full controls
-│   ├── record_sim_vr_pickplace.py  # Record pick-and-place demos
-│   └── upload_dataset.py   # Upload datasets to HuggingFace
+│   └── so101_with_wrist_cam.xml  # MuJoCo scene
+├── recording/
+│   ├── record_sim_vr_pickplace.py  # Record demos in VR
+│   ├── playback_real_robot.py      # Play on real robot
+│   ├── playback_sim_vr.py          # Play in simulation
+│   ├── teleop_sim_vr.py            # VR teleoperation
+│   ├── teleoperate_so100.py        # Leader-follower teleoperation
+│   ├── SO100LeaderSTS3250.py       # Leader arm driver
+│   ├── SO100FollowerSTS3250.py     # Follower arm driver
+│   └── upload_dataset.py           # Upload to HuggingFace
+├── training/
+│   ├── train_act.py                # Full ACT training script
+│   ├── train_act_simple.py         # Simple training wrapper
+│   └── README.md                   # Training documentation
 ├── src/
-│   └── lerobot_robot_sim/  # LeRobot plugin for simulation
+│   └── lerobot_robot_sim/      # LeRobot plugin for simulation
 └── vendor/
-    └── scservo_sdk/        # Feetech servo SDK (for motor control)
+    └── scservo_sdk/            # Feetech servo SDK
 ```
 
 ## Prerequisites
@@ -61,70 +76,121 @@ lerobot-thesis/
    pip install -e src/lerobot_robot_sim --no-deps
    ```
 
-5. **Configure serial port** (edit `configs/config.json`):
+5. **Copy calibration files**:
+   ```bash
+   # Windows (PowerShell)
+   mkdir -Force "$env:USERPROFILE\.cache\huggingface\lerobot\calibration\teleoperators\so100_leader_sts3250"
+   mkdir -Force "$env:USERPROFILE\.cache\huggingface\lerobot\calibration\robots\so100_follower_sts3250"
+   copy calibration\leader_so100.json "$env:USERPROFILE\.cache\huggingface\lerobot\calibration\teleoperators\so100_leader_sts3250\"
+   copy calibration\follower_so100.json "$env:USERPROFILE\.cache\huggingface\lerobot\calibration\robots\so100_follower_sts3250\"
+   ```
+
+6. **Configure serial ports** (edit `configs/config.json`):
    ```json
    {
-     "leader": {"port": "COM8"},
-     "follower": {"port": "COM7"}
+     "leader": {"port": "COM8", "id": "leader_so100"},
+     "follower": {"port": "COM7", "id": "follower_so100"}
    }
    ```
 
 ## Usage
 
-### VR Teleoperation (View Only)
-
-Test the VR setup without a physical arm:
-
-```bash
-cd scripts
-python teleop_sim_vr.py --test
-```
-
-### VR Teleoperation with Leader Arm
-
-Control the simulation with your physical leader arm:
-
-```bash
-cd scripts
-python teleop_sim_vr.py
-```
-
-**VR Controls**:
-- Left Thumbstick: Move forward/back (Y), left/right (X)
-- Right Thumbstick: Move up/down (Y), rotate view (X)
-- X Button (left controller): Recenter robot in front of you
-
-### Recording Demonstrations
+### Recording Demonstrations (VR)
 
 Record pick-and-place demonstrations for training:
 
 ```bash
-cd scripts
-python record_sim_vr_pickplace.py --num_episodes 10
+python recording/record_sim_vr_pickplace.py --num_episodes 20
 ```
 
 **Options**:
 - `--num_episodes N`: Number of episodes to record (default: 10)
 - `--fps N`: Recording frame rate (default: 30)
 - `--task "description"`: Task description for dataset
-- `--pos_range N`: Position randomization in cm (default: 2)
+- `--pos_range N`: Position randomization in cm (default: 4)
 - `--rot_range N`: Rotation randomization in degrees (default: 180)
 - `--no-randomize`: Disable object randomization
 - `--no-upload`: Don't upload to HuggingFace after recording
 
-**During Recording**:
-- Press `q` to stop and save the current episode
-- Press `d` to discard the current episode
-- Episode auto-completes when the Duplo block lands in the bowl
+**Controls During Recording**:
+- `ENTER` - Start recording / Save episode
+- `D` - Discard current episode
+- `R` - Reset scene (when not recording)
+- `Q` - Quit
+- `SPACEBAR` - Recenter VR view (keyboard fallback)
 
-### Uploading Datasets
+**VR Controller Controls**:
+- Left Thumbstick: Move forward/back, left/right
+- Right Thumbstick: Move up/down, rotate view
+- X Button (left): Recenter robot in front of you
+
+Episode auto-completes when the Duplo block lands in the bowl.
+
+### Playback on Real Robot
+
+Play back recorded episodes on the physical follower arm:
+
+```bash
+python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_101340
+```
+
+**Options**:
+- `--episode N`: Play specific episode only
+- `--loop`: Loop playback continuously
+- `--local`: Force load from local path
+
+**Controls During Playback**:
+- `ENTER/SPACE` - Start / Pause
+- `R` - Replay current episode
+- `N` - Next episode
+- `Q` - Quit
+
+### Playback in Simulation (VR)
+
+Preview recorded episodes in VR simulation:
+
+```bash
+python recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_101340
+```
+
+### Leader-Follower Teleoperation
+
+Direct teleoperation without simulation (leader controls follower):
+
+```bash
+python recording/teleoperate_so100.py
+```
+
+### VR Teleoperation (Test Mode)
+
+Test VR setup without recording:
+
+```bash
+python recording/teleop_sim_vr.py          # With leader arm
+python recording/teleop_sim_vr.py --test   # VR only, no arm
+```
+
+### Upload Dataset
 
 Manually upload a recorded dataset:
 
 ```bash
-cd scripts
-python upload_dataset.py path/to/dataset repo_id
+python recording/upload_dataset.py datasets/20251229_101340 danbhf/my_dataset_name
 ```
+
+### Training a Policy
+
+Train an ACT (Action Chunking Transformer) policy on your recorded data:
+
+```bash
+# Basic training (50k steps)
+python training/train_act.py danbhf/sim_pick_place_20251229_101340
+
+# Quick test run
+python training/train_act.py danbhf/sim_pick_place_20251229_101340 --steps 5000 --batch_size 4
+```
+
+See [training/README.md](training/README.md) for more options.
 
 ## Scene Description
 
@@ -136,14 +202,11 @@ The simulation includes:
 - **Duplo Block**: Red building block (pick-and-place target)
 - **Bowl**: Blue bowl (placement target)
 
-Task completion is detected when the Duplo block enters the bowl.
-
 ## Calibration
 
-The leader arm requires calibration. Calibration files are stored in:
-```
-~/.cache/huggingface/lerobot/calibration/teleoperators/so100_leader_sts3250/
-```
+See [docs/CALIBRATION.md](docs/CALIBRATION.md) for detailed calibration information.
+
+Calibration files for both arms are included in `calibration/` and must be copied to the LeRobot cache location before first use (see Installation step 5).
 
 ## Troubleshooting
 
@@ -151,11 +214,12 @@ The leader arm requires calibration. Calibration files are stored in:
 - Ensure Quest Link or Air Link is connected
 - Check that SteamVR is not running (conflicts with OpenXR)
 - The Meta Quest runtime should be set as the default OpenXR runtime
+- Use SPACEBAR in console to recenter if controllers don't respond
 
 ### Leader Arm Not Responding
 - Check the COM port in `configs/config.json`
 - Ensure the arm is powered and connected via USB
-- Try running `python -c "from lerobot.motors.feetech import FeetechMotorsBus; print('OK')"`
+- Try: `python -c "from lerobot.motors.feetech import FeetechMotorsBus; print('OK')"`
 
 ### Upload Failures
 - Ensure you're logged into HuggingFace: `huggingface-cli login`
@@ -169,6 +233,6 @@ MIT License - See LICENSE file for details.
 ## Acknowledgments
 
 - [LeRobot](https://github.com/huggingface/lerobot) - Robot learning framework
-- [SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100) - Robot arm design and simulation models
+- [SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100) - Robot arm design
 - [MuJoCo](https://mujoco.org/) - Physics simulation
 - [PyOpenXR](https://github.com/cmbruns/pyopenxr) - OpenXR bindings for Python

@@ -203,10 +203,10 @@ class SO100Sim(Robot):
 
     def _init_vr(self):
         try:
-            # Import VR renderer from scripts directory
+            # Import VR renderer from recording directory
             import sys
-            scripts_path = REPO_ROOT / "scripts"
-            sys.path.insert(0, str(scripts_path))
+            recording_path = REPO_ROOT / "recording"
+            sys.path.insert(0, str(recording_path))
             from teleop_sim_vr import VRRenderer
 
             self.vr_renderer = VRRenderer(self.mj_model, self.mj_data)
