@@ -697,8 +697,8 @@ class VRRenderer:
         # Poll controller input
         self._handle_controller_input(frame_state.predicted_display_time)
 
-        # Check keyboard fallback (spacebar to recenter)
-        self.check_keyboard()
+        # Note: check_keyboard() is NOT called here to avoid consuming keys
+        # that the calling script needs. Call check_keyboard() separately if needed.
 
         # Debug: show controller status on first frame and periodically
         if not hasattr(self, '_frame_count'):
@@ -852,6 +852,9 @@ def run_teleop_vr(port: str, fps: int = 30):
             if not vr.render_frame():
                 break
 
+            # Check keyboard for VR controls (spacebar to recenter)
+            vr.check_keyboard()
+
             # Print status periodically with position debug info
             if step_count % 100 == 0:
                 elapsed = time.time() - loop_start
@@ -918,6 +921,9 @@ def run_vr_test(fps: int = 30):
             # Render to VR
             if not vr.render_frame():
                 break
+
+            # Check keyboard for VR controls (spacebar to recenter)
+            vr.check_keyboard()
 
             # Print status periodically
             if step_count % 100 == 0:

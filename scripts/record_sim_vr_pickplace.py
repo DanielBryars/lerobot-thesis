@@ -438,9 +438,6 @@ def main():
             # Always render VR and step simulation
             sim_robot.render_vr()
 
-            # Check keyboard for VR controls (spacebar to recenter)
-            sim_robot.check_vr_keyboard()
-
             # Read leader arm (always, for live preview)
             try:
                 action = leader.get_action()
@@ -461,6 +458,12 @@ def main():
 
             # Check keyboard input
             key = check_key()
+
+            # Handle VR recenter (spacebar) - works in any state
+            if key == b' ':
+                print("Spacebar pressed - recentering VR view...")
+                sim_robot.recenter_vr()
+                key = None  # Consume the key so it doesn't trigger other actions
 
             # State machine
             if state == State.SETUP:
