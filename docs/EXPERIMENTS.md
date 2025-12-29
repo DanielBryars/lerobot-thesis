@@ -64,10 +64,73 @@ Step   1500/5000 | Loss: 1.8772
 Step   1800/5000 | Loss: 1.7787
 ```
 
+**Full Training (50000 steps):**
+- Model: `outputs/train/act_20251229_111846/final`
+- Checkpoints saved every 5000 steps
+- WandB logging enabled
+- Final model size: ~200MB
+
 **Notes:**
 - Loss decreasing steadily - model is learning
 - Using both wrist_cam and overhead_cam as input
 - Chunk size: 100 (predicts 100 future actions)
-- Next: Run full training and evaluate in simulation
+
+---
+
+### Experiment 2b: Additional Recording Session (Lincoln)
+
+**Dataset:** `danbhf/sim_pick_place_20251229_144730`
+
+**Setup:**
+- 20 episodes recorded by Lincoln
+- Task: Pick up the Duplo block and place it in the bowl
+- Same recording setup as Experiment 1
+- FPS: 30
+- Randomization: ±4cm position, ±180° rotation on Duplo block
+
+**Notes:**
+- Second recording session to expand training data
+- Combined with Experiment 1 dataset = 40 total episodes
+
+---
+
+### Experiment 3: ACT Policy Evaluation (VR Simulation)
+
+**Model:** `outputs/train/act_20251229_111846/final` (50k steps)
+
+**Evaluation Command:**
+```bash
+python inference/run_act_sim.py outputs/train/act_20251229_111846/final --no_vr
+```
+
+**Setup:**
+- Same simulation environment used for recording
+- Same randomization: ±4cm position, ±180° rotation
+- Max 300 steps per episode (10 seconds at 30fps)
+- FPS: 30
+
+**Results (5 episodes):**
+```
+Episode 1: Task completed at step 92
+Episode 2: Task completed at step 120
+Episode 3: Task completed at step 110
+Episode 4: Task completed at step 102
+Episode 5: Timed out after 300 steps
+
+Success rate: 4/5 (80.0%)
+Average steps: 144.8
+```
+
+**Notes:**
+- Policy successfully learned pick-and-place from 20 demonstration episodes
+- 80% success rate with full randomization is a strong result
+- Failed episode likely due to challenging initial object placement
+- Training dataset: `danbhf/sim_pick_place_20251229_101340`
+
+**Next Steps:**
+- [ ] Train on combined dataset (40 episodes) for improved robustness
+- [ ] Test with different randomization ranges
+- [ ] Deploy to real follower robot
+- [ ] Try Lincoln's dataset: `danbhf/sim_pick_place_20251229_144730`
 
 ---

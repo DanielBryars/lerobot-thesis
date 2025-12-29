@@ -39,6 +39,8 @@ lerobot-thesis/
 │   ├── train_act.py                # Full ACT training script
 │   ├── train_act_simple.py         # Simple training wrapper
 │   └── README.md                   # Training documentation
+├── inference/
+│   └── run_act_sim.py              # Run trained policy in VR simulation
 ├── src/
 │   └── lerobot_robot_sim/      # LeRobot plugin for simulation
 └── vendor/
@@ -131,7 +133,7 @@ Episode auto-completes when the Duplo block lands in the bowl.
 Play back recorded episodes on the physical follower arm:
 
 ```bash
-python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_101340
+python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_144730
 ```
 
 **Options**:
@@ -150,7 +152,7 @@ python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_101340
 Preview recorded episodes in VR simulation:
 
 ```bash
-python recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_101340
+python recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_144730
 ```
 
 ### Leader-Follower Teleoperation
@@ -191,6 +193,30 @@ python training/train_act.py danbhf/sim_pick_place_20251229_101340 --steps 5000 
 ```
 
 See [training/README.md](training/README.md) for more options.
+
+### Evaluating a Trained Policy
+
+Run your trained ACT policy in the VR simulation:
+
+```bash
+# Run with final model
+python inference/run_act_sim.py outputs/train/act_20251229_120000/final
+
+# Run specific checkpoint with more episodes
+python inference/run_act_sim.py outputs/train/act_20251229_120000/checkpoint_010000 --episodes 10
+
+# Without VR (uses MuJoCo viewer)
+python inference/run_act_sim.py outputs/train/act_20251229_120000/final --no_vr
+```
+
+**Options:**
+- `--episodes N`: Number of evaluation episodes (default: 5)
+- `--fps N`: Simulation frame rate (default: 30)
+- `--max_steps N`: Maximum steps per episode (default: 300)
+- `--no_vr`: Use MuJoCo viewer instead of VR
+- `--no_randomize`: Disable object randomization
+- `--pos_range N`: Position randomization in cm (default: 4)
+- `--rot_range N`: Rotation randomization in degrees (default: 180)
 
 ## Scene Description
 
