@@ -212,3 +212,6 @@ datasets/
 wandb/
 .vr_stereo_settings.json
 .wrist_camera_settings.json
+
+# Trained Models
+outputs/
