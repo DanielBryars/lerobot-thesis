@@ -33,12 +33,104 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
+# Motor names for simulation
+MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
 
 def cycle(dataloader):
     """Infinite dataloader iterator."""
     while True:
         for batch in dataloader:
             yield batch
+
+
+def prepare_obs_for_policy(obs: dict, device: torch.device) -> dict:
+    """Convert simulation observation to policy input format."""
+    import numpy as np
+    batch = {}
+
+    # Extract state (joint positions)
+    state = []
+    for motor in MOTOR_NAMES:
+        key = f"{motor}.pos"
+        state.append(obs.get(key, 0.0))
+    batch["observation.state"] = torch.tensor([state], dtype=torch.float32, device=device)
+
+    # Camera images
+    for key, value in obs.items():
+        if isinstance(value, np.ndarray) and value.ndim == 3:
+            img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+            batch[f"observation.images.{key}"] = img.to(device)
+
+    return batch
+
+
+def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: int, randomize: bool = True, fps: int = 30):
+    """Run evaluation episodes in simulation.
+
+    Returns:
+        success_rate: float between 0 and 1
+        avg_steps: average steps per episode
+        avg_time: average time per episode in seconds
+    """
+    import sys
+    import numpy as np
+    repo_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(repo_root / "src"))
+
+    from lerobot_robot_sim import SO100SimConfig, SO100Sim
+
+    # Initialize simulation (no VR for speed)
+    config = SO100SimConfig(
+        sim_cameras=["wrist_cam", "overhead_cam"],
+        enable_vr=False,
+        camera_width=640,
+        camera_height=480,
+    )
+    sim_robot = SO100Sim(config)
+    sim_robot.connect()
+
+    successes = 0
+    total_steps = 0
+    total_time = 0.0
+    max_steps = 300
+
+    policy.eval()
+
+    for ep in range(num_episodes):
+        policy.reset()
+        sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
+
+        ep_start = time.time()
+        for step in range(max_steps):
+            obs = sim_robot.get_observation()
+            batch = prepare_obs_for_policy(obs, device)
+            batch = preprocessor(batch)
+
+            with torch.no_grad():
+                action = policy.select_action(batch)
+            action = postprocessor(action)
+
+            # Convert action to dict
+            action_np = action.cpu().numpy()
+            action_dict = {f"{MOTOR_NAMES[i]}.pos": float(action_np[i]) for i in range(6)}
+            sim_robot.send_action(action_dict)
+
+            if sim_robot.is_task_complete():
+                successes += 1
+                total_steps += step + 1
+                total_time += time.time() - ep_start
+                break
+        else:
+            total_steps += max_steps
+            total_time += time.time() - ep_start
+
+    sim_robot.disconnect()
+
+    success_rate = successes / num_episodes
+    avg_steps = total_steps / num_episodes
+    avg_time = total_time / num_episodes
+    return success_rate, avg_steps, avg_time
 
 
 def main():
@@ -55,6 +147,8 @@ def main():
     parser.add_argument("--num_workers", type=int, default=4, help="Dataloader workers (default: 4)")
     parser.add_argument("--wandb_project", type=str, default="lerobot-thesis", help="WandB project name")
     parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
+    parser.add_argument("--eval_episodes", type=int, default=0, help="Evaluation episodes per checkpoint (0=disabled)")
+    parser.add_argument("--eval_randomize", action="store_true", help="Randomize object position during eval")
 
     args = parser.parse_args()
 
@@ -282,6 +376,25 @@ def main():
             if not args.no_wandb:
                 wandb.log({"checkpoint/step": step}, step=step)
 
+            # Run evaluation if enabled
+            if args.eval_episodes > 0:
+                print(f"\n  Running {args.eval_episodes} evaluation episodes...")
+                policy.eval()
+                success_rate, avg_steps, avg_time = run_evaluation(
+                    policy, preprocessor, postprocessor, device,
+                    num_episodes=args.eval_episodes,
+                    randomize=args.eval_randomize
+                )
+                policy.train()
+                print(f"  Eval: {success_rate*100:.1f}% success, {avg_steps:.1f} avg steps, {avg_time:.2f}s avg time")
+
+                if not args.no_wandb:
+                    wandb.log({
+                        "eval/success_rate": success_rate,
+                        "eval/avg_steps": avg_steps,
+                        "eval/avg_time": avg_time,
+                    }, step=step)
+
     pbar.close()
 
     # Save final model
@@ -301,6 +414,27 @@ def main():
     print(f"Total time: {elapsed/60:.1f} minutes")
     print(f"Best loss: {best_loss:.4f}")
     print(f"Final model: {final_dir}")
+
+    # Final evaluation
+    if args.eval_episodes > 0:
+        print()
+        print(f"Running final evaluation ({args.eval_episodes} episodes)...")
+        policy.eval()
+        success_rate, avg_steps, avg_time = run_evaluation(
+            policy, preprocessor, postprocessor, device,
+            num_episodes=args.eval_episodes,
+            randomize=args.eval_randomize
+        )
+        print(f"Final success rate: {success_rate*100:.1f}%")
+        print(f"Final avg steps: {avg_steps:.1f}")
+        print(f"Final avg time: {avg_time:.2f}s")
+
+        if not args.no_wandb:
+            wandb.log({
+                "final/success_rate": success_rate,
+                "final/avg_steps": avg_steps,
+                "final/avg_time": avg_time,
+            })
 
     # Log final metrics and finish WandB
     if not args.no_wandb:

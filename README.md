@@ -188,9 +188,23 @@ Train an ACT (Action Chunking Transformer) policy on your recorded data:
 # Basic training (50k steps)
 python training/train_act.py danbhf/sim_pick_place_20251229_101340
 
+# Training with simulation evaluation after each checkpoint
+python training/train_act.py danbhf/sim_pick_place_20251229_101340 \
+    --steps 50000 --eval_episodes 10 --eval_randomize
+
 # Quick test run
-python training/train_act.py danbhf/sim_pick_place_20251229_101340 --steps 5000 --batch_size 4
+python training/train_act.py danbhf/sim_pick_place_20251229_101340 \
+    --steps 5000 --batch_size 4 --save_freq 1000 --eval_episodes 5
 ```
+
+**Training Options:**
+- `--steps N`: Training steps (default: 50000)
+- `--batch_size N`: Batch size (default: 8)
+- `--lr N`: Learning rate (default: 1e-5)
+- `--save_freq N`: Checkpoint save frequency (default: 5000)
+- `--eval_episodes N`: Run N simulation episodes after each checkpoint (default: 0 = disabled)
+- `--eval_randomize`: Randomize object position during evaluation
+- `--no_wandb`: Disable WandB logging
 
 See [training/README.md](training/README.md) for more options.
 
@@ -199,24 +213,32 @@ See [training/README.md](training/README.md) for more options.
 Run your trained ACT policy in the VR simulation:
 
 ```bash
-# Run with final model
-python inference/run_act_sim.py outputs/train/act_20251229_120000/final
+# Run with final model (VR mode)
+python inference/run_act_sim.py outputs/train/act_20251229_111846/final
 
-# Run specific checkpoint with more episodes
-python inference/run_act_sim.py outputs/train/act_20251229_120000/checkpoint_010000 --episodes 10
+# Without VR (uses MuJoCo viewer) - faster for batch evaluation
+python inference/run_act_sim.py outputs/train/act_20251229_111846/final --no_vr
 
-# Without VR (uses MuJoCo viewer)
-python inference/run_act_sim.py outputs/train/act_20251229_120000/final --no_vr
+# Run 20 episodes with WandB logging
+python inference/run_act_sim.py outputs/train/act_20251229_111846/final \
+    --episodes 20 --no_vr
+
+# Compare checkpoints (disable WandB for quick tests)
+python inference/run_act_sim.py outputs/train/act_20251229_111846/checkpoint_025000 \
+    --episodes 10 --no_vr --no_wandb
 ```
 
 **Options:**
 - `--episodes N`: Number of evaluation episodes (default: 5)
 - `--fps N`: Simulation frame rate (default: 30)
 - `--max_steps N`: Maximum steps per episode (default: 300)
-- `--no_vr`: Use MuJoCo viewer instead of VR
+- `--no_vr`: Use MuJoCo viewer instead of VR headset
 - `--no_randomize`: Disable object randomization
 - `--pos_range N`: Position randomization in cm (default: 4)
 - `--rot_range N`: Rotation randomization in degrees (default: 180)
+- `--no_wandb`: Disable WandB logging
+
+**Output:** Reports success rate, average steps, and average time per episode. Logs to WandB for historical comparison.
 
 ## Scene Description
 

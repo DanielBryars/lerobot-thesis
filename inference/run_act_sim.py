@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import wandb
 
 # Add src to path for simulation plugin
 REPO_ROOT = Path(__file__).parent.parent
@@ -131,6 +132,7 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
     Returns:
         success: True if task completed
         steps: Number of steps taken
+        elapsed_time: Time taken in seconds
     """
     frame_time = 1.0 / fps
 
@@ -138,6 +140,8 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
     policy.reset()
 
     print(f"  Running episode (chunk_size={policy.config.chunk_size}, max_steps={max_steps})...")
+
+    episode_start = time.time()
 
     for step in range(max_steps):
         step_start = time.time()
@@ -169,20 +173,23 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
         if not use_vr:
             if not sim_robot.render():
                 print("  Viewer closed")
-                return False, step + 1
+                elapsed = time.time() - episode_start
+                return False, step + 1, elapsed
 
         # Check task completion
         if sim_robot.is_task_complete():
-            print(f"  Task completed at step {step + 1}!")
-            return True, step + 1
+            elapsed = time.time() - episode_start
+            print(f"  Task completed at step {step + 1} ({elapsed:.2f}s)")
+            return True, step + 1, elapsed
 
         # Maintain frame rate
-        elapsed = time.time() - step_start
-        if elapsed < frame_time:
-            time.sleep(frame_time - elapsed)
+        step_elapsed = time.time() - step_start
+        if step_elapsed < frame_time:
+            time.sleep(frame_time - step_elapsed)
 
-    print(f"  Episode timed out after {max_steps} steps")
-    return False, max_steps
+    elapsed = time.time() - episode_start
+    print(f"  Episode timed out after {max_steps} steps ({elapsed:.2f}s)")
+    return False, max_steps, elapsed
 
 
 def main():
@@ -196,6 +203,8 @@ def main():
     parser.add_argument("--no_randomize", action="store_true", help="Disable object randomization")
     parser.add_argument("--pos_range", type=float, default=4.0, help="Position randomization in cm")
     parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization in degrees")
+    parser.add_argument("--wandb_project", type=str, default="lerobot-thesis", help="WandB project name")
+    parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
 
     args = parser.parse_args()
 
@@ -242,8 +251,26 @@ def main():
     print(f"Max steps: {args.max_steps}")
     print(f"VR: {'disabled' if args.no_vr else 'enabled'}")
     print(f"Randomization: {'disabled' if args.no_randomize else f'±{args.pos_range}cm, ±{args.rot_range}°'}")
+    print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()
+
+    # Initialize WandB
+    if not args.no_wandb:
+        wandb.init(
+            project=args.wandb_project,
+            name=f"eval_{checkpoint_path.parent.name}",
+            config={
+                "checkpoint": str(checkpoint_path),
+                "episodes": args.episodes,
+                "fps": args.fps,
+                "max_steps": args.max_steps,
+                "randomize": not args.no_randomize,
+                "pos_range_cm": args.pos_range,
+                "rot_range_deg": args.rot_range,
+            },
+            tags=["inference", "evaluation"],
+        )
 
     print("Controls:")
     print("  SPACEBAR - Recenter VR view")
@@ -253,6 +280,8 @@ def main():
     # Run episodes
     successes = 0
     total_steps = 0
+    total_time = 0.0
+    episode_results = []
 
     try:
         for ep in range(args.episodes):
@@ -269,7 +298,7 @@ def main():
             time.sleep(0.5)
 
             # Run episode
-            success, steps = run_episode(
+            success, steps, elapsed = run_episode(
                 sim_robot, policy, preprocessor, postprocessor, device,
                 fps=args.fps,
                 max_steps=args.max_steps,
@@ -279,6 +308,23 @@ def main():
             if success:
                 successes += 1
             total_steps += steps
+            total_time += elapsed
+
+            episode_results.append({
+                "episode": ep + 1,
+                "success": success,
+                "steps": steps,
+                "time": elapsed,
+            })
+
+            # Log to WandB
+            if not args.no_wandb:
+                wandb.log({
+                    "episode/success": 1 if success else 0,
+                    "episode/steps": steps,
+                    "episode/time": elapsed,
+                    "episode/cumulative_success_rate": successes / (ep + 1),
+                }, step=ep + 1)
 
             # Brief pause between episodes
             time.sleep(1.0)
@@ -289,13 +335,29 @@ def main():
         sim_robot.disconnect()
 
     # Summary
+    num_episodes = len(episode_results)
+    success_rate = successes / max(1, num_episodes)
+    avg_steps = total_steps / max(1, num_episodes)
+    avg_time = total_time / max(1, num_episodes)
+
     print()
     print("=" * 60)
     print("Results")
     print("=" * 60)
-    print(f"Success rate: {successes}/{args.episodes} ({100*successes/max(1,args.episodes):.1f}%)")
-    print(f"Average steps: {total_steps/max(1,args.episodes):.1f}")
+    print(f"Success rate: {successes}/{num_episodes} ({100*success_rate:.1f}%)")
+    print(f"Average steps: {avg_steps:.1f}")
+    print(f"Average time: {avg_time:.2f}s")
     print("=" * 60)
+
+    # Log final summary to WandB
+    if not args.no_wandb:
+        wandb.log({
+            "summary/success_rate": success_rate,
+            "summary/avg_steps": avg_steps,
+            "summary/avg_time": avg_time,
+            "summary/total_episodes": num_episodes,
+        })
+        wandb.finish()
 
 
 if __name__ == "__main__":

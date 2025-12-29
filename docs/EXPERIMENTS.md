@@ -134,3 +134,33 @@ Average steps: 144.8
 - [ ] Try Lincoln's dataset: `danbhf/sim_pick_place_20251229_144730`
 
 ---
+
+### Experiment 4: Training with In-Loop Evaluation
+
+**Dataset:** `danbhf/sim_pick_place_20251229_101340` (20 episodes)
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_20251229_101340 \
+    --steps 50000 --eval_episodes 10 --eval_randomize
+```
+
+**New Features Added:**
+- Simulation evaluation runs after each checkpoint (every 5000 steps)
+- Tracks success rate, average steps, and average time per episode
+- Logs `eval/success_rate`, `eval/avg_steps`, `eval/avg_time` to WandB
+- Enables learning curve visualization (success rate vs training step)
+
+**Inference Improvements:**
+- Added timing per episode
+- Added optional WandB logging for evaluation runs
+- Logs per-episode metrics and summary statistics
+
+**Status:** Training in progress
+
+**Expected Outcome:**
+- WandB dashboard showing both loss curves and success rate curves
+- Ability to identify optimal checkpoint (not necessarily the final one)
+- Better understanding of how many training steps are needed
+
+---
