@@ -399,6 +399,10 @@ def main():
     print("  D     - Discard current episode")
     print("  R     - Reset scene (when not recording)")
     print("  Q     - Quit")
+    print("")
+    print("VR Controls:")
+    print("  SPACEBAR    - Recenter robot in front of you")
+    print("  Thumbsticks - Move/rotate view (if VR controllers working)")
     print("\nTask auto-completes when Duplo lands in bowl!")
     print("=" * 60)
 
@@ -433,6 +437,9 @@ def main():
 
             # Always render VR and step simulation
             sim_robot.render_vr()
+
+            # Check keyboard for VR controls (spacebar to recenter)
+            sim_robot.check_vr_keyboard()
 
             # Read leader arm (always, for live preview)
             try:

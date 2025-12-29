@@ -435,6 +435,16 @@ class SO100Sim(Robot):
                 return False
         return True
 
+    def recenter_vr(self) -> None:
+        """Recenter the VR view so robot is in front of user."""
+        if self.vr_renderer is not None:
+            self.vr_renderer._recenter_scene()
+
+    def check_vr_keyboard(self) -> None:
+        """Check keyboard for VR controls (spacebar to recenter)."""
+        if self.vr_renderer is not None:
+            self.vr_renderer.check_keyboard()
+
     def render(self) -> bool:
         """Render to screen using MuJoCo passive viewer. Returns False if window closed."""
         if not hasattr(self, '_viewer') or self._viewer is None:

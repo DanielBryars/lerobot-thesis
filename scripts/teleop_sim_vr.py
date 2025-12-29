@@ -26,6 +26,12 @@ except ImportError:
     exit(1)
 
 try:
+    import msvcrt
+    _msvcrt_available = True
+except ImportError:
+    _msvcrt_available = False
+
+try:
     import glfw
     from OpenGL import GL
 except ImportError:
@@ -615,6 +621,20 @@ class VRRenderer:
         except Exception as e:
             print(f"Controller debug failed: {e}")
 
+    def check_keyboard(self):
+        """Check for keyboard input (spacebar to recenter)."""
+        if not _msvcrt_available:
+            return
+
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b' ':  # Spacebar
+                print("Spacebar pressed - recentering...")
+                self._recenter_scene()
+            elif key == b'r':  # R key as alternative
+                print("R pressed - recentering...")
+                self._recenter_scene()
+
     def _recenter_scene(self):
         """Move scene so robot is 30cm in front at waist height, aligned with user's facing direction."""
         if self.last_head_pos is None:
@@ -676,6 +696,9 @@ class VRRenderer:
 
         # Poll controller input
         self._handle_controller_input(frame_state.predicted_display_time)
+
+        # Check keyboard fallback (spacebar to recenter)
+        self.check_keyboard()
 
         # Debug: show controller status on first frame and periodically
         if not hasattr(self, '_frame_count'):
@@ -774,6 +797,9 @@ def run_teleop_vr(port: str, fps: int = 30):
     print("  Left Thumbstick:  Forward/back (Y), Left/right (X)")
     print("  Right Thumbstick: Up/down (Y), Rotate view (X)")
     print("  X Button (left):  Recenter robot in front of you")
+    print("")
+    print("Keyboard Fallback (in console window):")
+    print("  SPACEBAR or R:    Recenter robot in front of you")
     print("")
     print("Press Ctrl+C to exit")
     print("="*50 + "\n")
@@ -874,6 +900,9 @@ def run_vr_test(fps: int = 30):
     print("  Left Thumbstick:  Forward/back (Y), Left/right (X)")
     print("  Right Thumbstick: Up/down (Y), Rotate view (X)")
     print("  X Button (left):  Recenter robot in front of you")
+    print("")
+    print("Keyboard Fallback (in console window):")
+    print("  SPACEBAR or R:    Recenter robot in front of you")
     print("")
     print("Press Ctrl+C to exit")
     print("="*50 + "\n")
