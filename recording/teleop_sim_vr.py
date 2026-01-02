@@ -91,13 +91,16 @@ def create_leader_bus(port: str):
     return bus
 
 
-def load_calibration(arm_id: str = "leader_so100"):
+def load_calibration(arm_id: str = "leader_so100", is_follower: bool = False):
     """Load calibration from JSON file."""
     import draccus
     from lerobot.motors import MotorCalibration
     from lerobot.utils.constants import HF_LEROBOT_CALIBRATION
 
-    calib_path = HF_LEROBOT_CALIBRATION / "teleoperators" / "so100_leader_sts3250" / f"{arm_id}.json"
+    if is_follower:
+        calib_path = HF_LEROBOT_CALIBRATION / "robots" / "so100_follower_sts3250" / f"{arm_id}.json"
+    else:
+        calib_path = HF_LEROBOT_CALIBRATION / "teleoperators" / "so100_leader_sts3250" / f"{arm_id}.json"
 
     if not calib_path.exists():
         raise FileNotFoundError(f"Calibration file not found: {calib_path}")
@@ -945,17 +948,20 @@ def run_vr_test(fps: int = 30):
         print("Done.")
 
 
-def run_teleop_no_vr(port: str, fps: int = 30):
-    """Run teleoperation with leader arm controlling sim, rendered to screen (no VR)."""
+def run_teleop_no_vr(port: str, fps: int = 30, is_follower: bool = False):
+    """Run teleoperation with arm controlling sim, rendered to screen (no VR)."""
 
-    print(f"Connecting to leader arm on {port}...")
-    bus = create_leader_bus(port)
+    arm_type = "follower" if is_follower else "leader"
+    arm_id = "follower_so100" if is_follower else "leader_so100"
+
+    print(f"Connecting to {arm_type} arm on {port}...")
+    bus = create_leader_bus(port)  # Same motor config for both
     bus.connect()
 
     print("Loading calibration...")
-    bus.calibration = load_calibration("leader_so100")
+    bus.calibration = load_calibration(arm_id, is_follower=is_follower)
     bus.disable_torque()
-    print("Leader arm connected!")
+    print(f"{arm_type.capitalize()} arm connected!")
 
     # Load MuJoCo model
     print("Loading MuJoCo model...")
@@ -1099,16 +1105,19 @@ def run_no_vr_test(fps: int = 30):
 def main():
     parser = argparse.ArgumentParser(description="Teleop for SO101 sim (VR or screen)")
     parser.add_argument("--port", "-p", type=str, default=None,
-                        help="Serial port for leader arm (default: from config.json)")
+                        help="Serial port for arm (default: from config.json)")
     parser.add_argument("--fps", "-f", type=int, default=30,
                         help="Target frame rate (default: 30)")
     parser.add_argument("--test", "-t", action="store_true",
                         help="Test mode: no arm required")
     parser.add_argument("--no-vr", action="store_true",
                         help="Render to screen instead of VR headset")
+    parser.add_argument("--follower", action="store_true",
+                        help="Use follower arm instead of leader arm")
 
     args = parser.parse_args()
     use_vr = not args.no_vr
+    is_follower = args.follower
 
     if args.test:
         if use_vr:
@@ -1120,17 +1129,18 @@ def main():
     port = args.port
     if port is None:
         config = load_config()
-        if config and "leader" in config:
-            port = config["leader"]["port"]
-            print(f"Using leader port from config: {port}")
+        arm_key = "follower" if is_follower else "leader"
+        if config and arm_key in config:
+            port = config[arm_key]["port"]
+            print(f"Using {arm_key} port from config: {port}")
         else:
             port = "COM8"
-            print(f"Using default leader port: {port}")
+            print(f"Using default port: {port}")
 
     if use_vr:
-        run_teleop_vr(port, args.fps)
+        run_teleop_vr(port, args.fps)  # TODO: add is_follower support to VR mode
     else:
-        run_teleop_no_vr(port, args.fps)
+        run_teleop_no_vr(port, args.fps, is_follower=is_follower)
 
 
 if __name__ == "__main__":
