@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 """
-Teleoperate the SO101 simulation using a physical arm with VR display.
+Teleoperate the SO101 simulation using a physical arm.
 
-Uses the gym environment for physics (like teleop_sim.py) but renders to VR headset.
-This can be integrated with lerobot record for dataset collection.
+Supports both VR and screen rendering modes.
 
 Usage:
-    python teleop_sim_vr.py                    # Use leader arm (default)
+    python teleop_sim_vr.py                    # VR mode with leader arm
+    python teleop_sim_vr.py --no-vr            # Screen mode with leader arm
     python teleop_sim_vr.py --port COM8
+    python teleop_sim_vr.py --test             # VR test mode (no arm)
+    python teleop_sim_vr.py --test --no-vr     # Screen test mode (no arm)
 """
 import argparse
 import ctypes
@@ -17,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import mujoco
+import mujoco.viewer
 
 try:
     import xr
@@ -942,19 +945,176 @@ def run_vr_test(fps: int = 30):
         print("Done.")
 
 
+def run_teleop_no_vr(port: str, fps: int = 30):
+    """Run teleoperation with leader arm controlling sim, rendered to screen (no VR)."""
+
+    print(f"Connecting to leader arm on {port}...")
+    bus = create_leader_bus(port)
+    bus.connect()
+
+    print("Loading calibration...")
+    bus.calibration = load_calibration("leader_so100")
+    bus.disable_torque()
+    print("Leader arm connected!")
+
+    # Load MuJoCo model
+    print("Loading MuJoCo model...")
+    scene_xml = Path(__file__).parent.parent / "scenes" / "so101_with_wrist_cam.xml"
+    mj_model = mujoco.MjModel.from_xml_path(str(scene_xml))
+    mj_data = mujoco.MjData(mj_model)
+
+    # Initialize simulation
+    for _ in range(100):
+        mujoco.mj_step(mj_model, mj_data)
+
+    # Launch passive viewer
+    print("Launching viewer...")
+    viewer = mujoco.viewer.launch_passive(mj_model, mj_data)
+
+    print("\n" + "="*50)
+    print("Teleop Started (Screen Mode)")
+    print("Move leader arm to control the simulation")
+    print("Close the viewer window or press Ctrl+C to exit")
+    print("="*50 + "\n")
+
+    frame_time = 1.0 / fps
+    step_count = 0
+    n_sim_steps = 10
+    last_normalized = np.zeros(6, dtype=np.float32)
+    consecutive_errors = 0
+    max_consecutive_errors = 30
+
+    try:
+        while viewer.is_running():
+            loop_start = time.time()
+
+            # Read leader arm (with error recovery)
+            try:
+                positions = bus.sync_read("Present_Position")
+                normalized = np.array([
+                    positions["shoulder_pan"],
+                    positions["shoulder_lift"],
+                    positions["elbow_flex"],
+                    positions["wrist_flex"],
+                    positions["wrist_roll"],
+                    positions["gripper"],
+                ], dtype=np.float32)
+                last_normalized = normalized.copy()
+                if consecutive_errors > 0:
+                    print(f"Leader arm reconnected after {consecutive_errors} missed frames")
+                consecutive_errors = 0
+            except ConnectionError:
+                consecutive_errors += 1
+                if consecutive_errors == 1:
+                    print(f"\nLeader arm read failed, using last position...")
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"\nToo many consecutive read errors ({consecutive_errors}), exiting.")
+                    break
+                normalized = last_normalized
+
+            joint_radians = normalized_to_radians(normalized)
+            joint_radians = np.clip(joint_radians, SIM_ACTION_LOW, SIM_ACTION_HIGH)
+
+            # Apply control and step physics
+            mj_data.ctrl[:] = joint_radians
+            for _ in range(n_sim_steps):
+                mujoco.mj_step(mj_model, mj_data)
+            step_count += 1
+
+            # Sync viewer
+            viewer.sync()
+
+            # Print status periodically
+            if step_count % 100 == 0:
+                elapsed = time.time() - loop_start
+                actual_qpos = mj_data.qpos[:6]
+                print(f"Step: {step_count}, FPS: {1/elapsed:.1f}")
+                print(f"  Normalized:  [{normalized[0]:6.1f}, {normalized[1]:6.1f}, {normalized[2]:6.1f}, {normalized[3]:6.1f}, {normalized[4]:6.1f}, {normalized[5]:5.1f}]")
+                print(f"  Target rad:  [{joint_radians[0]:6.3f}, {joint_radians[1]:6.3f}, {joint_radians[2]:6.3f}, {joint_radians[3]:6.3f}, {joint_radians[4]:6.3f}, {joint_radians[5]:6.3f}]")
+                print(f"  Actual qpos: [{actual_qpos[0]:6.3f}, {actual_qpos[1]:6.3f}, {actual_qpos[2]:6.3f}, {actual_qpos[3]:6.3f}, {actual_qpos[4]:6.3f}, {actual_qpos[5]:6.3f}]")
+
+            # Maintain frame rate
+            elapsed = time.time() - loop_start
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
+
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        viewer.close()
+        bus.disconnect()
+        print("Done.")
+
+
+def run_no_vr_test(fps: int = 30):
+    """Run test mode without physical arm, rendered to screen (no VR)."""
+
+    # Load MuJoCo model
+    print("Loading MuJoCo model...")
+    scene_xml = Path(__file__).parent.parent / "scenes" / "so101_with_wrist_cam.xml"
+    mj_model = mujoco.MjModel.from_xml_path(str(scene_xml))
+    mj_data = mujoco.MjData(mj_model)
+
+    # Initialize simulation to rest position
+    for _ in range(100):
+        mujoco.mj_step(mj_model, mj_data)
+
+    # Launch passive viewer
+    print("Launching viewer...")
+    viewer = mujoco.viewer.launch_passive(mj_model, mj_data)
+
+    print("\n" + "="*50)
+    print("Test Mode (Screen - no arm required)")
+    print("Close the viewer window or press Ctrl+C to exit")
+    print("="*50 + "\n")
+
+    frame_time = 1.0 / fps
+    step_count = 0
+
+    try:
+        while viewer.is_running():
+            loop_start = time.time()
+            step_count += 1
+
+            # Sync viewer
+            viewer.sync()
+
+            # Print status periodically
+            if step_count % 100 == 0:
+                elapsed = time.time() - loop_start
+                print(f"Step: {step_count}, FPS: {1/elapsed:.1f}")
+
+            # Maintain frame rate
+            elapsed = time.time() - loop_start
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
+
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        viewer.close()
+        print("Done.")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="VR Teleop for SO101 sim")
+    parser = argparse.ArgumentParser(description="Teleop for SO101 sim (VR or screen)")
     parser.add_argument("--port", "-p", type=str, default=None,
                         help="Serial port for leader arm (default: from config.json)")
     parser.add_argument("--fps", "-f", type=int, default=30,
                         help="Target frame rate (default: 30)")
     parser.add_argument("--test", "-t", action="store_true",
-                        help="Test mode: VR only, no arm required")
+                        help="Test mode: no arm required")
+    parser.add_argument("--no-vr", action="store_true",
+                        help="Render to screen instead of VR headset")
 
     args = parser.parse_args()
+    use_vr = not args.no_vr
 
     if args.test:
-        run_vr_test(args.fps)
+        if use_vr:
+            run_vr_test(args.fps)
+        else:
+            run_no_vr_test(args.fps)
         return
 
     port = args.port
@@ -967,7 +1127,10 @@ def main():
             port = "COM8"
             print(f"Using default leader port: {port}")
 
-    run_teleop_vr(port, args.fps)
+    if use_vr:
+        run_teleop_vr(port, args.fps)
+    else:
+        run_teleop_no_vr(port, args.fps)
 
 
 if __name__ == "__main__":

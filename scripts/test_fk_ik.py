@@ -93,14 +93,24 @@ class MuJoCoFK:
 
         mujoco.mj_forward(self.model, self.data)
 
-        # Compute Jacobian
+        # Compute full Jacobian
         jacp = np.zeros((3, self.model.nv))  # Position Jacobian
         jacr = np.zeros((3, self.model.nv))  # Rotation Jacobian
 
         mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
 
-        # Return only the columns corresponding to arm joints (first 5)
-        return jacp[:, :5], jacr[:, :5]
+        # Extract columns for arm joints only (using dof addresses)
+        # The duplo freejoint takes DOFs 0-5, robot joints start after
+        dof_indices = []
+        for name in ARM_JOINT_NAMES:
+            joint_id = self.joint_ids[name]
+            dof_idx = self.model.jnt_dofadr[joint_id]
+            dof_indices.append(dof_idx)
+
+        jacp_arm = jacp[:, dof_indices]
+        jacr_arm = jacr[:, dof_indices]
+
+        return jacp_arm, jacr_arm
 
 
 class MuJoCoIK:
@@ -116,10 +126,10 @@ class MuJoCoIK:
         target_pos: np.ndarray,
         target_rot: np.ndarray = None,
         initial_angles: np.ndarray = None,
-        max_iterations: int = 100,
+        max_iterations: int = 500,
         pos_tolerance: float = 1e-4,
         rot_tolerance: float = 1e-3,
-        step_size: float = 0.5,
+        step_size: float = 1.0,
     ) -> tuple[np.ndarray, bool, float]:
         """
         Solve IK using damped least squares (Jacobian pseudoinverse).
@@ -141,8 +151,8 @@ class MuJoCoIK:
         if initial_angles is None:
             initial_angles = np.zeros(5)
 
-        angles = initial_angles.copy()
-        damping = 0.01  # Damping factor for stability
+        angles = initial_angles.copy().astype(np.float64)
+        damping = 0.1  # Damping factor for stability
 
         for iteration in range(max_iterations):
             # Get current end-effector pose
@@ -166,8 +176,8 @@ class MuJoCoIK:
                 rot_error_mat = target_rot @ current_rot.T
                 rot_error = rotation_matrix_to_axis_angle(rot_error_mat)
 
-                J = np.vstack([jacp, jacr])
-                dx = np.concatenate([pos_error, rot_error * 0.5])  # Scale rotation
+                J = np.vstack([jacp, jacr * 0.1])  # Scale rotation Jacobian down
+                dx = np.concatenate([pos_error, rot_error * 0.1])  # Scale rotation error
             else:
                 # Position only (3DOF)
                 J = jacp
@@ -181,8 +191,10 @@ class MuJoCoIK:
             # Update angles
             angles = angles + step_size * dq
 
-            # Clip to joint limits (approximate)
-            angles = np.clip(angles, -np.pi, np.pi)
+            # Clip to joint limits (from MuJoCo model)
+            joint_limits_low = np.array([-1.92, -1.75, -1.69, -1.66, -2.74])
+            joint_limits_high = np.array([1.92, 1.75, 1.69, 1.66, 2.84])
+            angles = np.clip(angles, joint_limits_low, joint_limits_high)
 
         return angles, False, pos_error_norm
 
