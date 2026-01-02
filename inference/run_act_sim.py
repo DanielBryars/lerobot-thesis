@@ -27,12 +27,104 @@ import wandb
 # Add src to path for simulation plugin
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
 # Motor names in order
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+# Sim action space bounds (radians) for EE action conversion
+SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
+SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
+
+# Global IK solver (initialized lazily)
+_ik_solver = None
+_fk_solver = None
+
+# Track IK failures for diagnostics
+_ik_failure_count = 0
+_ik_total_count = 0
+
+
+def get_ik_solver():
+    """Lazily initialize IK solver for EE action space."""
+    global _ik_solver, _fk_solver
+    if _ik_solver is None:
+        from test_fk_ik import MuJoCoFK, MuJoCoIK
+        scene_xml = str(REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml")
+        _fk_solver = MuJoCoFK(scene_xml)
+        _ik_solver = MuJoCoIK(_fk_solver)
+        print("Initialized IK solver for EE action space")
+    return _ik_solver
+
+
+def quaternion_to_rotation_matrix(quat: np.ndarray) -> np.ndarray:
+    """Convert quaternion [qw, qx, qy, qz] to rotation matrix."""
+    w, x, y, z = quat
+    n = np.sqrt(w*w + x*x + y*y + z*z)
+    if n > 0:
+        w, x, y, z = w/n, x/n, y/n, z/n
+    R = np.array([
+        [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
+        [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
+        [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+    ])
+    return R
+
+
+def ee_action_to_joint_action(ee_action: np.ndarray, last_joints: np.ndarray = None) -> tuple[np.ndarray, bool]:
+    """Convert EE action [xyz, quat, gripper] to joint action [6 joints].
+
+    Args:
+        ee_action: 8-dim array [x, y, z, qw, qx, qy, qz, gripper]
+        last_joints: Previous joint angles for IK initial guess (5-dim, no gripper)
+
+    Returns:
+        Tuple of (6-dim joint action in radians, IK success flag)
+    """
+    global _ik_failure_count, _ik_total_count
+    ik = get_ik_solver()
+
+    # Extract EE pose
+    ee_pos = ee_action[:3]
+    ee_quat = ee_action[3:7]
+    gripper = ee_action[7]
+
+    # Convert quaternion to rotation matrix
+    ee_rot = quaternion_to_rotation_matrix(ee_quat)
+
+    # Initial guess
+    if last_joints is None:
+        last_joints = np.zeros(5)
+
+    # Solve IK
+    ik_joints, success, error = ik.solve(
+        target_pos=ee_pos,
+        target_rot=ee_rot,
+        initial_angles=last_joints,
+        max_iterations=100,
+        pos_tolerance=1e-3,
+    )
+
+    _ik_total_count += 1
+
+    if not success:
+        _ik_failure_count += 1
+        # Log warning (but don't spam - only every 10th failure)
+        if _ik_failure_count <= 3 or _ik_failure_count % 10 == 0:
+            print(f"  [WARNING] IK failed ({_ik_failure_count}/{_ik_total_count}): "
+                  f"target_pos={ee_pos}, error={error:.4f}mm, using last joints")
+        # Fall back to last joints - for safety during inference
+        # (hard failure could cause jerky robot motion)
+        ik_joints = last_joints
+
+    # Combine with gripper and clip to bounds
+    joint_action = np.concatenate([ik_joints, [gripper]])
+    joint_action = np.clip(joint_action, SIM_ACTION_LOW, SIM_ACTION_HIGH)
+
+    return joint_action, success
 
 
 def load_policy(checkpoint_path: Path, device: torch.device):
@@ -85,15 +177,72 @@ def prepare_observation(obs: dict, device: torch.device) -> dict:
     return batch
 
 
-def actions_to_dict(actions: torch.Tensor) -> list[dict]:
+# Track last joint state for IK initial guess (global state for continuity)
+_last_ik_joints = None
+
+
+def actions_to_dict(actions: torch.Tensor, is_ee_action_space: bool = False) -> list[dict]:
     """Convert policy action tensor to list of action dicts.
 
     Args:
         actions: Tensor of shape [action_dim] or [chunk_size, action_dim] or [batch, chunk_size, action_dim]
+        is_ee_action_space: If True, actions are 8-dim EE and need IK conversion
 
     Returns:
         List of action dicts with motor names
     """
+    global _last_ik_joints
+
+    actions = actions.cpu().numpy()
+
+    # Flatten to 2D: [num_actions, action_dim]
+    if actions.ndim == 1:
+        actions = actions.reshape(1, -1)
+    elif actions.ndim == 3:
+        actions = actions[0]  # Take first batch
+
+    action_dim = actions.shape[-1]
+    action_dicts = []
+
+    for t in range(actions.shape[0]):
+        action = actions[t]
+
+        # Convert EE actions to joint actions if needed
+        if is_ee_action_space or action_dim == 8:
+            joint_action, ik_success = ee_action_to_joint_action(action, _last_ik_joints)
+            _last_ik_joints = joint_action[:5].copy()  # Save for next IK guess
+        else:
+            joint_action = action
+
+        # Build action dict
+        action_dict = {}
+        for i, motor in enumerate(MOTOR_NAMES):
+            action_dict[f"{motor}.pos"] = float(joint_action[i])
+        action_dicts.append(action_dict)
+
+    return action_dicts
+
+
+def reset_ik_state():
+    """Reset IK state at the start of each episode."""
+    global _last_ik_joints, _ik_failure_count, _ik_total_count
+    _last_ik_joints = None
+    _ik_failure_count = 0
+    _ik_total_count = 0
+
+
+def get_ik_stats() -> tuple[int, int, float]:
+    """Get IK statistics for current episode.
+
+    Returns:
+        Tuple of (failures, total_calls, failure_rate)
+    """
+    rate = _ik_failure_count / max(1, _ik_total_count)
+    return _ik_failure_count, _ik_total_count, rate
+
+
+def _old_actions_to_dict(actions: torch.Tensor) -> list[dict]:
+    """DEPRECATED: Original joint-only version."""
     actions = actions.cpu().numpy()
 
     # Handle different output shapes from select_action
@@ -133,8 +282,13 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
         success: True if task completed
         steps: Number of steps taken
         elapsed_time: Time taken in seconds
+        ik_failures: Number of IK failures (0 for joint action space)
+        ik_total: Total IK calls (0 for joint action space)
     """
     frame_time = 1.0 / fps
+
+    # Reset IK state for new episode (for EE action space)
+    reset_ik_state()
 
     # Reset the policy's internal action queue
     policy.reset()
@@ -174,13 +328,17 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
             if not sim_robot.render():
                 print("  Viewer closed")
                 elapsed = time.time() - episode_start
-                return False, step + 1, elapsed
+                ik_failures, ik_total, _ = get_ik_stats()
+                return False, step + 1, elapsed, ik_failures, ik_total
 
         # Check task completion
         if sim_robot.is_task_complete():
             elapsed = time.time() - episode_start
+            ik_failures, ik_total, _ = get_ik_stats()
             print(f"  Task completed at step {step + 1} ({elapsed:.2f}s)")
-            return True, step + 1, elapsed
+            if ik_total > 0:
+                print(f"  IK stats: {ik_failures}/{ik_total} failures ({100*ik_failures/ik_total:.1f}%)")
+            return True, step + 1, elapsed, ik_failures, ik_total
 
         # Maintain frame rate
         step_elapsed = time.time() - step_start
@@ -188,8 +346,11 @@ def run_episode(sim_robot, policy, preprocessor, postprocessor, device, fps: int
             time.sleep(frame_time - step_elapsed)
 
     elapsed = time.time() - episode_start
+    ik_failures, ik_total, _ = get_ik_stats()
     print(f"  Episode timed out after {max_steps} steps ({elapsed:.2f}s)")
-    return False, max_steps, elapsed
+    if ik_total > 0:
+        print(f"  IK stats: {ik_failures}/{ik_total} failures ({100*ik_failures/ik_total:.1f}%)")
+    return False, max_steps, elapsed, ik_failures, ik_total
 
 
 def main():
@@ -281,6 +442,8 @@ def main():
     successes = 0
     total_steps = 0
     total_time = 0.0
+    total_ik_failures = 0
+    total_ik_calls = 0
     episode_results = []
 
     try:
@@ -298,7 +461,7 @@ def main():
             time.sleep(0.5)
 
             # Run episode
-            success, steps, elapsed = run_episode(
+            success, steps, elapsed, ik_failures, ik_calls = run_episode(
                 sim_robot, policy, preprocessor, postprocessor, device,
                 fps=args.fps,
                 max_steps=args.max_steps,
@@ -309,22 +472,30 @@ def main():
                 successes += 1
             total_steps += steps
             total_time += elapsed
+            total_ik_failures += ik_failures
+            total_ik_calls += ik_calls
 
             episode_results.append({
                 "episode": ep + 1,
                 "success": success,
                 "steps": steps,
                 "time": elapsed,
+                "ik_failures": ik_failures,
+                "ik_calls": ik_calls,
             })
 
             # Log to WandB
             if not args.no_wandb:
-                wandb.log({
+                log_data = {
                     "episode/success": 1 if success else 0,
                     "episode/steps": steps,
                     "episode/time": elapsed,
                     "episode/cumulative_success_rate": successes / (ep + 1),
-                }, step=ep + 1)
+                }
+                if ik_calls > 0:
+                    log_data["episode/ik_failure_rate"] = ik_failures / ik_calls
+                    log_data["episode/ik_failures"] = ik_failures
+                wandb.log(log_data, step=ep + 1)
 
             # Brief pause between episodes
             time.sleep(1.0)
@@ -339,6 +510,7 @@ def main():
     success_rate = successes / max(1, num_episodes)
     avg_steps = total_steps / max(1, num_episodes)
     avg_time = total_time / max(1, num_episodes)
+    ik_failure_rate = total_ik_failures / max(1, total_ik_calls)
 
     print()
     print("=" * 60)
@@ -347,16 +519,23 @@ def main():
     print(f"Success rate: {successes}/{num_episodes} ({100*success_rate:.1f}%)")
     print(f"Average steps: {avg_steps:.1f}")
     print(f"Average time: {avg_time:.2f}s")
+    if total_ik_calls > 0:
+        print(f"IK failures: {total_ik_failures}/{total_ik_calls} ({100*ik_failure_rate:.2f}%)")
     print("=" * 60)
 
     # Log final summary to WandB
     if not args.no_wandb:
-        wandb.log({
+        summary_data = {
             "summary/success_rate": success_rate,
             "summary/avg_steps": avg_steps,
             "summary/avg_time": avg_time,
             "summary/total_episodes": num_episodes,
-        })
+        }
+        if total_ik_calls > 0:
+            summary_data["summary/ik_failure_rate"] = ik_failure_rate
+            summary_data["summary/total_ik_failures"] = total_ik_failures
+            summary_data["summary/total_ik_calls"] = total_ik_calls
+        wandb.log(summary_data)
         wandb.finish()
 
 

@@ -231,7 +231,8 @@ def main():
                 return
 
     # Try to load per-episode scene info
-    episode_scenes_path = dataset.meta.root / "meta" / "episode_scenes.json"
+    episode_scenes_path = dataset.root / "meta" / "episode_scenes.json"
+    print(f"Looking for episode_scenes at: {episode_scenes_path}")
     if episode_scenes_path.exists():
         import json
         with open(episode_scenes_path) as f:

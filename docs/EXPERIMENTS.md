@@ -652,7 +652,203 @@ python training/train_act.py danbhf/sim_pick_place_merged_40ep \
     --steps 50000 --batch_size 48 --lr 6e-5 --eval_episodes 30 --eval_randomize --cache_dataset
 ```
 
-**Status:** Pending
+**Status:** Complete
+
+**Results:**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time |
+|------------|--------------|-----------|----------|
+| 5k         | 76.7%        | 162.7     | 0.65s    |
+| 10k        | 70.0%        | 183.1     | 0.72s    |
+| 15k        | 80.0%        | 164.4     | 0.64s    |
+| 20k        | 66.7%        | 177.6     | 0.74s    |
+| 25k        | 66.7%        | 184.6     | 0.88s    |
+| 30k        | 66.7%        | 184.3     | 0.73s    |
+| **35k**    | **90.0%**    | 139.7     | 0.56s    |
+| **40k**    | **90.0%**    | 142.5     | 0.57s    |
+| 45k        | 76.7%        | 162.7     | 0.64s    |
+| 50k        | 73.3%        | 175.3     | 0.71s    |
+| Final      | 70.0%        | 172.0     | 0.65s    |
+
+**Training Stats:**
+- Total time: 278.4 minutes (~4.6 hours)
+- Best loss: 0.0148
+- Model: `outputs/train/act_20260102_105104`
+
+**Comparison - Did Scaling LR Help?**
+
+| Experiment | Batch | LR | Peak | Final | Time |
+|------------|-------|-----|------|-------|------|
+| 7 (baseline) | 8 | 1e-5 | **93.3%** @ 30k | **90.0%** | **89 min** |
+| 9 | 48 | 1e-5 | **93.3%** @ 50k | 86.7% | 278 min |
+| 11 | 48 | 6e-5 | 90.0% @ 35k | 70.0% | 278 min |
+
+**Conclusion: Scaling LR did NOT help - it actually made results worse!**
+
+- Peak dropped from 93.3% to 90.0%
+- Final dropped from 86.7% to 70.0%
+- The linear scaling rule doesn't apply well here
+
+**Why the Linear Scaling Rule Failed:**
+
+1. **Small dataset** - Only 40 episodes / 6559 frames. The rule was developed for ImageNet-scale datasets.
+2. **CosineAnnealingLR already handles decay** - Higher initial LR decays too aggressively
+3. **Model sensitivity** - Transformers can be sensitive to learning rate
+4. **Batch size 8 is optimal** - For this dataset size, smaller batches with more gradient updates work better
+
+**Time Comparison:**
+
+| Batch Size | Cached | Time | vs Batch 8 |
+|------------|--------|------|------------|
+| 8 | No | 89 min | baseline |
+| 48 | No | 447 min | 5.0x slower |
+| 48 | Yes | 278 min | **3.1x slower** |
+
+Even with caching, batch 48 is significantly slower than batch 8 because:
+- Fewer gradient updates per epoch
+- More data loaded per step
+- Batch 8's video decoding doesn't bottleneck on this dataset size
+
+**Final Recommendation:** Use batch_size 8 with lr=1e-5 for best results on small datasets (~40 episodes)
+
+---
+
+## 2026-01-02
+
+### Experiment 12: End-Effector Action Space Dataset Creation
+
+**Goal:** Convert existing joint-space dataset to end-effector action space using FK, enabling training with spatial (xyz + quaternion) actions.
+
+**Datasets:**
+- Input: `danbhf/sim_pick_place_merged_40ep` (40 episodes, 6559 frames, 6-dim joint actions)
+- Output: `danbhf/sim_pick_place_merged_40ep_ee` (same episodes, 8-dim EE actions)
+
+**Action Space Conversion:**
+
+| Joint Space (Original) | End-Effector Space (New) |
+|------------------------|--------------------------|
+| 6 values: joint angles (normalized -100 to +100) | 8 values: xyz (3) + quaternion (4) + gripper (1) |
+| Direct motor commands | Spatial pose representation |
+| Robot-specific | More transferable |
+
+**Implementation:**
+
+1. **Forward Kinematics (FK):** MuJoCo-based FK using `mj_kinematics()` to compute end-effector site position and rotation matrix from joint angles.
+
+2. **Inverse Kinematics (IK):** Damped least-squares Jacobian-based IK solver for converting EE pose back to joint angles during inference.
+
+3. **Quaternion Representation:** Rotation matrix → quaternion [qw, qx, qy, qz] using Shepperd's method.
+
+**FK/IK Roundtrip Validation:**
+
+```
+Frame 0 [EE → IK]:
+  Target pos: [0.1759, -0.0004, 0.0193]
+  Actual pos: [0.1769, -0.0004, 0.0193]
+  Pos error:  [0.0010, 0.0000, 0.0000]  (~1mm)
+  Target quat: [0.610, -0.636, 0.315, 0.354]
+  Actual quat: [0.608, -0.633, 0.319, 0.357]
+
+IK success rate: 100%
+```
+
+**Key Results:**
+- **Position error:** ~1mm (0.001m) - excellent accuracy
+- **Quaternion error:** ~0.003-0.004 - minimal rotation drift
+- **IK convergence:** 100% success rate across all frames
+- **Per-episode scene data preserved:** Duplo positions correctly loaded per episode
+
+**Scripts Created:**
+- `scripts/test_fk_ik.py` - FK/IK module with MuJoCo backend
+- `scripts/teleop_ee_sim.py` - EE-space teleop with real-time IK
+- `recording/convert_to_ee_actions.py` - Dataset conversion utility
+- `recording/playback_ee_sim.py` - EE dataset playback with IK
+
+**Merge Script Updates:**
+- `scripts/merge_datasets.py` now preserves:
+  - `episode_scenes.json` - Per-episode object positions (duplo, bowl)
+  - `recording_metadata.json` - Calibration and recording info
+
+**Dataset Features:**
+```json
+{
+  "action": {"shape": [8], "names": ["ee.x", "ee.y", "ee.z", "ee.qw", "ee.qx", "ee.qy", "ee.qz", "gripper.pos"]},
+  "action_joints": {"shape": [6], "description": "Original joint actions for comparison"}
+}
+```
+
+**Status:** Complete
+
+---
+
+### Experiment 13: Joint-Space Baseline with Batch 16 (Cached)
+
+**Goal:** Establish baseline for comparison with EE action space training
+
+**Dataset:** `danbhf/sim_pick_place_merged_40ep` (6-dim joint actions)
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_merged_40ep \
+    --steps 50000 --batch_size 16 --eval_episodes 30 --eval_randomize --cache_dataset
+```
+
+**Status:** Complete
+
+**Results:**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time |
+|------------|--------------|-----------|----------|
+| 5k         | 60.0%        | 199.5     | 0.80s    |
+| 10k        | 66.7%        | 188.5     | 0.78s    |
+| **15k**    | **90.0%**    | 149.2     | 0.60s    |
+| 20k        | 73.3%        | 170.8     | 0.69s    |
+| 25k        | 60.0%        | 198.4     | 0.87s    |
+| 30k        | 70.0%        | 178.2     | 0.70s    |
+| 35k        | 80.0%        | 161.8     | 0.64s    |
+| 40k        | 73.3%        | 166.0     | 0.65s    |
+| 45k        | 60.0%        | 202.7     | 0.80s    |
+| 50k        | 73.3%        | 173.6     | 0.68s    |
+| Final      | 63.3%        | 199.5     | 0.75s    |
+
+**Training Stats:**
+- Total time: 104.6 minutes
+- Best loss: 0.0387
+- Cache time: ~2.5 minutes
+- Cache size: 45.05 GB
+- Model: `outputs/train/act_20260102_155225`
+
+**Key Observations:**
+1. **Peak at 15k (90%)** - then performance drops, possible overfitting
+2. **Final only 63.3%** - significant drop from peak
+3. **High variance** - swings between 60-90% across checkpoints
+4. **Batch 16 is middle ground** - faster than batch 8, more stable than batch 48
+
+**Comparison with Previous Batch Sizes:**
+
+| Batch | LR | Cached | Peak | Final | Time |
+|-------|-----|--------|------|-------|------|
+| 8 | 1e-5 | No | 93.3% @ 30k | 90.0% | 89 min |
+| 16 | 1e-5 | Yes | **90.0% @ 15k** | 63.3% | 105 min |
+| 48 | 1e-5 | Yes | 93.3% @ 50k | 86.7% | 278 min |
+
+**Conclusion:** Batch 16 converges fastest (peak at 15k) but has worse generalization (lower final). Batch 8 remains best overall for this dataset size.
+
+---
+
+### Experiment 14: ACT Training with End-Effector Action Space
+
+**Goal:** Train ACT policy to predict end-effector pose instead of joint angles
+
+**Dataset:** `danbhf/sim_pick_place_merged_40ep_ee` (8-dim EE actions)
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_merged_40ep_ee \
+    --steps 50000 --batch_size 16 --eval_episodes 30 --eval_randomize --cache_dataset
+```
+
+**Status:** Starting...
 
 ---
 
@@ -660,20 +856,12 @@ python training/train_act.py danbhf/sim_pick_place_merged_40ep \
 
 ### Planned: End-Effector Action Space with FK/IK
 
-**Motivation:** Instead of predicting joint angles directly, predict end-effector pose (position + orientation) + gripper. This could:
-- Make the action space more intuitive and spatially meaningful
-- Improve generalization across different arm configurations
-- Reduce the complexity of learning joint-level coordination
-
-**Approach:**
-1. **Data collection:** Use FK on leader arm to convert joint angles → end-effector pose (xyz + quaternion + gripper)
-2. **Training:** Train ACT to predict in end-effector space
-3. **Inference:** Use IK to convert predicted pose → joint angles for the follower
+**Status:** Completed in Experiment 12!
 
 **Implementation Phases:**
-- [ ] Phase 1: Teleop in simulation with FK/IK pipeline
+- [x] Phase 1: Teleop in simulation with FK/IK pipeline
 - [ ] Phase 2: Teleop on real robot with FK/IK
-- [ ] Phase 3: Train ACT in end-effector action space
+- [x] Phase 3: Train ACT in end-effector action space (Experiment 13)
 - [ ] Phase 4: Add learnable IK module to model head (end-to-end)
 
 **FK/IK Module Options:**

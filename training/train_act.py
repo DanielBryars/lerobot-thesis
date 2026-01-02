@@ -129,8 +129,64 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     import numpy as np
     repo_root = Path(__file__).parent.parent
     sys.path.insert(0, str(repo_root / "src"))
+    sys.path.insert(0, str(repo_root / "scripts"))
 
     from lerobot_robot_sim import SO100SimConfig, SO100Sim
+
+    # Check action dimension from policy config to determine if EE actions
+    action_dim = policy.config.output_shapes["action"][0]
+    is_ee_action_space = (action_dim == 8)
+
+    # Lazy-load IK solver if needed
+    ik_solver = None
+    if is_ee_action_space:
+        from test_fk_ik import MuJoCoFK, MuJoCoIK
+        scene_xml = str(repo_root / "scenes" / "so101_with_wrist_cam.xml")
+        fk = MuJoCoFK(scene_xml)
+        ik_solver = MuJoCoIK(fk)
+        print(f"  Using EE action space (8-dim) with IK conversion")
+
+    # Sim action space bounds for clipping
+    SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
+    SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
+
+    def quaternion_to_rotation_matrix(quat):
+        w, x, y, z = quat
+        n = np.sqrt(w*w + x*x + y*y + z*z)
+        if n > 0:
+            w, x, y, z = w/n, x/n, y/n, z/n
+        return np.array([
+            [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
+            [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
+            [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+        ])
+
+    # Track IK failures for diagnostics
+    ik_failure_count = 0
+    ik_total_count = 0
+
+    def ee_to_joint_action(ee_action, last_joints=None):
+        nonlocal ik_failure_count, ik_total_count
+        ee_pos = ee_action[:3]
+        ee_quat = ee_action[3:7]
+        gripper = ee_action[7]
+        ee_rot = quaternion_to_rotation_matrix(ee_quat)
+        if last_joints is None:
+            last_joints = np.zeros(5)
+        ik_joints, success, error = ik_solver.solve(
+            target_pos=ee_pos, target_rot=ee_rot,
+            initial_angles=last_joints, max_iterations=100, pos_tolerance=1e-3
+        )
+        ik_total_count += 1
+        if not success:
+            ik_failure_count += 1
+            # Log warning (but don't spam)
+            if ik_failure_count <= 3 or ik_failure_count % 10 == 0:
+                print(f"    [WARNING] IK failed ({ik_failure_count}/{ik_total_count}): "
+                      f"target_pos={ee_pos}, error={error:.4f}mm")
+            ik_joints = last_joints
+        joint_action = np.concatenate([ik_joints, [gripper]])
+        return np.clip(joint_action, SIM_ACTION_LOW, SIM_ACTION_HIGH), success
 
     # Initialize simulation (no VR for speed)
     config = SO100SimConfig(
@@ -152,6 +208,7 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     for ep in range(num_episodes):
         policy.reset()
         sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
+        last_ik_joints = None
 
         ep_start = time.time()
         for step in range(max_steps):
@@ -166,8 +223,17 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
             # Convert action to dict - handle different tensor shapes
             action_np = action.cpu().numpy()
             if action_np.ndim > 1:
-                action_np = action_np.flatten()[:6]  # Take first 6 values
-            action_dict = {f"{MOTOR_NAMES[i]}.pos": float(action_np[i]) for i in range(6)}
+                action_np = action_np.flatten()
+
+            # Convert EE actions to joint actions if needed
+            if is_ee_action_space:
+                action_np = action_np[:8]  # Take first 8 values (EE action)
+                joint_action, ik_success = ee_to_joint_action(action_np, last_ik_joints)
+                last_ik_joints = joint_action[:5].copy()
+            else:
+                joint_action = action_np[:6]  # Take first 6 values (joint action)
+
+            action_dict = {f"{MOTOR_NAMES[i]}.pos": float(joint_action[i]) for i in range(6)}
             sim_robot.send_action(action_dict)
 
             if sim_robot.is_task_complete():
@@ -184,7 +250,14 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     success_rate = successes / num_episodes
     avg_steps = total_steps / num_episodes
     avg_time = total_time / num_episodes
-    return success_rate, avg_steps, avg_time
+
+    # Report IK stats if using EE action space
+    if is_ee_action_space and ik_total_count > 0:
+        ik_failure_rate = ik_failure_count / ik_total_count
+        print(f"  IK stats: {ik_failure_count}/{ik_total_count} failures ({100*ik_failure_rate:.2f}%)")
+        return success_rate, avg_steps, avg_time, ik_failure_rate
+
+    return success_rate, avg_steps, avg_time, None
 
 
 def main():
@@ -227,7 +300,12 @@ def main():
     # Get features for policy
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    input_features = {key: ft for key, ft in features.items() if key not in output_features}
+    # Only use 'action' as output, not 'action_joints' (which is for comparison only in EE datasets)
+    if 'action_joints' in output_features:
+        del output_features['action_joints']
+    # Exclude action_joints from input features too (it's only for comparison during playback)
+    input_features = {key: ft for key, ft in features.items()
+                      if key not in output_features and key != 'action_joints'}
 
     print(f"Input features: {list(input_features.keys())}")
     print(f"Output features: {list(output_features.keys())}")
@@ -374,8 +452,8 @@ def main():
 
         # Update metrics
         running_loss += loss.item()
-        if "kl_loss" in output_dict:
-            running_kl_loss += output_dict["kl_loss"].item()
+        if "kld_loss" in output_dict:
+            running_kl_loss += output_dict["kld_loss"]
 
         step += 1
         pbar.update(1)
@@ -387,8 +465,8 @@ def main():
                 "train/grad_norm": grad_norm.item(),
                 "train/lr": scheduler.get_last_lr()[0],
             }
-            if "kl_loss" in output_dict:
-                log_dict["train/kl_loss"] = output_dict["kl_loss"].item()
+            if "kld_loss" in output_dict:
+                log_dict["train/kl_loss"] = output_dict["kld_loss"]
             wandb.log(log_dict, step=step)
 
         # Logging
@@ -450,7 +528,7 @@ def main():
             if args.eval_episodes > 0:
                 print(f"\n  Running {args.eval_episodes} evaluation episodes...")
                 policy.eval()
-                success_rate, avg_steps, avg_time = run_evaluation(
+                success_rate, avg_steps, avg_time, ik_failure_rate = run_evaluation(
                     policy, preprocessor, postprocessor, device,
                     num_episodes=args.eval_episodes,
                     randomize=args.eval_randomize
@@ -459,11 +537,14 @@ def main():
                 print(f"  Eval: {success_rate*100:.1f}% success, {avg_steps:.1f} avg steps, {avg_time:.2f}s avg time")
 
                 if not args.no_wandb:
-                    wandb.log({
+                    log_data = {
                         "eval/success_rate": success_rate,
                         "eval/avg_steps": avg_steps,
                         "eval/avg_time": avg_time,
-                    }, step=step)
+                    }
+                    if ik_failure_rate is not None:
+                        log_data["eval/ik_failure_rate"] = ik_failure_rate
+                    wandb.log(log_data, step=step)
 
     pbar.close()
 
@@ -490,7 +571,7 @@ def main():
         print()
         print(f"Running final evaluation ({args.eval_episodes} episodes)...")
         policy.eval()
-        success_rate, avg_steps, avg_time = run_evaluation(
+        success_rate, avg_steps, avg_time, ik_failure_rate = run_evaluation(
             policy, preprocessor, postprocessor, device,
             num_episodes=args.eval_episodes,
             randomize=args.eval_randomize
@@ -498,13 +579,18 @@ def main():
         print(f"Final success rate: {success_rate*100:.1f}%")
         print(f"Final avg steps: {avg_steps:.1f}")
         print(f"Final avg time: {avg_time:.2f}s")
+        if ik_failure_rate is not None:
+            print(f"Final IK failure rate: {ik_failure_rate*100:.2f}%")
 
         if not args.no_wandb:
-            wandb.log({
+            log_data = {
                 "final/success_rate": success_rate,
                 "final/avg_steps": avg_steps,
                 "final/avg_time": avg_time,
-            })
+            }
+            if ik_failure_rate is not None:
+                log_data["final/ik_failure_rate"] = ik_failure_rate
+            wandb.log(log_data)
 
     # Log final metrics and finish WandB
     if not args.no_wandb:

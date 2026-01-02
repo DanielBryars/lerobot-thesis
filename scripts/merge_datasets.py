@@ -99,6 +99,10 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
     all_tasks = {}
     next_task_idx = 0
 
+    # Track per-episode scene data and recording metadata
+    merged_episode_scenes = {}
+    merged_recording_metadata = []
+
     for ds_idx, ds_path in enumerate(dataset_paths):
         print(f"\nProcessing dataset {ds_idx + 1}: {ds_path.name}")
 
@@ -108,6 +112,27 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
         tasks_df = load_parquet_as_df(ds_path / "meta" / "tasks.parquet")
 
         print(f"  Data shape: {data_df.shape}, Episodes: {len(episodes_df)}")
+
+        # Load per-episode scene data if available
+        episode_scenes_path = ds_path / "meta" / "episode_scenes.json"
+        if episode_scenes_path.exists():
+            with open(episode_scenes_path) as f:
+                episode_scenes = json.load(f)
+            # Remap episode indices and add to merged dict
+            for old_ep_idx, scene_data in episode_scenes.items():
+                new_ep_idx = str(int(old_ep_idx) + episode_offset)
+                merged_episode_scenes[new_ep_idx] = scene_data
+            print(f"  Loaded {len(episode_scenes)} episode scenes")
+
+        # Load recording metadata if available
+        recording_meta_path = ds_path / "meta" / "recording_metadata.json"
+        if recording_meta_path.exists():
+            with open(recording_meta_path) as f:
+                recording_meta = json.load(f)
+            recording_meta['_source_dataset'] = ds_path.name
+            recording_meta['_episode_range'] = [episode_offset, episode_offset + infos[ds_idx]['total_episodes']]
+            merged_recording_metadata.append(recording_meta)
+            print(f"  Loaded recording metadata")
 
         # Build task mapping
         task_mapping = {}
@@ -209,6 +234,18 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
 
     with open(output_path / "meta" / "stats.json", 'w') as f:
         json.dump(stats, f, indent=4)
+
+    # Save merged episode scenes
+    if merged_episode_scenes:
+        with open(output_path / "meta" / "episode_scenes.json", 'w') as f:
+            json.dump(merged_episode_scenes, f, indent=2)
+        print(f"Saved {len(merged_episode_scenes)} episode scenes")
+
+    # Save merged recording metadata
+    if merged_recording_metadata:
+        with open(output_path / "meta" / "recording_metadata.json", 'w') as f:
+            json.dump(merged_recording_metadata, f, indent=2)
+        print(f"Saved recording metadata from {len(merged_recording_metadata)} source datasets")
 
     print()
     print("=" * 60)
