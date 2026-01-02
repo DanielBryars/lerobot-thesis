@@ -83,13 +83,16 @@ def create_leader_bus(port: str):
     return bus
 
 
-def load_calibration(arm_id: str = "leader_so100"):
+def load_calibration(arm_id: str = "leader_so100", is_follower: bool = False):
     """Load calibration from JSON file."""
     import draccus
     from lerobot.motors import MotorCalibration
     from lerobot.utils.constants import HF_LEROBOT_CALIBRATION
 
-    calib_path = HF_LEROBOT_CALIBRATION / "teleoperators" / "so100_leader_sts3250" / f"{arm_id}.json"
+    if is_follower:
+        calib_path = HF_LEROBOT_CALIBRATION / "robots" / "so100_follower_sts3250" / f"{arm_id}.json"
+    else:
+        calib_path = HF_LEROBOT_CALIBRATION / "teleoperators" / "so100_leader_sts3250" / f"{arm_id}.json"
 
     if not calib_path.exists():
         raise FileNotFoundError(f"Calibration file not found: {calib_path}")
@@ -151,27 +154,30 @@ class MuJoCoViewer:
             self.viewer.close()
 
 
-def run_teleop_ee(port: str, fps: int = 30):
-    """Run end-effector teleoperation with leader arm controlling sim via FK/IK."""
+def run_teleop_ee(port: str, fps: int = 30, is_follower: bool = False):
+    """Run end-effector teleoperation with arm controlling sim via FK/IK."""
 
-    print(f"Connecting to leader arm on {port}...")
-    bus = create_leader_bus(port)
+    arm_type = "follower" if is_follower else "leader"
+    arm_id = "follower_so100" if is_follower else "leader_so100"
+
+    print(f"Connecting to {arm_type} arm on {port}...")
+    bus = create_leader_bus(port)  # Same motor config for both
     bus.connect()
 
     print("Loading calibration...")
-    bus.calibration = load_calibration("leader_so100")
+    bus.calibration = load_calibration(arm_id, is_follower=is_follower)
     bus.disable_torque()
-    print("Leader arm connected!")
+    print(f"{arm_type.capitalize()} arm connected!")
 
-    # Initialize FK/IK
+    # Initialize FK/IK (separate instance for calculations)
     print("Initializing FK/IK...")
     scene_xml = str(Path(__file__).parent.parent / "scenes" / "so101_with_wrist_cam.xml")
     fk = MuJoCoFK(scene_xml)
     ik = MuJoCoIK(fk)
 
-    # Get MuJoCo model/data from FK for visualization
-    mj_model = fk.model
-    mj_data = fk.data
+    # Create SEPARATE model/data for simulation (FK has its own for calculations)
+    mj_model = mujoco.MjModel.from_xml_path(scene_xml)
+    mj_data = mujoco.MjData(mj_model)
 
     # Initialize simulation
     for _ in range(100):
@@ -236,7 +242,7 @@ def run_teleop_ee(port: str, fps: int = 30):
 
             # Inverse Kinematics: end-effector pose -> joints
             ik_attempts += 1
-            ik_result = ik.solve(
+            ik_joints, ik_success, ik_error = ik.solve(
                 target_pos=ee_pos,
                 target_rot=ee_rot,
                 initial_angles=arm_joints,  # Use current as initial guess
@@ -244,9 +250,8 @@ def run_teleop_ee(port: str, fps: int = 30):
                 pos_tolerance=1e-3,
             )
 
-            if ik_result is not None:
+            if ik_success:
                 ik_successes += 1
-                ik_joints = ik_result
             else:
                 # IK failed, fall back to direct joint control
                 ik_joints = arm_joints
@@ -368,7 +373,7 @@ def run_test_mode(fps: int = 30, keyboard: bool = False):
                     print(f"\nMoving to preset {preset_idx}: [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
 
             # Inverse Kinematics
-            ik_result = ik.solve(
+            ik_joints, ik_success, ik_error = ik.solve(
                 target_pos=target_pos,
                 target_rot=None,  # Don't constrain orientation
                 initial_angles=current_joints,
@@ -376,8 +381,8 @@ def run_test_mode(fps: int = 30, keyboard: bool = False):
                 pos_tolerance=1e-3,
             )
 
-            if ik_result is not None:
-                current_joints = ik_result
+            if ik_success:
+                current_joints = ik_joints
 
             # Apply to simulation (with zero gripper)
             sim_joints = np.concatenate([current_joints, [0.5]])  # Half-open gripper
@@ -414,15 +419,18 @@ def run_test_mode(fps: int = 30, keyboard: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="End-Effector Teleop for SO101 sim using FK/IK")
     parser.add_argument("--port", "-p", type=str, default=None,
-                        help="Serial port for leader arm (default: from config.json)")
+                        help="Serial port for arm (default: from config.json)")
     parser.add_argument("--fps", "-f", type=int, default=30,
                         help="Target frame rate (default: 30)")
     parser.add_argument("--test", "-t", action="store_true",
                         help="Test mode: no arm required, cycle through preset positions")
     parser.add_argument("--keyboard", "-k", action="store_true",
                         help="Enable keyboard control in test mode")
+    parser.add_argument("--follower", action="store_true",
+                        help="Use follower arm instead of leader arm")
 
     args = parser.parse_args()
+    is_follower = args.follower
 
     if args.test:
         run_test_mode(args.fps, args.keyboard)
@@ -431,14 +439,15 @@ def main():
     port = args.port
     if port is None:
         config = load_config()
-        if config and "leader" in config:
-            port = config["leader"]["port"]
-            print(f"Using leader port from config: {port}")
+        arm_key = "follower" if is_follower else "leader"
+        if config and arm_key in config:
+            port = config[arm_key]["port"]
+            print(f"Using {arm_key} port from config: {port}")
         else:
             port = "COM8"
-            print(f"Using default leader port: {port}")
+            print(f"Using default port: {port}")
 
-    run_teleop_ee(port, args.fps)
+    run_teleop_ee(port, args.fps, is_follower=is_follower)
 
 
 if __name__ == "__main__":
