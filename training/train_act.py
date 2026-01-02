@@ -23,6 +23,7 @@ from datetime import datetime
 import time
 
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 import wandb
 
@@ -35,6 +36,57 @@ from lerobot.policies.factory import make_pre_post_processors
 
 # Motor names for simulation
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+class CachedDataset(torch.utils.data.Dataset):
+    """Wrapper that pre-caches all dataset samples in memory for fast access.
+
+    This eliminates GPU idle time caused by video decoding during training.
+    All frames are decoded once at startup and kept in CPU memory.
+    """
+
+    def __init__(self, dataset, resize_images_to=None):
+        self.resize_to = resize_images_to
+        print(f"\nPre-caching {len(dataset)} samples to memory...")
+        if resize_images_to:
+            print(f"  Resizing images to {resize_images_to}x{resize_images_to}")
+
+        # Pre-load all samples
+        self.samples = []
+        for i in tqdm(range(len(dataset)), desc="Caching dataset"):
+            sample = dataset[i]
+            cached_sample = {}
+            for k, v in sample.items():
+                if isinstance(v, torch.Tensor):
+                    # Resize images if requested
+                    if resize_images_to and "images" in k and v.dim() >= 3:
+                        if v.dim() == 4:  # [n_obs_steps, C, H, W]
+                            v = F.interpolate(v, size=(resize_images_to, resize_images_to),
+                                            mode='bilinear', align_corners=False)
+                        elif v.dim() == 3:  # [C, H, W]
+                            v = F.interpolate(v.unsqueeze(0), size=(resize_images_to, resize_images_to),
+                                            mode='bilinear', align_corners=False).squeeze(0)
+                    cached_sample[k] = v.clone()
+                else:
+                    cached_sample[k] = v
+            self.samples.append(cached_sample)
+
+        print(f"Cached {len(self.samples)} samples")
+
+        # Estimate memory usage
+        total_bytes = 0
+        for sample in self.samples[:1]:
+            for k, v in sample.items():
+                if isinstance(v, torch.Tensor):
+                    total_bytes += v.element_size() * v.numel()
+        total_gb = (total_bytes * len(self.samples)) / (1024**3)
+        print(f"Estimated cache size: {total_gb:.2f} GB")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return self.samples[idx]
 
 
 def cycle(dataloader):
@@ -111,8 +163,10 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
                 action = policy.select_action(batch)
             action = postprocessor(action)
 
-            # Convert action to dict
+            # Convert action to dict - handle different tensor shapes
             action_np = action.cpu().numpy()
+            if action_np.ndim > 1:
+                action_np = action_np.flatten()[:6]  # Take first 6 values
             action_dict = {f"{MOTOR_NAMES[i]}.pos": float(action_np[i]) for i in range(6)}
             sim_robot.send_action(action_dict)
 
@@ -149,6 +203,8 @@ def main():
     parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--eval_episodes", type=int, default=0, help="Evaluation episodes per checkpoint (0=disabled)")
     parser.add_argument("--eval_randomize", action="store_true", help="Randomize object position during eval")
+    parser.add_argument("--cache_dataset", action="store_true", help="Pre-cache dataset in memory (eliminates GPU idle time)")
+    parser.add_argument("--cache_image_size", type=int, default=None, help="Resize images during caching (e.g., 224)")
 
     args = parser.parse_args()
 
@@ -208,16 +264,27 @@ def main():
 
     # Load dataset
     print(f"Loading dataset: {args.dataset}")
-    dataset = LeRobotDataset(args.dataset, delta_timestamps=delta_timestamps)
-    print(f"Dataset size: {len(dataset)} frames")
+    raw_dataset = LeRobotDataset(args.dataset, delta_timestamps=delta_timestamps)
+    print(f"Dataset size: {len(raw_dataset)} frames")
+
+    # Optionally cache dataset in memory to eliminate video decoding bottleneck
+    if args.cache_dataset:
+        dataset = CachedDataset(raw_dataset, resize_images_to=args.cache_image_size)
+        # With cached dataset, no workers needed and no pin_memory
+        num_workers = 0
+        pin_memory = False
+    else:
+        dataset = raw_dataset
+        num_workers = args.num_workers
+        pin_memory = device.type != "cpu"
 
     # Create dataloader
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         batch_size=args.batch_size,
         shuffle=True,
-        pin_memory=device.type != "cpu",
+        pin_memory=pin_memory,
         drop_last=True,
     )
 
@@ -246,6 +313,8 @@ def main():
                 "dataset_frames": len(dataset),
                 "dataset_fps": dataset_metadata.fps,
                 "device": str(device),
+                "cache_dataset": args.cache_dataset,
+                "cache_image_size": args.cache_image_size,
             },
         )
 
@@ -261,6 +330,7 @@ def main():
     print(f"Learning rate: {args.lr}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Device: {device}")
+    print(f"Dataset caching: {'enabled' if args.cache_dataset else 'disabled'}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()
