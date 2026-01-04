@@ -1,11 +1,12 @@
 """
-Wrist camera preview with arm teleoperation.
+Simulation teleop viewer with arm control and optional depth view.
 
-View the wrist camera (as defined in XML) while moving the arm around.
-Edit the XML directly to adjust camera position/orientation.
+View wrist and overhead cameras while moving the arm around.
+Edit the XML directly - auto-reloads when file changes.
 
 Usage:
-    python adjust_wrist_camera_teleop.py
+    python recording/sim_teleop_viewer.py
+    python recording/sim_teleop_viewer.py --scene scenes/so101_rgbd.xml
 
 Controls:
     Arm: Joint sliders (J1-J6) or keyboard controls
@@ -18,10 +19,12 @@ Controls:
         T/G - Wrist roll +/-
         Y/H - Gripper open/close
 
+        Z   - Toggle depth view (overhead camera)
         1-4 - Preset arm poses
         ESC - Quit
 """
 
+import argparse
 import cv2
 import numpy as np
 import mujoco
@@ -30,8 +33,9 @@ import json
 from pathlib import Path
 
 
-SCENE_XML = Path(__file__).parent.parent / "scenes" / "so101_with_wrist_cam.xml"
-SETTINGS_FILE = Path(__file__).parent.parent / ".wrist_camera_settings.json"
+REPO_ROOT = Path(__file__).parent.parent
+DEFAULT_SCENE_XML = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+SETTINGS_FILE = REPO_ROOT / ".sim_teleop_settings.json"
 AUTO_RELOAD_INTERVAL = 1.0  # seconds - check interval, only reloads if file changed
 
 # Joint limits (radians)
@@ -47,10 +51,11 @@ JOINT_LIMITS = [
 JOINT_NAMES = ["Shoulder Pan", "Shoulder Lift", "Elbow Flex", "Wrist Flex", "Wrist Roll", "Gripper"]
 
 
-class WristCameraPreview:
-    def __init__(self):
-        print(f"Loading {SCENE_XML}...")
-        self.model = mujoco.MjModel.from_xml_path(str(SCENE_XML))
+class SimTeleopViewer:
+    def __init__(self, scene_xml: Path):
+        self.scene_xml = scene_xml
+        print(f"Loading {self.scene_xml}...")
+        self.model = mujoco.MjModel.from_xml_path(str(self.scene_xml))
         self.data = mujoco.MjData(self.model)
 
         self.wrist_cam_id = mujoco.mj_name2id(
@@ -62,7 +67,10 @@ class WristCameraPreview:
         print(f"Wrist camera ID: {self.wrist_cam_id}, Overhead camera ID: {self.overhead_cam_id}")
 
         # Track file modification time
-        self.last_mtime = SCENE_XML.stat().st_mtime
+        self.last_mtime = self.scene_xml.stat().st_mtime
+
+        # Depth view toggle - default ON
+        self.show_depth = True
 
         # External camera settings (defaults)
         self.ext_distance = 0.8
@@ -220,18 +228,36 @@ class WristCameraPreview:
         self.external_renderer.update_scene(self.data, camera=cam)
         return self.external_renderer.render()
 
+    def render_overhead_depth(self):
+        """Render depth from overhead camera."""
+        self.overhead_renderer.enable_depth_rendering()
+        self.overhead_renderer.update_scene(self.data, camera="overhead_cam")
+        depth = self.overhead_renderer.render().copy()
+        self.overhead_renderer.disable_depth_rendering()
+        return depth
+
+    def depth_to_colormap(self, depth: np.ndarray, max_depth: float = 1.5) -> np.ndarray:
+        """Convert depth buffer to colorized BGR image."""
+        # Clip and normalize
+        depth_clipped = np.clip(depth, 0, max_depth)
+        depth_normalized = depth_clipped / max_depth
+        # Convert to uint8 and apply colormap
+        depth_uint8 = (depth_normalized * 255).astype(np.uint8)
+        depth_colored = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_TURBO)
+        return depth_colored
+
     def reload_model_if_changed(self):
         """Reload model from XML if file has changed. Returns True if reloaded."""
         try:
             # Check if file modified
-            current_mtime = SCENE_XML.stat().st_mtime
+            current_mtime = self.scene_xml.stat().st_mtime
             if current_mtime == self.last_mtime:
                 return False  # No change
 
             saved_joints = self.joint_pos.copy()
 
             # Try to reload model
-            new_model = mujoco.MjModel.from_xml_path(str(SCENE_XML))
+            new_model = mujoco.MjModel.from_xml_path(str(self.scene_xml))
             new_data = mujoco.MjData(new_model)
 
             # Re-find cameras
@@ -274,14 +300,14 @@ class WristCameraPreview:
 
     def run(self):
         print("\n" + "="*70)
-        print("WRIST CAMERA PREVIEW + TELEOP")
+        print("SIM TELEOP VIEWER")
         print("="*70)
-        print("Camera renders exactly as defined in XML.")
-        print("Edit scenes/so101_with_wrist_cam.xml - auto-reloads every 1s.")
+        print(f"Scene: {self.scene_xml}")
+        print("Camera renders exactly as defined in XML. Auto-reloads every 1s.")
         print("")
         print("Arm:    Sliders J1-J6 or keyboard:")
         print("        Q/A=J1  W/S=J2  E/D=J3  R/F=J4  T/G=J5  Y/H=J6")
-        print("        1-4=Preset poses  ESC=Quit")
+        print("        Z=Toggle depth  1-4=Preset poses  ESC=Quit")
         print("="*70 + "\n")
 
         last_reload_time = time.time()
@@ -322,14 +348,35 @@ class WristCameraPreview:
             for i, line in enumerate(joint_info):
                 cv2.putText(external, line, (10, 60 + i*20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-            # Layout: External on left, wrist+overhead stacked on right
-            right_col = np.vstack([wrist, overhead])  # 640x720
-            # Pad external to match height (480 -> 720)
-            external_padded = np.zeros((720, 640, 3), dtype=np.uint8)
-            external_padded[:480, :, :] = external
+            # Render depth if enabled
+            if self.show_depth:
+                depth_raw = self.render_overhead_depth()
+                depth_colored = self.depth_to_colormap(depth_raw)
+                depth = cv2.resize(depth_colored, (640, 360))
+                # Add depth info
+                depth_min, depth_max = depth_raw.min(), depth_raw.max()
+                cv2.putText(depth, f"Depth ({depth_min:.2f}m - {depth_max:.2f}m)", (10, 25),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-            display = np.hstack([external_padded, right_col])
-            cv2.putText(display, "Auto-reloads XML | 1-4=Presets | Q/A W/S E/D R/F T/G Y/H=Joints | ESC=Quit",
+                # Layout with depth:
+                # External | Wrist
+                #          | Overhead
+                #          | Depth
+                right_col = np.vstack([wrist, overhead, depth])  # 640x1080
+                # Pad external to match height (480 -> 1080)
+                external_padded = np.zeros((1080, 640, 3), dtype=np.uint8)
+                external_padded[:480, :, :] = external
+                display = np.hstack([external_padded, right_col])
+            else:
+                # Layout without depth: External on left, wrist+overhead stacked on right
+                right_col = np.vstack([wrist, overhead])  # 640x720
+                # Pad external to match height (480 -> 720)
+                external_padded = np.zeros((720, 640, 3), dtype=np.uint8)
+                external_padded[:480, :, :] = external
+                display = np.hstack([external_padded, right_col])
+
+            status = "Z=Toggle depth (ON)" if self.show_depth else "Z=Toggle depth (OFF)"
+            cv2.putText(display, f"Auto-reloads XML | {status} | 1-4=Presets | ESC=Quit",
                        (10, display.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
             cv2.imshow(self.window_name, display)
@@ -367,9 +414,32 @@ class WristCameraPreview:
                 self._adjust_joint(5, self.joint_step)
             elif key == ord('h'):
                 self._adjust_joint(5, -self.joint_step)
+            elif key == ord('z'):
+                self.show_depth = not self.show_depth
+                print(f"Depth view: {'ON' if self.show_depth else 'OFF'}")
 
         cv2.destroyAllWindows()
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Simulation teleop viewer with depth support")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Path to MuJoCo XML scene file (default: scenes/so101_with_wrist_cam.xml)")
+    args = parser.parse_args()
+
+    if args.scene:
+        scene_xml = Path(args.scene)
+        if not scene_xml.is_absolute():
+            scene_xml = REPO_ROOT / scene_xml
+    else:
+        scene_xml = DEFAULT_SCENE_XML
+
+    if not scene_xml.exists():
+        print(f"ERROR: Scene file not found: {scene_xml}")
+        return
+
+    SimTeleopViewer(scene_xml).run()
+
+
 if __name__ == "__main__":
-    WristCameraPreview().run()
+    main()
