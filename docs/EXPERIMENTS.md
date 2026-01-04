@@ -1114,29 +1114,73 @@ pip install ikpy roboticstoolbox-python
 
 ---
 
-### Planned: RealSense D435 Depth Camera
+## 2026-01-04
 
-**Motivation:** Depth information could help with:
-- Better spatial understanding
-- Occlusion handling
-- Distance estimation for grasping
+### Experiment 17: RGBD Dataset with Depth Camera
 
-**Approach:**
-1. Add D435 to simulation (depth rendering in MuJoCo)
-2. Record new dataset with RGB-D
-3. Modify ACT input to include depth channel
-4. Compare performance with RGB-only
+**Goal:** Add Intel RealSense D435-style depth camera to simulation and re-record dataset with RGBD data for comparison experiments.
 
-**Input options:**
-- RGB + separate depth channel (4 channels)
-- RGB-D stacked (4 channels)
-- Point cloud input (would need architecture change)
-- Depth as additional "camera" input
+**Dataset:** `danbhf/sim_pick_place_40ep_rgbd_ee`
+- 40 episodes (6559 frames)
+- Re-recorded from `danbhf/sim_pick_place_merged_40ep_ee_2` with identical movements
+- New scene: `scenes/so101_rgbd.xml` with D435 camera specs (58° vertical FOV)
 
-**Hardware:** RealSense D435 specifications
-- RGB: 1920×1080 @ 30fps
-- Depth: 1280×720 @ 90fps (or 848×480 @ 90fps)
-- Range: 0.2m - 10m
-- Good for tabletop manipulation
+**Features:**
+```json
+{
+  "observation.images.wrist_cam": [480, 640, 3],
+  "observation.images.overhead_cam": [480, 640, 3],
+  "observation.images.overhead_cam_depth": [480, 640, 3],
+  "action": [8],  // EE: x, y, z, qw, qx, qy, qz, gripper
+  "action_joints": [6]  // Joint: normalized -100 to +100
+}
+```
+
+**Depth Implementation Details:**
+
+1. **MuJoCo depth is a render mode** - works on any camera, not scene-specific
+2. **D435 specs applied:** 58° vertical FOV (vs 52° for original Nuroum camera)
+3. **Depth storage:** 3-channel grayscale uint8 for LeRobot compatibility (0-255 = 0-2m range)
+4. **Perfect geometric depth** - no noise like real D435
+
+**Re-recording Process:**
+
+Used new `recording/rerecord_dataset.py` script to:
+1. Load source dataset joint actions (`action_joints`)
+2. Replay identical movements in new RGBD scene
+3. Capture new camera observations (RGB + depth)
+4. Preserve original `action` (EE) and `action_joints` fields
+
+```bash
+python recording/rerecord_dataset.py danbhf/sim_pick_place_merged_40ep_ee_2 \
+    --depth --output sim_pick_place_40ep_rgbd_ee
+```
+
+**Tools Created:**
+
+| Tool | Purpose |
+|------|---------|
+| `recording/sim_teleop_viewer.py` | Interactive viewer with depth toggle (Z key) |
+| `recording/rerecord_dataset.py` | Re-record dataset with new scene/cameras |
+| `scenes/so101_rgbd.xml` | D435-style camera scene |
+
+**Status:** Dataset uploaded, ready for training experiments
+
+**Planned Training Runs:**
+
+```bash
+# RGB only (baseline)
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam --steps 50000 --eval_episodes 30
+
+# RGB + Depth
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam,overhead_cam_depth --steps 50000 --eval_episodes 30
+```
+
+**Hypothesis:**
+- Depth may help with spatial reasoning for pick-and-place
+- Overhead depth shows distance to objects on table
+- Block and table have similar depth values (both ~0.5m from overhead camera)
 
 ---

@@ -25,9 +25,12 @@ lerobot-thesis/
 │   ├── CALIBRATION.md          # Detailed calibration guide
 │   └── EXPERIMENTS.md          # Experiment log
 ├── scenes/
-│   └── so101_with_wrist_cam.xml  # MuJoCo scene
+│   ├── so101_with_wrist_cam.xml  # Standard scene (52° overhead FOV)
+│   └── so101_rgbd.xml            # RGBD scene with D435 specs (58° FOV)
 ├── recording/
 │   ├── record_sim_vr_pickplace.py  # Record demos in VR
+│   ├── rerecord_dataset.py         # Re-record dataset with new scene/cameras
+│   ├── sim_teleop_viewer.py        # Interactive sim viewer with depth
 │   ├── playback_real_robot.py      # Play on real robot
 │   ├── playback_sim_vr.py          # Play in simulation
 │   ├── teleop_sim_vr.py            # VR teleoperation
@@ -182,6 +185,56 @@ python recording/teleop_sim_vr.py          # With leader arm
 python recording/teleop_sim_vr.py --test   # VR only, no arm
 ```
 
+### Simulation Viewer
+
+Interactive viewer for testing scenes and visualizing depth:
+
+```bash
+python recording/sim_teleop_viewer.py                              # Default RGBD scene
+python recording/sim_teleop_viewer.py --scene scenes/so101_with_wrist_cam.xml  # Custom scene
+```
+
+**Controls:**
+- `W/S/A/D` - Move arm forward/back/left/right
+- `Q/E` - Move arm up/down
+- `1-6` - Select joint to control
+- `+/-` - Adjust selected joint
+- `Z` - Toggle depth view (shows colorized depth from overhead camera)
+- `ESC` - Quit
+
+The viewer displays external camera, wrist camera, overhead camera, and optionally depth visualization.
+
+### Re-recording Datasets
+
+Re-record an existing dataset with a new scene or camera setup while preserving the exact same movements:
+
+```bash
+# Re-record with depth enabled
+python recording/rerecord_dataset.py danbhf/source_dataset --depth
+
+# Specify output name
+python recording/rerecord_dataset.py danbhf/source_dataset --depth --output my_rgbd_dataset
+
+# Use custom scene
+python recording/rerecord_dataset.py danbhf/source_dataset --scene scenes/custom.xml
+```
+
+**Options:**
+- `--depth`: Enable depth recording for overhead camera
+- `--output NAME`: Output dataset name (default: auto-generated with timestamp)
+- `--scene PATH`: Custom scene XML path
+- `--fps N`: Override FPS (default: use source dataset FPS)
+- `--root DIR`: Output root directory (default: ./datasets)
+
+**Requirements:**
+- Source dataset must have `action_joints` field (joint-space actions)
+- Preserves both `action_joints` and `action` (EE) fields from source
+
+This is useful for:
+- Adding depth data to existing RGB datasets
+- Testing different camera angles with identical movements
+- Comparing training with different observation setups
+
 ### Upload Dataset
 
 Manually upload a recorded dataset:
@@ -284,10 +337,46 @@ The `utils/` module provides shared conversion functions used across all scripts
 The simulation includes:
 - **SO101 Robot Arm**: 6-DOF arm with gripper
 - **Wrist Camera**: 640x480 camera mounted on the gripper
-- **Overhead Camera**: Fixed camera with top-down view
+- **Overhead Camera**: Fixed camera with top-down view (supports RGBD)
 - **Table**: Wooden table surface
-- **Duplo Block**: Red building block (pick-and-place target)
-- **Bowl**: Blue bowl (placement target)
+- **Duplo Block**: White building block (pick-and-place target)
+- **Bowl**: Cream bowl (placement target)
+
+### Available Scenes
+- `scenes/so101_with_wrist_cam.xml` - Standard scene with 52° overhead FOV
+- `scenes/so101_rgbd.xml` - RGBD scene with Intel RealSense D435 specs (58° vertical FOV)
+
+### Depth Rendering
+
+MuJoCo can render depth from **any camera** - it's a render mode, not a scene-specific feature. The RGBD scene just uses the D435's correct field of view.
+
+```python
+# Enable depth rendering on any MuJoCo renderer
+renderer.enable_depth_rendering()
+depth = renderer.render()  # Returns [H, W] float32 in meters
+renderer.disable_depth_rendering()
+```
+
+**Testing depth with the teleop viewer:**
+```bash
+python recording/sim_teleop_viewer.py                          # Default scene
+python recording/sim_teleop_viewer.py --scene scenes/so101_rgbd.xml  # D435 FOV
+# Press Z to toggle depth view
+```
+
+**Recording with depth:**
+```bash
+python recording/record_sim_vr_pickplace.py --depth --num_episodes 40
+```
+
+**Training with depth:**
+```bash
+# RGB + Depth
+python training/train_act.py dataset --cameras wrist_cam,overhead_cam,overhead_cam_depth
+
+# RGB only (baseline)
+python training/train_act.py dataset --cameras wrist_cam,overhead_cam
+```
 
 ## Calibration
 

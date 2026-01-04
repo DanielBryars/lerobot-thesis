@@ -120,11 +120,11 @@ def prepare_obs_for_policy(obs: dict, device: torch.device) -> dict:
     # Camera images
     for key, value in obs.items():
         if isinstance(value, np.ndarray) and value.ndim == 3:
-            # Check if this is a depth image (1 channel, float32)
-            if value.shape[2] == 1 and value.dtype == np.float32:
-                # Depth image: normalize by 1.0m for tabletop range
-                img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float()
-                img = img / 1.0  # Divide by 1m (meters)
+            # Check if this is a depth image (grayscale stored as 3-channel)
+            if "_depth" in key:
+                # Depth: take first channel, normalize to 0-1 (stored as 0-255 = 0-2m)
+                depth_uint8 = value[:, :, 0]  # Take first channel
+                img = torch.from_numpy(depth_uint8).unsqueeze(0).unsqueeze(0).float() / 255.0
             else:
                 # RGB image: normalize to [0, 1]
                 img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
@@ -401,6 +401,26 @@ def main():
         optimizer, T_max=args.steps, eta_min=1e-7
     )
 
+    # Extract camera names from input features
+    camera_names = [key.replace("observation.images.", "") for key in input_features.keys()
+                    if key.startswith("observation.images.")]
+
+    # Determine action space type
+    action_feature = output_features.get('action')
+    if action_feature:
+        action_dim = action_feature.shape[0] if hasattr(action_feature, 'shape') else len(action_feature.shape)
+        # Check the actual shape from the feature
+        action_shape = list(action_feature.shape) if hasattr(action_feature, 'shape') else action_feature.shape
+        action_dim = action_shape[0] if action_shape else 0
+        if action_dim == 8:
+            action_space = "end-effector (8-dim: xyz + quat + gripper)"
+        elif action_dim == 6:
+            action_space = "joint (6-dim: normalized joints)"
+        else:
+            action_space = f"unknown ({action_dim}-dim)"
+    else:
+        action_space = "unknown"
+
     # Initialize WandB
     if not args.no_wandb:
         print("Initializing WandB...")
@@ -420,6 +440,8 @@ def main():
                 "device": str(device),
                 "cache_dataset": args.cache_dataset,
                 "cache_image_size": args.cache_image_size,
+                "cameras": camera_names,
+                "action_space": action_space,
             },
         )
 
@@ -436,6 +458,8 @@ def main():
     print(f"Chunk size: {args.chunk_size}")
     print(f"Device: {device}")
     print(f"Dataset caching: {'enabled' if args.cache_dataset else 'disabled'}")
+    print(f"Cameras: {', '.join(camera_names)}")
+    print(f"Action space: {action_space}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()

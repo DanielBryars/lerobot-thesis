@@ -149,10 +149,10 @@ class SO100Sim(Robot):
             cam: (self.config.camera_height, self.config.camera_width, 3)
             for cam in self.config.sim_cameras
         }
-        # Add depth cameras (grayscale, 1 channel)
+        # Add depth cameras (stored as 3-channel grayscale for LeRobot compatibility)
         for cam in self.config.depth_cameras:
             if cam in self.config.sim_cameras:
-                result[f"{cam}_depth"] = (self.config.camera_height, self.config.camera_width, 1)
+                result[f"{cam}_depth"] = (self.config.camera_height, self.config.camera_width, 3)
         return result
 
     @cached_property
@@ -361,10 +361,14 @@ class SO100Sim(Robot):
                     self.mj_renderer.update_scene(self.mj_data, camera=cam_id)
                 else:
                     self.mj_renderer.update_scene(self.mj_data)
-                depth = self.mj_renderer.render().copy()  # [H, W] float32
+                depth = self.mj_renderer.render().copy()  # [H, W] float32 in meters
                 self.mj_renderer.disable_depth_rendering()
-                # Add channel dimension [H, W] -> [H, W, 1]
-                obs_dict[f"{cam_name}_depth"] = depth[:, :, np.newaxis]
+                # Convert to uint8 RGB for LeRobot compatibility
+                # Normalize: 0-2m range -> 0-255, repeat to 3 channels
+                depth_normalized = np.clip(depth / 2.0, 0, 1)  # 2m max range
+                depth_uint8 = (depth_normalized * 255).astype(np.uint8)
+                # Stack to 3 channels [H, W] -> [H, W, 3]
+                obs_dict[f"{cam_name}_depth"] = np.stack([depth_uint8, depth_uint8, depth_uint8], axis=-1)
 
         return obs_dict
 
