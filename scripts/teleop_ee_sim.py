@@ -18,36 +18,24 @@ Usage:
 """
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import mujoco
 
-# Import FK/IK from our test module
-import sys
+# Add project paths
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Import shared utilities
+from utils.constants import SIM_ACTION_LOW, SIM_ACTION_HIGH
+from utils.conversions import normalized_to_radians
+
+# Import FK/IK from our test module
 from test_fk_ik import MuJoCoFK, MuJoCoIK, ARM_JOINT_NAMES
-
-# Sim action space bounds (radians) - 5 arm joints + gripper
-SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
-
-# Just the 5 arm joints (no gripper)
-ARM_ACTION_LOW = SIM_ACTION_LOW[:5]
-ARM_ACTION_HIGH = SIM_ACTION_HIGH[:5]
-
-
-def normalized_to_radians(normalized_values: np.ndarray) -> np.ndarray:
-    """Convert from lerobot normalized values to sim radians."""
-    radians = np.zeros(6, dtype=np.float32)
-    for i in range(5):
-        t = (normalized_values[i] + 100) / 200.0
-        radians[i] = SIM_ACTION_LOW[i] + t * (SIM_ACTION_HIGH[i] - SIM_ACTION_LOW[i])
-    # Gripper is 0-100 range
-    t = normalized_values[5] / 100.0
-    radians[5] = SIM_ACTION_LOW[5] + t * (SIM_ACTION_HIGH[5] - SIM_ACTION_LOW[5])
-    return radians
 
 
 def load_config():

@@ -22,72 +22,20 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-# Sim action space bounds (radians) - from teleop scripts
-SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
-
-
-def normalized_to_radians(normalized_values: np.ndarray) -> np.ndarray:
-    """Convert from lerobot normalized values to sim radians."""
-    radians = np.zeros(6, dtype=np.float32)
-    for i in range(5):
-        # Arm joints: -100 to +100 range
-        t = (normalized_values[i] + 100) / 200.0
-        radians[i] = SIM_ACTION_LOW[i] + t * (SIM_ACTION_HIGH[i] - SIM_ACTION_LOW[i])
-    # Gripper is 0-100 range
-    t = normalized_values[5] / 100.0
-    radians[5] = SIM_ACTION_LOW[5] + t * (SIM_ACTION_HIGH[5] - SIM_ACTION_LOW[5])
-    return radians
-
 # Add project paths
 repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "src"))
 sys.path.insert(0, str(repo_root / "scripts"))
+
+# Import shared utilities
+from utils.conversions import normalized_to_radians, rotation_matrix_to_quaternion
 
 # Import FK
 from test_fk_ik import MuJoCoFK
 
 # Import LeRobot
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-
-def rotation_matrix_to_quaternion(R: np.ndarray) -> np.ndarray:
-    """
-    Convert rotation matrix to quaternion [qw, qx, qy, qz].
-    Uses Shepperd's method for numerical stability.
-    """
-    trace = R[0, 0] + R[1, 1] + R[2, 2]
-
-    if trace > 0:
-        s = 0.5 / np.sqrt(trace + 1.0)
-        w = 0.25 / s
-        x = (R[2, 1] - R[1, 2]) * s
-        y = (R[0, 2] - R[2, 0]) * s
-        z = (R[1, 0] - R[0, 1]) * s
-    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
-        s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
-        w = (R[2, 1] - R[1, 2]) / s
-        x = 0.25 * s
-        y = (R[0, 1] + R[1, 0]) / s
-        z = (R[0, 2] + R[2, 0]) / s
-    elif R[1, 1] > R[2, 2]:
-        s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
-        w = (R[0, 2] - R[2, 0]) / s
-        x = (R[0, 1] + R[1, 0]) / s
-        y = 0.25 * s
-        z = (R[1, 2] + R[2, 1]) / s
-    else:
-        s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
-        w = (R[1, 0] - R[0, 1]) / s
-        x = (R[0, 2] + R[2, 0]) / s
-        y = (R[1, 2] + R[2, 1]) / s
-        z = 0.25 * s
-
-    # Normalize
-    quat = np.array([w, x, y, z])
-    quat = quat / np.linalg.norm(quat)
-
-    return quat
 
 
 def convert_dataset(input_repo_id: str, output_name: str = None, local: bool = False):
@@ -132,9 +80,14 @@ def convert_dataset(input_repo_id: str, output_name: str = None, local: bool = F
     print("\nConverting actions to end-effector space...")
 
     all_data = []
+    prev_quat = None  # Track previous quaternion for continuity
+    prev_episode = -1  # Track episode to reset quaternion continuity
+    sign_flips = 0  # Count sign flips for debugging
+
     for idx in tqdm(range(num_frames), desc="Converting"):
         frame = dataset[idx]
         action = frame["action"]
+        episode_idx = frame["episode_index"].item() if hasattr(frame["episode_index"], 'item') else int(frame["episode_index"])
 
         if hasattr(action, 'numpy'):
             action = action.numpy()
@@ -151,6 +104,20 @@ def convert_dataset(input_repo_id: str, output_name: str = None, local: bool = F
 
         # Convert rotation matrix to quaternion [qw, qx, qy, qz]
         ee_quat = rotation_matrix_to_quaternion(ee_rot)
+
+        # Ensure quaternion continuity within each episode
+        # q and -q represent the same rotation, but we want smooth transitions
+        if episode_idx != prev_episode:
+            # New episode - reset quaternion tracking
+            prev_quat = ee_quat.copy()
+            prev_episode = episode_idx
+        else:
+            # Same episode - check if we need to flip the sign
+            # If dot product is negative, quaternions are on opposite hemispheres
+            if np.dot(prev_quat, ee_quat) < 0:
+                ee_quat = -ee_quat
+                sign_flips += 1
+            prev_quat = ee_quat.copy()
 
         # New action: [x, y, z, qw, qx, qy, qz, gripper]
         ee_action = np.concatenate([ee_pos, ee_quat, [gripper]]).astype(np.float32)
@@ -175,6 +142,8 @@ def convert_dataset(input_repo_id: str, output_name: str = None, local: bool = F
             "task_index": frame["task_index"].item() if hasattr(frame["task_index"], 'item') else int(frame["task_index"]),
         }
         all_data.append(row)
+
+    print(f"\nQuaternion sign flips corrected: {sign_flips}")
 
     # Compute action statistics
     ee_actions = np.array([d["action"] for d in all_data], dtype=np.float32)
@@ -335,12 +304,23 @@ def convert_dataset(input_repo_id: str, output_name: str = None, local: bool = F
     obs_mean = obs_states.mean(axis=0)
     obs_std = obs_states.std(axis=0)
 
+    # Get action_joints statistics (for training with --use_joint_actions)
+    joint_actions = np.array([d["action_joints"] for d in all_data], dtype=np.float32)
+    joint_mean = joint_actions.mean(axis=0)
+    joint_std = joint_actions.std(axis=0)
+
     stats = {
         "action": {
             "mean": action_mean.tolist(),
             "std": action_std.tolist(),
             "min": action_min.tolist(),
             "max": action_max.tolist(),
+        },
+        "action_joints": {
+            "mean": joint_mean.tolist(),
+            "std": joint_std.tolist(),
+            "min": joint_actions.min(axis=0).tolist(),
+            "max": joint_actions.max(axis=0).tolist(),
         },
         "observation.state": {
             "mean": obs_mean.tolist(),

@@ -235,6 +235,7 @@ def get_recording_metadata(
                 "camera_width": sim_robot.config.camera_width,
                 "camera_height": sim_robot.config.camera_height,
                 "sim_cameras": sim_robot.config.sim_cameras,
+                "depth_cameras": sim_robot.config.depth_cameras,
                 "use_degrees": sim_robot.config.use_degrees,
             },
             "action_space": {
@@ -292,6 +293,7 @@ def main():
     parser.add_argument("--pos_range", type=float, default=4.0, help="Position randomization range in cm")
     parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization range in degrees")
     parser.add_argument("--no-randomize", action="store_true", help="Disable position/rotation randomization")
+    parser.add_argument("--depth", action="store_true", help="Enable depth rendering for overhead camera")
 
     args = parser.parse_args()
 
@@ -317,9 +319,11 @@ def main():
 
     # Create simulation with VR
     print("\nInitializing simulation with VR...")
+    depth_cameras = ["overhead_cam"] if args.depth else []
     sim_config = SO100SimConfig(
         id="sim_recorder",
         sim_cameras=["wrist_cam", "overhead_cam"],
+        depth_cameras=depth_cameras,
         camera_width=640,
         camera_height=480,
         enable_vr=True,
@@ -327,6 +331,8 @@ def main():
     )
     sim_robot = SO100Sim(sim_config)
     sim_robot.connect()
+    if args.depth:
+        print("  Depth rendering enabled for overhead camera")
     speak("Simulation ready")
 
     # Keep VR alive during initialization

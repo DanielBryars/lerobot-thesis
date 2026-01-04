@@ -34,7 +34,7 @@ SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
 
 # Scene XML path (relative to this package in src/)
 REPO_ROOT = Path(__file__).parent.parent.parent
-DEFAULT_SCENE_XML = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+DEFAULT_SCENE_XML = REPO_ROOT / "scenes" / "so101_rgbd.xml"
 
 
 def radians_to_normalized(radians: np.ndarray, use_degrees: bool = False) -> dict[str, float]:
@@ -87,6 +87,10 @@ class SO100SimConfig(RobotConfig):
     # Camera dimensions for MuJoCo rendering
     camera_width: int = 640
     camera_height: int = 480
+
+    # Depth cameras - which sim_cameras should also render depth
+    # Depth images are stored as "{cam_name}_depth" with shape [H, W, 1]
+    depth_cameras: list[str] = field(default_factory=list)
 
     # Use degrees instead of normalized [-100, 100]
     use_degrees: bool = False
@@ -141,10 +145,15 @@ class SO100Sim(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
+        result = {
             cam: (self.config.camera_height, self.config.camera_width, 3)
             for cam in self.config.sim_cameras
         }
+        # Add depth cameras (grayscale, 1 channel)
+        for cam in self.config.depth_cameras:
+            if cam in self.config.sim_cameras:
+                result[f"{cam}_depth"] = (self.config.camera_height, self.config.camera_width, 1)
+        return result
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -336,11 +345,26 @@ class SO100Sim(Robot):
         # Render cameras
         for cam_name in self.config.sim_cameras:
             cam_id = self._camera_ids.get(cam_name)
+
+            # Render RGB
+            self.mj_renderer.disable_depth_rendering()
             if cam_id is not None:
                 self.mj_renderer.update_scene(self.mj_data, camera=cam_id)
             else:
                 self.mj_renderer.update_scene(self.mj_data)
             obs_dict[cam_name] = self.mj_renderer.render().copy()
+
+            # Render depth if this camera is in depth_cameras
+            if cam_name in self.config.depth_cameras:
+                self.mj_renderer.enable_depth_rendering()
+                if cam_id is not None:
+                    self.mj_renderer.update_scene(self.mj_data, camera=cam_id)
+                else:
+                    self.mj_renderer.update_scene(self.mj_data)
+                depth = self.mj_renderer.render().copy()  # [H, W] float32
+                self.mj_renderer.disable_depth_rendering()
+                # Add channel dimension [H, W] -> [H, W, 1]
+                obs_dict[f"{cam_name}_depth"] = depth[:, :, np.newaxis]
 
         return obs_dict
 

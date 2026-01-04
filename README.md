@@ -40,7 +40,17 @@ lerobot-thesis/
 │   ├── train_act_simple.py         # Simple training wrapper
 │   └── README.md                   # Training documentation
 ├── inference/
-│   └── run_act_sim.py              # Run trained policy in VR simulation
+│   ├── run_act_sim.py              # Run trained policy in VR simulation
+│   └── evaluate_with_analysis.py   # Evaluate with IK analysis
+├── utils/                          # Shared utility modules
+│   ├── constants.py                # Joint limits, action bounds
+│   └── conversions.py              # Coordinate conversions (FK/IK helpers)
+├── scripts/
+│   ├── test_fk_ik.py               # FK/IK module tests
+│   ├── teleop_ee_sim.py            # End-effector teleoperation
+│   └── merge_datasets.py           # Merge multiple datasets
+├── tests/
+│   └── test_conversions.py         # Unit tests for conversions
 ├── src/
 │   └── lerobot_robot_sim/      # LeRobot plugin for simulation
 └── vendor/
@@ -239,6 +249,35 @@ python inference/run_act_sim.py outputs/train/act_20251229_111846/checkpoint_025
 - `--no_wandb`: Disable WandB logging
 
 **Output:** Reports success rate, average steps, and average time per episode. Logs to WandB for historical comparison.
+
+## End-Effector Action Space
+
+This repository supports training in two action spaces:
+
+### Joint Action Space (Default)
+- 6-dimensional: `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]`
+- Normalized values: -100 to +100 (joints), 0 to +100 (gripper)
+- Direct motor commands
+
+### End-Effector Action Space
+- 8-dimensional: `[x, y, z, qw, qx, qy, qz, gripper]`
+- Position in meters, quaternion orientation, normalized gripper
+- Requires FK/IK conversion at inference time
+
+**Converting a Dataset:**
+```bash
+python recording/convert_to_ee_actions.py danbhf/source_dataset danbhf/output_dataset_ee
+```
+
+**Training with EE Actions:**
+```bash
+python training/train_act.py danbhf/my_dataset_ee --steps 50000 --eval_episodes 30
+```
+
+The `utils/` module provides shared conversion functions used across all scripts:
+- `radians_to_normalized()` / `normalized_to_radians()` - Convert between radian and normalized action space
+- `quaternion_to_rotation_matrix()` / `rotation_matrix_to_quaternion()` - Quaternion ↔ rotation matrix
+- `clip_joints_to_limits()` - Enforce joint limits
 
 ## Scene Description
 

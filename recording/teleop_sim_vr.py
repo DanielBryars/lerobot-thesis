@@ -14,6 +14,7 @@ Usage:
 import argparse
 import ctypes
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -41,21 +42,13 @@ except ImportError:
     print("ERROR: OpenGL dependencies missing. Run: pip install glfw PyOpenGL")
     exit(1)
 
+# Add project root to path for shared utilities
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 
-# Sim action space bounds (radians)
-SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
-
-
-def normalized_to_radians(normalized_values: np.ndarray) -> np.ndarray:
-    """Convert from lerobot normalized values to sim radians."""
-    radians = np.zeros(6, dtype=np.float32)
-    for i in range(5):
-        t = (normalized_values[i] + 100) / 200.0
-        radians[i] = SIM_ACTION_LOW[i] + t * (SIM_ACTION_HIGH[i] - SIM_ACTION_LOW[i])
-    t = normalized_values[5] / 100.0
-    radians[5] = SIM_ACTION_LOW[5] + t * (SIM_ACTION_HIGH[5] - SIM_ACTION_LOW[5])
-    return radians
+# Import shared utilities
+from utils.constants import SIM_ACTION_LOW, SIM_ACTION_HIGH
+from utils.conversions import normalized_to_radians
 
 
 def load_config():

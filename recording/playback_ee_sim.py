@@ -29,82 +29,23 @@ except ImportError:
 
 # Add project paths
 repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "src"))
 sys.path.insert(0, str(repo_root / "scripts"))
+
+# Import shared utilities
+from utils.constants import SIM_ACTION_LOW, SIM_ACTION_HIGH
+from utils.conversions import (
+    normalized_to_radians,
+    rotation_matrix_to_quaternion,
+    quaternion_to_rotation_matrix,
+)
 
 # Import FK/IK
 from test_fk_ik import MuJoCoFK, MuJoCoIK
 
 # Import LeRobot
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-# Sim action space bounds (radians)
-SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
-
-
-def normalized_to_radians(normalized_values: np.ndarray) -> np.ndarray:
-    """Convert from lerobot normalized values to sim radians."""
-    radians = np.zeros(6, dtype=np.float32)
-    for i in range(5):
-        # Arm joints: -100 to +100 range
-        t = (normalized_values[i] + 100) / 200.0
-        radians[i] = SIM_ACTION_LOW[i] + t * (SIM_ACTION_HIGH[i] - SIM_ACTION_LOW[i])
-    # Gripper is 0-100 range
-    t = normalized_values[5] / 100.0
-    radians[5] = SIM_ACTION_LOW[5] + t * (SIM_ACTION_HIGH[5] - SIM_ACTION_LOW[5])
-    return radians
-
-
-def rotation_matrix_to_quaternion(R: np.ndarray) -> np.ndarray:
-    """Convert rotation matrix to quaternion [qw, qx, qy, qz]."""
-    trace = R[0, 0] + R[1, 1] + R[2, 2]
-    if trace > 0:
-        s = 0.5 / np.sqrt(trace + 1.0)
-        w = 0.25 / s
-        x = (R[2, 1] - R[1, 2]) * s
-        y = (R[0, 2] - R[2, 0]) * s
-        z = (R[1, 0] - R[0, 1]) * s
-    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
-        s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
-        w = (R[2, 1] - R[1, 2]) / s
-        x = 0.25 * s
-        y = (R[0, 1] + R[1, 0]) / s
-        z = (R[0, 2] + R[2, 0]) / s
-    elif R[1, 1] > R[2, 2]:
-        s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
-        w = (R[0, 2] - R[2, 0]) / s
-        x = (R[0, 1] + R[1, 0]) / s
-        y = 0.25 * s
-        z = (R[1, 2] + R[2, 1]) / s
-    else:
-        s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
-        w = (R[1, 0] - R[0, 1]) / s
-        x = (R[0, 2] + R[2, 0]) / s
-        y = (R[1, 2] + R[2, 1]) / s
-        z = 0.25 * s
-    quat = np.array([w, x, y, z])
-    return quat / np.linalg.norm(quat)
-
-
-def quaternion_to_rotation_matrix(quat: np.ndarray) -> np.ndarray:
-    """
-    Convert quaternion [qw, qx, qy, qz] to rotation matrix.
-    """
-    w, x, y, z = quat
-
-    # Normalize
-    n = np.sqrt(w*w + x*x + y*y + z*z)
-    if n > 0:
-        w, x, y, z = w/n, x/n, y/n, z/n
-
-    R = np.array([
-        [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
-        [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
-        [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
-    ])
-
-    return R
 
 
 def check_key():

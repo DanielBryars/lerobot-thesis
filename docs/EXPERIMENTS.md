@@ -848,7 +848,209 @@ python training/train_act.py danbhf/sim_pick_place_merged_40ep_ee \
     --steps 50000 --batch_size 16 --eval_episodes 30 --eval_randomize --cache_dataset
 ```
 
-**Status:** Starting...
+**Status:** Complete
+
+**Inference Results (30 episodes each):**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time | IK Failure Rate |
+|------------|--------------|-----------|----------|-----------------|
+| 5k         | 23.3%        | 257.2     | 8.64s    | 12.84%          |
+| 10k        | 33.3%        | 241.9     | 8.08s    | 12.43%          |
+| 15k        | 43.3%        | 224.6     | 7.56s    | 14.01%          |
+| 20k        | 53.3%        | 202.7     | 6.78s    | 12.95%          |
+| 25k        | 53.3%        | 198.9     | 6.69s    | 13.99%          |
+| 30k        | 63.3%        | 182.7     | 6.13s    | 13.38%          |
+| 35k        | 70.0%        | 171.4     | 5.77s    | 14.18%          |
+| 40k        | 76.7%        | 162.0     | 5.42s    | 14.61%          |
+| 45k        | 83.3%        | 151.9     | 5.11s    | 14.89%          |
+| **50k**    | **90.0%**    | 141.5     | 4.75s    | 16.02%          |
+| Final      | 63.3%        | 196.8     | 6.61s    | 10.57%          |
+
+**Training Stats:**
+- Total time: ~105 minutes
+- Model: `outputs/train/act_20260102_220041`
+- Cache size: 45.05 GB
+
+**Key Observations:**
+
+1. **Best checkpoint at 50k (90%)** - matching joint-space baseline!
+2. **Final dropped to 63.3%** - same pattern as joint-space experiments
+3. **IK failure rate ~10-16%** - some poses are unreachable or near singularities
+4. **Slower inference** - IK adds ~0.2s per step (4.75s vs ~0.5s for joint-space)
+5. **Consistent learning curve** - steady improvement from 23% to 90%
+
+**Comparison: EE vs Joint Action Space (50k steps, batch 16):**
+
+| Metric | Joint Space (Exp 13) | EE Space (Exp 14) |
+|--------|---------------------|-------------------|
+| Peak success | 90.0% @ 15k | **90.0% @ 50k** |
+| Final success | 63.3% | 63.3% |
+| Avg inference time | ~0.7s | ~5.0s |
+| IK failures | N/A | ~14% |
+| Action dim | 6 | 8 |
+
+**Conclusions:**
+
+1. **EE action space achieves same peak performance (90%)** as joint-space
+2. **Slower convergence** - peak at 50k vs 15k for joint-space
+3. **IK adds overhead** - 7x slower inference due to iterative IK solving
+4. **IK failures are acceptable** - 14-16% failure rate doesn't prevent task success
+5. **Both final scores identical (63.3%)** - suggests overfitting is the bottleneck, not action space
+
+**Bug Fixed During Experiment:**
+- Training evaluation was sending raw radians instead of normalized values to the simulation
+- Fixed in `training/train_act.py` - now correctly normalizes joint values before applying to sim
+
+**Next Steps:**
+- [x] Fix quaternion continuity bug and retrain (Experiment 15)
+- [ ] Test on real robot with IK pipeline
+- [ ] Try lower IK failure tolerance for better accuracy
+- [ ] Consider end-to-end IK learning (differentiable IK)
+
+---
+
+### Experiment 15: EE Action Space with Quaternion Continuity Fix
+
+**Goal:** Fix quaternion sign flip discontinuities and retrain
+
+**Bug Found:** Looking at the quaternion plots in the EE dataset, there were sudden discontinuities where qw, qx, qy, qz would all flip sign simultaneously. This is the classic "quaternion double cover" problem - q and -q represent the same rotation, but the conversion was returning either one arbitrarily.
+
+**The Problem:**
+```
+Frame 100: quat = [0.7, 0.3, 0.2, 0.1]
+Frame 101: quat = [-0.7, -0.3, -0.2, -0.1]  ← Same rotation, but looks like a huge jump!
+```
+
+The neural network sees this as a discontinuity and struggles to learn smooth trajectories.
+
+**The Fix:** Added quaternion continuity enforcement in `convert_to_ee_actions.py`:
+- Track previous quaternion within each episode
+- If `dot(prev_quat, curr_quat) < 0`, flip sign of current quaternion
+- Reset tracking at episode boundaries
+
+**Dataset:** `danbhf/sim_pick_place_merged_40ep_ee_2` (8-dim EE actions, continuous quaternions)
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_merged_40ep_ee_2 \
+    --steps 50000 --batch_size 16 --eval_episodes 30 --eval_randomize --cache_dataset
+```
+
+**Status:** Complete
+
+**Results:**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time | IK Failure Rate |
+|------------|--------------|-----------|----------|-----------------|
+| 5k         | 76.7%        | 171.8     | 0.68s    | 0.00%           |
+| 10k        | 73.3%        | 173.5     | 0.71s    | 0.00%           |
+| 15k        | 66.7%        | 185.3     | 0.72s    | 0.00%           |
+| 20k        | 80.0%        | 155.3     | 0.61s    | 0.00%           |
+| 25k        | 86.7%        | 143.2     | 0.55s    | 0.00%           |
+| **30k**    | **93.3%**    | 132.4     | 0.56s    | 0.00%           |
+| 35k        | 63.3%        | 188.2     | 0.72s    | 0.00%           |
+| 40k        | 80.0%        | 153.4     | 0.61s    | 0.00%           |
+| 45k        | 76.7%        | 161.6     | 0.66s    | 0.00%           |
+| **50k**    | **93.3%**    | 135.8     | 0.54s    | 0.00%           |
+| Final      | 80.0%        | 155.5     | 0.57s    | 0.00%           |
+
+**Training Stats:**
+- Total time: 151.0 minutes
+- Best loss: 0.0456
+- Model: `outputs/train/act_20260103_210427`
+- Average IK error: ~3.5mm
+
+**Comparison: Buggy vs Fixed Quaternions:**
+
+| Metric | Exp 14 (buggy) | Exp 15 (fixed) | Improvement |
+|--------|----------------|----------------|-------------|
+| Peak success | 90.0% @ 50k | **93.3% @ 30k** | +3.3%, faster! |
+| Final success | 63.3% | **80.0%** | +16.7% |
+| IK failure rate | ~14% | **0.00%** | Eliminated! |
+| Avg IK error | N/A | ~3.5mm | Model predicts reachable poses |
+
+**Key Findings:**
+
+1. **IK failures eliminated!** The model now predicts poses that are actually reachable by the robot. With buggy quaternions, ~14% of predicted poses were unreachable.
+
+2. **Final success improved significantly** - 80% vs 63.3%. The model generalizes better when trained on smooth, continuous data.
+
+3. **Peak reached earlier** - 93.3% at 30k vs 50k. Smoother training data = faster convergence.
+
+4. **Hypothesis confirmed!** Quaternion continuity matters. The discontinuities were causing:
+   - The model to learn unreachable poses (high IK failure rate)
+   - Worse generalization (lower final success)
+   - Slower convergence (peak at 50k instead of 30k)
+
+**Conclusion:** Always ensure quaternion continuity when using quaternion representations for learning! The `q` vs `-q` ambiguity creates artificial discontinuities that hurt training
+
+---
+
+### Experiment 16: Joint-Space Control on EE Dataset (Validation)
+
+**Goal:** Verify the EE dataset conversion didn't corrupt the original joint actions by training on `action_joints`
+
+**Dataset:** `danbhf/sim_pick_place_merged_40ep_ee_2` (using `action_joints` field, 6-dim)
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_merged_40ep_ee_2 \
+    --steps 50000 --batch_size 16 --eval_episodes 30 --eval_randomize --use_joint_actions
+```
+
+**Status:** Complete
+
+**Results:**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time |
+|------------|--------------|-----------|----------|
+| 5k         | 0.0%         | 300.0     | 0.96s    |
+| 10k        | 0.0%         | 300.0     | 0.98s    |
+| 15k        | 0.0%         | 300.0     | 0.99s    |
+| 20k        | 36.7%        | 255.6     | 0.85s    |
+| 25k        | 46.7%        | 228.4     | 0.76s    |
+| 30k        | 53.3%        | 217.9     | 0.75s    |
+| 35k        | 33.3%        | 249.2     | 0.84s    |
+| 40k        | 66.7%        | 193.7     | 0.65s    |
+| **45k**    | **73.3%**    | 187.5     | 0.62s    |
+| **50k**    | **73.3%**    | 196.2     | 0.63s    |
+| Final      | 43.3%        | 239.4     | 0.75s    |
+
+**Training Stats:**
+- Total time: 150.3 minutes
+- Best loss: 1.5986
+- Model: `outputs/train/act_20260104_001039`
+
+**Comparison: EE vs Joint Actions (Same Dataset):**
+
+| Metric | EE Actions (Exp 15) | Joint Actions (Exp 16) |
+|--------|---------------------|------------------------|
+| Peak success | **93.3%** @ 30k | 73.3% @ 45k |
+| Final success | **80.0%** | 43.3% |
+| Best loss | 0.0456 | 1.5986 |
+| Convergence | Fast (76.7% @ 5k) | Slow (0% until 20k) |
+
+**Key Findings:**
+
+1. **EE actions significantly outperform joint actions** on this dataset - 93.3% vs 73.3% peak, 80% vs 43% final
+
+2. **Loss scale is very different** - Joint actions have ~35x higher loss (1.6 vs 0.05). The normalized joint space (-100 to +100) has larger values than EE space (meters + unit quaternions).
+
+3. **Slower convergence for joint actions** - 0% success until 20k steps, vs 76.7% at 5k for EE actions
+
+4. **Dataset integrity confirmed** - The joint actions do work and achieve reasonable results (73.3%), proving the conversion didn't corrupt them
+
+**Why EE Actions Perform Better:**
+
+1. **Smaller, more uniform scale** - EE positions (0.1-0.4m) and quaternions (-1 to 1) vs joint angles (-100 to +100)
+
+2. **Spatial coherence** - EE actions encode the task-relevant information (where the gripper should be) directly
+
+3. **Quaternion continuity** - The fix we applied ensures smooth orientation trajectories
+
+4. **Implicit constraints** - The FK conversion ensures all EE poses came from valid joint configurations
+
+**Conclusion:** For this pick-and-place task, end-effector action space provides significantly better learning than joint action space, even when using the exact same demonstration data.
 
 ---
 
@@ -861,7 +1063,7 @@ python training/train_act.py danbhf/sim_pick_place_merged_40ep_ee \
 **Implementation Phases:**
 - [x] Phase 1: Teleop in simulation with FK/IK pipeline
 - [ ] Phase 2: Teleop on real robot with FK/IK
-- [x] Phase 3: Train ACT in end-effector action space (Experiment 13)
+- [x] Phase 3: Train ACT in end-effector action space (Experiment 14 - 90% peak success!)
 - [ ] Phase 4: Add learnable IK module to model head (end-to-end)
 
 **FK/IK Module Options:**

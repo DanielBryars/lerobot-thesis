@@ -25,6 +25,7 @@ Based on pyopenxr examples by Christopher Bruns.
 import argparse
 import ctypes
 import json
+import sys
 import threading
 import time
 import numpy as np
@@ -45,28 +46,19 @@ except ImportError:
     print("ERROR: OpenGL dependencies missing. Run: pip install glfw PyOpenGL")
     exit(1)
 
+# Add project root to path for shared utilities
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 
-SCENE_XML = Path(__file__).parent.parent / "scenes" / "so101_with_wrist_cam.xml"
+# Import shared utilities
+from utils.constants import SIM_ACTION_LOW, SIM_ACTION_HIGH
+from utils.conversions import normalized_to_radians
+
+
+SCENE_XML = repo_root / "scenes" / "so101_with_wrist_cam.xml"
 
 # Eye separation (IPD will come from OpenXR runtime)
 DEFAULT_IPD = 0.063
-
-# Sim action space bounds (radians)
-SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
-
-
-def normalized_to_radians(normalized_values: np.ndarray) -> np.ndarray:
-    """Convert from lerobot normalized values to sim radians."""
-    radians = np.zeros(6, dtype=np.float32)
-    # Joints 0-4: map [-100, 100] -> [low, high]
-    for i in range(5):
-        t = (normalized_values[i] + 100) / 200.0
-        radians[i] = SIM_ACTION_LOW[i] + t * (SIM_ACTION_HIGH[i] - SIM_ACTION_LOW[i])
-    # Gripper: map [0, 100] -> [low, high]
-    t = normalized_values[5] / 100.0
-    radians[5] = SIM_ACTION_LOW[5] + t * (SIM_ACTION_HIGH[5] - SIM_ACTION_LOW[5])
-    return radians
 
 
 def load_config():

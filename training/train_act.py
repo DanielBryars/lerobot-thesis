@@ -20,12 +20,20 @@ warnings.filterwarnings("ignore", message=".*video decoding.*deprecated.*")
 import argparse
 from pathlib import Path
 from datetime import datetime
+import sys
 import time
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import wandb
+
+# Add project root to path for shared utilities
+REPO_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
@@ -34,8 +42,9 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
-# Motor names for simulation
-MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+# Import shared utilities
+from utils.constants import MOTOR_NAMES
+from utils.ik_solver import IKSolver
 
 
 class CachedDataset(torch.utils.data.Dataset):
@@ -111,7 +120,14 @@ def prepare_obs_for_policy(obs: dict, device: torch.device) -> dict:
     # Camera images
     for key, value in obs.items():
         if isinstance(value, np.ndarray) and value.ndim == 3:
-            img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+            # Check if this is a depth image (1 channel, float32)
+            if value.shape[2] == 1 and value.dtype == np.float32:
+                # Depth image: normalize by 1.0m for tabletop range
+                img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float()
+                img = img / 1.0  # Divide by 1m (meters)
+            else:
+                # RGB image: normalize to [0, 1]
+                img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
             batch[f"observation.images.{key}"] = img.to(device)
 
     return batch
@@ -124,73 +140,38 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
         success_rate: float between 0 and 1
         avg_steps: average steps per episode
         avg_time: average time per episode in seconds
+        ik_failure_rate: IK failure rate (None if not using EE action space)
+        avg_ik_error: Average IK error in mm (None if not using EE action space)
     """
-    import sys
-    import numpy as np
-    repo_root = Path(__file__).parent.parent
-    sys.path.insert(0, str(repo_root / "src"))
-    sys.path.insert(0, str(repo_root / "scripts"))
-
     from lerobot_robot_sim import SO100SimConfig, SO100Sim
 
     # Check action dimension from policy config to determine if EE actions
-    action_dim = policy.config.output_shapes["action"][0]
+    action_dim = policy.config.output_features["action"].shape[0]
     is_ee_action_space = (action_dim == 8)
 
-    # Lazy-load IK solver if needed
+    # Initialize IK solver if needed (uses shared utility)
     ik_solver = None
     if is_ee_action_space:
-        from test_fk_ik import MuJoCoFK, MuJoCoIK
-        scene_xml = str(repo_root / "scenes" / "so101_with_wrist_cam.xml")
-        fk = MuJoCoFK(scene_xml)
-        ik_solver = MuJoCoIK(fk)
+        ik_solver = IKSolver()
         print(f"  Using EE action space (8-dim) with IK conversion")
 
-    # Sim action space bounds for clipping
-    SIM_ACTION_LOW = np.array([-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.17453])
-    SIM_ACTION_HIGH = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533])
+    # Check if policy uses depth by looking for depth cameras in input features
+    depth_cameras = []
+    sim_cameras = ["wrist_cam", "overhead_cam"]
+    for key in policy.config.input_features:
+        if key.startswith("observation.images.") and key.endswith("_depth"):
+            # Extract camera name (e.g., "overhead_cam" from "observation.images.overhead_cam_depth")
+            cam_name = key.replace("observation.images.", "").replace("_depth", "")
+            if cam_name not in depth_cameras:
+                depth_cameras.append(cam_name)
 
-    def quaternion_to_rotation_matrix(quat):
-        w, x, y, z = quat
-        n = np.sqrt(w*w + x*x + y*y + z*z)
-        if n > 0:
-            w, x, y, z = w/n, x/n, y/n, z/n
-        return np.array([
-            [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
-            [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
-            [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
-        ])
-
-    # Track IK failures for diagnostics
-    ik_failure_count = 0
-    ik_total_count = 0
-
-    def ee_to_joint_action(ee_action, last_joints=None):
-        nonlocal ik_failure_count, ik_total_count
-        ee_pos = ee_action[:3]
-        ee_quat = ee_action[3:7]
-        gripper = ee_action[7]
-        ee_rot = quaternion_to_rotation_matrix(ee_quat)
-        if last_joints is None:
-            last_joints = np.zeros(5)
-        ik_joints, success, error = ik_solver.solve(
-            target_pos=ee_pos, target_rot=ee_rot,
-            initial_angles=last_joints, max_iterations=100, pos_tolerance=1e-3
-        )
-        ik_total_count += 1
-        if not success:
-            ik_failure_count += 1
-            # Log warning (but don't spam)
-            if ik_failure_count <= 3 or ik_failure_count % 10 == 0:
-                print(f"    [WARNING] IK failed ({ik_failure_count}/{ik_total_count}): "
-                      f"target_pos={ee_pos}, error={error:.4f}mm")
-            ik_joints = last_joints
-        joint_action = np.concatenate([ik_joints, [gripper]])
-        return np.clip(joint_action, SIM_ACTION_LOW, SIM_ACTION_HIGH), success
+    if depth_cameras:
+        print(f"  Using depth cameras: {depth_cameras}")
 
     # Initialize simulation (no VR for speed)
     config = SO100SimConfig(
-        sim_cameras=["wrist_cam", "overhead_cam"],
+        sim_cameras=sim_cameras,
+        depth_cameras=depth_cameras,
         enable_vr=False,
         camera_width=640,
         camera_height=480,
@@ -208,7 +189,10 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     for ep in range(num_episodes):
         policy.reset()
         sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
-        last_ik_joints = None
+
+        # Reset IK stats for this evaluation run
+        if ik_solver:
+            ik_solver.reset_stats()
 
         ep_start = time.time()
         for step in range(max_steps):
@@ -228,8 +212,8 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
             # Convert EE actions to joint actions if needed
             if is_ee_action_space:
                 action_np = action_np[:8]  # Take first 8 values (EE action)
-                joint_action, ik_success = ee_to_joint_action(action_np, last_ik_joints)
-                last_ik_joints = joint_action[:5].copy()
+                # Use IKSolver which returns normalized values for sim
+                joint_action, _, _ = ik_solver.ee_to_joint_action(action_np, return_normalized=True)
             else:
                 joint_action = action_np[:6]  # Take first 6 values (joint action)
 
@@ -252,12 +236,14 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     avg_time = total_time / num_episodes
 
     # Report IK stats if using EE action space
-    if is_ee_action_space and ik_total_count > 0:
-        ik_failure_rate = ik_failure_count / ik_total_count
-        print(f"  IK stats: {ik_failure_count}/{ik_total_count} failures ({100*ik_failure_rate:.2f}%)")
-        return success_rate, avg_steps, avg_time, ik_failure_rate
+    if is_ee_action_space and ik_solver:
+        stats = ik_solver.get_stats()
+        if stats["total_count"] > 0:
+            print(f"  IK stats: {stats['failure_count']}/{stats['total_count']} failures "
+                  f"({100*stats['failure_rate']:.2f}%), avg error: {stats['avg_error_mm']:.2f}mm")
+            return success_rate, avg_steps, avg_time, stats["failure_rate"], stats["avg_error_mm"]
 
-    return success_rate, avg_steps, avg_time, None
+    return success_rate, avg_steps, avg_time, None, None
 
 
 def main():
@@ -278,6 +264,9 @@ def main():
     parser.add_argument("--eval_randomize", action="store_true", help="Randomize object position during eval")
     parser.add_argument("--cache_dataset", action="store_true", help="Pre-cache dataset in memory (eliminates GPU idle time)")
     parser.add_argument("--cache_image_size", type=int, default=None, help="Resize images during caching (e.g., 224)")
+    parser.add_argument("--use_joint_actions", action="store_true", help="Use action_joints instead of action (for EE datasets with preserved joint actions)")
+    parser.add_argument("--cameras", type=str, default=None,
+                        help="Comma-separated camera names to use (e.g., 'wrist_cam,overhead_cam,overhead_cam_depth'). Default: all available")
 
     args = parser.parse_args()
 
@@ -300,12 +289,37 @@ def main():
     # Get features for policy
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    # Only use 'action' as output, not 'action_joints' (which is for comparison only in EE datasets)
-    if 'action_joints' in output_features:
-        del output_features['action_joints']
-    # Exclude action_joints from input features too (it's only for comparison during playback)
+
+    # Handle action field selection for EE datasets with preserved joint actions
+    if args.use_joint_actions:
+        if 'action_joints' not in output_features:
+            print("ERROR: --use_joint_actions specified but dataset has no 'action_joints' field")
+            sys.exit(1)
+        # Use action_joints as the action, remove original action
+        print("Using 'action_joints' (6-dim joint space) instead of 'action'")
+        if 'action' in output_features:
+            del output_features['action']
+        # Rename action_joints to action for the policy
+        output_features['action'] = output_features.pop('action_joints')
+    else:
+        # Default: use 'action', exclude 'action_joints'
+        if 'action_joints' in output_features:
+            del output_features['action_joints']
+
+    # Exclude action_joints from input features (it's only for comparison during playback)
     input_features = {key: ft for key, ft in features.items()
-                      if key not in output_features and key != 'action_joints'}
+                      if key not in output_features and key != 'action_joints' and key != 'action'}
+
+    # Filter cameras if --cameras specified
+    if args.cameras:
+        selected_cams = [c.strip() for c in args.cameras.split(",")]
+        print(f"Selected cameras: {selected_cams}")
+        # Keep only observation.images.* keys that match selected cameras
+        input_features = {
+            key: ft for key, ft in input_features.items()
+            if not key.startswith("observation.images.")
+            or any(cam in key for cam in selected_cams)
+        }
 
     print(f"Input features: {list(input_features.keys())}")
     print(f"Output features: {list(output_features.keys())}")
@@ -325,7 +339,17 @@ def main():
     policy.to(device)
 
     # Create pre/post processors for normalization
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_metadata.stats)
+    # If using joint actions, rename stats key from action_joints to action
+    stats = dataset_metadata.stats
+    if args.use_joint_actions:
+        import copy
+        stats = copy.deepcopy(dict(stats))  # Deep copy to avoid modifying original
+        if 'action_joints' in stats:
+            stats['action'] = stats.pop('action_joints')
+        elif 'action' in stats:
+            # Remove EE action stats if present (wrong shape)
+            del stats['action']
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=stats)
 
     # Count parameters
     total_params = sum(p.numel() for p in policy.parameters())
@@ -337,6 +361,9 @@ def main():
     delta_timestamps = {
         "action": [i / dataset_metadata.fps for i in range(args.chunk_size)],
     }
+    # If using joint actions, also need to load action_joints with chunk timestamps
+    if args.use_joint_actions:
+        delta_timestamps["action_joints"] = [i / dataset_metadata.fps for i in range(args.chunk_size)]
     for key in input_features:
         delta_timestamps[key] = [0.0]
 
@@ -429,6 +456,11 @@ def main():
 
         # Move batch to device and preprocess
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+        # If using joint actions from EE dataset, rename action_joints to action
+        if args.use_joint_actions and 'action_joints' in batch:
+            batch['action'] = batch.pop('action_joints')
+
         batch = preprocessor(batch)
 
         # Fix tensor dimensions for ACT model expectations:
@@ -528,7 +560,7 @@ def main():
             if args.eval_episodes > 0:
                 print(f"\n  Running {args.eval_episodes} evaluation episodes...")
                 policy.eval()
-                success_rate, avg_steps, avg_time, ik_failure_rate = run_evaluation(
+                success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error = run_evaluation(
                     policy, preprocessor, postprocessor, device,
                     num_episodes=args.eval_episodes,
                     randomize=args.eval_randomize
@@ -544,6 +576,8 @@ def main():
                     }
                     if ik_failure_rate is not None:
                         log_data["eval/ik_failure_rate"] = ik_failure_rate
+                    if avg_ik_error is not None:
+                        log_data["eval/avg_ik_error_mm"] = avg_ik_error
                     wandb.log(log_data, step=step)
 
     pbar.close()
@@ -571,7 +605,7 @@ def main():
         print()
         print(f"Running final evaluation ({args.eval_episodes} episodes)...")
         policy.eval()
-        success_rate, avg_steps, avg_time, ik_failure_rate = run_evaluation(
+        success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error = run_evaluation(
             policy, preprocessor, postprocessor, device,
             num_episodes=args.eval_episodes,
             randomize=args.eval_randomize
@@ -581,6 +615,8 @@ def main():
         print(f"Final avg time: {avg_time:.2f}s")
         if ik_failure_rate is not None:
             print(f"Final IK failure rate: {ik_failure_rate*100:.2f}%")
+        if avg_ik_error is not None:
+            print(f"Final avg IK error: {avg_ik_error:.2f}mm")
 
         if not args.no_wandb:
             log_data = {
@@ -590,6 +626,8 @@ def main():
             }
             if ik_failure_rate is not None:
                 log_data["final/ik_failure_rate"] = ik_failure_rate
+            if avg_ik_error is not None:
+                log_data["final/avg_ik_error_mm"] = avg_ik_error
             wandb.log(log_data)
 
     # Log final metrics and finish WandB
