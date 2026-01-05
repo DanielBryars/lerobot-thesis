@@ -1255,7 +1255,7 @@ Initial training showed 0% success at all checkpoints. Root cause: depth images 
 
 ---
 
-### Experiment 19: RGB-only Baseline on RGBD Dataset (In Progress)
+### Experiment 19: RGB-only Baseline on RGBD Dataset
 
 **Goal:** Establish RGB-only baseline on the same RGBD dataset for fair comparison.
 
@@ -1265,7 +1265,50 @@ python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
     --cameras wrist_cam,overhead_cam --steps 50000 --batch_size 16 --eval_episodes 30
 ```
 
-**Status:** Running
+**Status:** Crashed at 92% (step 46103) due to Windows shared memory error
+
+**Results (Before Crash):**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time | IK Failures |
+|------------|--------------|-----------|----------|-------------|
+| 5k         | 0.0%         | 300.0     | 2.58s    | 0.00%       |
+| 10k        | 0.0%         | 300.0     | 4.53s    | 0.00%       |
+| **15k**    | **100.0%**   | 113.6     | 1.10s    | 0.00%       |
+| **20k**    | **100.0%**   | 131.0     | 1.28s    | 0.00%       |
+| 25k        | 0.0%         | 300.0     | 2.71s    | 0.00%       |
+| 30k        | 0.0%         | 300.0     | 2.86s    | 0.00%       |
+| 35k        | 0.0%         | 300.0     | 2.75s    | 0.00%       |
+| 40k        | 0.0%         | 300.0     | 3.66s    | 0.00%       |
+| 45k        | 0.0%         | 300.0     | 2.94s    | 0.00%       |
+
+**Key Observations:**
+
+1. **Same instability pattern as RGB+D!** Peak at 15-20k (100%), then complete collapse
+2. **More severe collapse** - RGB-only drops to 0% and stays there (vs RGB+D recovering at 40k)
+3. **Instability is NOT caused by depth input** - it's a fundamental training issue
+
+**Comparison: RGB-only vs RGB+Depth (Both EE Action Space):**
+
+| Metric | RGB-only (Exp 19) | RGB+Depth (Exp 18) |
+|--------|-------------------|-------------------|
+| Peak success | 100.0% @ 15-20k | 100.0% @ 15-25k |
+| Post-peak collapse | Severe (0%) | Moderate (recovers) |
+| Best stable range | 15k-20k | 15k-25k |
+
+**Root Cause Analysis:**
+
+The consistent collapse at ~25k steps across both experiments suggests:
+1. **Cosine learning rate decay** may be too aggressive after peak
+2. **Overfitting** - model memorizes training data then loses generalization
+3. **Catastrophic forgetting** - new gradient updates destroy earlier learning
+
+**Recommendation:** Use early stopping at 20-25k steps, or experiment with different LR schedules
+
+**UPDATE:** Bug discovered - the `--cameras` filter was doing substring matching, so `overhead_cam_depth` was included because "overhead_cam" matched as a substring. This experiment was actually identical to Experiment 18 (RGB+D), not RGB-only!
+
+**Bug Fix:** Changed camera filter from `any(cam in key for cam in selected_cams)` to exact match: `key.replace("observation.images.", "") in selected_cams`
+
+**Re-running:** Experiment 19b will be the true RGB-only baseline
 
 ---
 

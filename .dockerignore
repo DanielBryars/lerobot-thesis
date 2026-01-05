@@ -1,0 +1,40 @@
+# Large data directories
+datasets/
+outputs/
+wandb/
+
+# Git
+.git/
+.gitignore
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# Models (will be downloaded fresh)
+*.pt
+*.pth
+*.ckpt
+
+# Cache
+.cache/
+*.cache

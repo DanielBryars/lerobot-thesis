@@ -316,11 +316,11 @@ def main():
     if args.cameras:
         selected_cams = [c.strip() for c in args.cameras.split(",")]
         print(f"Selected cameras: {selected_cams}")
-        # Keep only observation.images.* keys that match selected cameras
+        # Keep only observation.images.* keys that exactly match selected cameras
         input_features = {
             key: ft for key, ft in input_features.items()
             if not key.startswith("observation.images.")
-            or any(cam in key for cam in selected_cams)
+            or key.replace("observation.images.", "") in selected_cams
         }
 
     print(f"Input features: {list(input_features.keys())}")

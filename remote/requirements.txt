@@ -1,0 +1,23 @@
+# Core simulation
+mujoco>=3.0.0
+numpy>=1.24.0
+
+# LeRobot (robot learning framework)
+lerobot>=0.4.0
+
+# Dataset and model upload
+huggingface-hub>=0.20.0
+
+# Experiment tracking
+wandb>=0.16.0
+
+# OpenGL for headless rendering
+PyOpenGL>=3.1.0
+PyOpenGL-accelerate>=3.1.0
+
+# Image processing
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+
+# Utilities
+tqdm>=4.66.0
