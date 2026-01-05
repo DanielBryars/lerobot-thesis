@@ -4,14 +4,21 @@ Remote training script for vast.ai / RunPod / etc.
 
 This script:
 1. Downloads the dataset from HuggingFace
-2. Runs training with specified config
+2. Runs training with specified config (ACT or SmolVLA)
 3. Uploads checkpoints to HuggingFace
 4. Logs everything to WandB
 
 Usage:
+    # ACT training (default)
     python remote/train_remote.py --dataset danbhf/sim_pick_place_40ep_rgbd_ee \
         --cameras wrist_cam,overhead_cam,overhead_cam_depth \
         --steps 50000 --batch_size 16 --eval_episodes 30
+
+    # SmolVLA finetuning from pretrained
+    python remote/train_remote.py --policy smolvla --dataset danbhf/sim_pick_place_40ep_rgbd_ee \
+        --from_pretrained lerobot/smolvla_base \
+        --language "Pick up the block and place it in the bowl" \
+        --steps 20000 --batch_size 16 --eval_episodes 30
 
 Environment variables required:
     HF_TOKEN: HuggingFace token for dataset access and model upload
@@ -50,9 +57,15 @@ def setup_environment():
 
 def run_training(args):
     """Run the training script with specified arguments."""
+    # Determine which training script to use
+    if args.policy == "smolvla":
+        script = "training/train_smolvla.py"
+    else:
+        script = "training/train_act.py"
+
     # Build the training command
     cmd = [
-        "python", "training/train_act.py",
+        "python", script,
         args.dataset,
         "--steps", str(args.steps),
         "--batch_size", str(args.batch_size),
@@ -84,6 +97,13 @@ def run_training(args):
     if args.run_name:
         cmd.extend(["--run_name", args.run_name])
 
+    # SmolVLA-specific arguments
+    if args.policy == "smolvla":
+        if args.from_pretrained:
+            cmd.extend(["--from_pretrained", args.from_pretrained])
+        if args.language:
+            cmd.extend(["--language", args.language])
+
     print(f"\nRunning training command:")
     print(f"  {' '.join(cmd)}\n")
 
@@ -103,10 +123,11 @@ def upload_results(args, output_dir: Path):
         print("WARNING: HF_TOKEN not set, cannot upload results.")
         return
 
-    # Find the latest training output
-    train_dirs = sorted(Path("outputs/train").glob("act_*"))
+    # Find the latest training output (ACT or SmolVLA)
+    pattern = "smolvla_*" if args.policy == "smolvla" else "act_*"
+    train_dirs = sorted(Path("outputs/train").glob(pattern))
     if not train_dirs:
-        print("No training outputs found to upload.")
+        print(f"No training outputs found matching {pattern}.")
         return
 
     latest_dir = train_dirs[-1]
@@ -131,6 +152,10 @@ def upload_results(args, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Remote training script")
+
+    # Policy type
+    parser.add_argument("--policy", type=str, default="act", choices=["act", "smolvla"],
+                        help="Policy type to train (default: act)")
 
     # Dataset arguments
     parser.add_argument("--dataset", type=str, required=True,
@@ -176,17 +201,27 @@ def main():
     parser.add_argument("--upload_repo", type=str, default=None,
                         help="HuggingFace repo to upload final model")
 
+    # SmolVLA-specific arguments
+    parser.add_argument("--from_pretrained", type=str, default=None,
+                        help="SmolVLA: pretrained model to finetune from")
+    parser.add_argument("--language", type=str, default="Pick up the block and place it in the bowl",
+                        help="SmolVLA: language instruction for the task")
+
     args = parser.parse_args()
 
     print("=" * 60)
     print("LeRobot Remote Training")
     print("=" * 60)
+    print(f"Policy: {args.policy.upper()}")
     print(f"Dataset: {args.dataset}")
     print(f"Steps: {args.steps}")
     print(f"Batch size: {args.batch_size}")
     print(f"Cameras: {args.cameras or 'all'}")
     print(f"Eval episodes: {args.eval_episodes}")
     print(f"Action space: {'joint' if args.use_joint_actions else 'EE'}")
+    if args.policy == "smolvla":
+        print(f"Pretrained: {args.from_pretrained or 'scratch'}")
+        print(f"Language: {args.language}")
     print("=" * 60)
 
     # Setup environment

@@ -135,7 +135,7 @@ def prepare_obs_for_policy(obs: dict, device: torch.device) -> dict:
     return batch
 
 
-def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: int, randomize: bool = True, fps: int = 30):
+def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: int, randomize: bool = True, fps: int = 30, analyze_failures: bool = True):
     """Run evaluation episodes in simulation.
 
     Returns:
@@ -144,8 +144,14 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
         avg_time: average time per episode in seconds
         ik_failure_rate: IK failure rate (None if not using EE action space)
         avg_ik_error: Average IK error in mm (None if not using EE action space)
+        failure_summary: dict with failure analysis (None if analyze_failures=False)
     """
+    import mujoco
     from lerobot_robot_sim import SO100SimConfig, SO100Sim
+    from utils.failure_analysis import (
+        Outcome, EpisodeAnalysis, analyze_trajectory,
+        compute_analysis_summary, format_analysis_report, get_failure_analysis_text
+    )
 
     # Check action dimension from policy config to determine if EE actions
     action_dim = policy.config.output_features["action"].shape[0]
@@ -181,10 +187,14 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
     sim_robot = SO100Sim(config)
     sim_robot.connect()
 
+    # Goal position (bowl center) for failure analysis
+    BOWL_POSITION = np.array([0.217, -0.225])
+
     successes = 0
     total_steps = 0
     total_time = 0.0
     max_steps = 300
+    episode_analyses = []
 
     policy.eval()
 
@@ -196,8 +206,20 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
         if ik_solver:
             ik_solver.reset_stats()
 
+        trajectory = []  # Track object position for failure analysis
         ep_start = time.time()
+        task_completed = False
+
         for step in range(max_steps):
+            # Track duplo position for failure analysis
+            if analyze_failures:
+                try:
+                    duplo_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "duplo")
+                    duplo_pos = sim_robot.mj_data.xpos[duplo_body_id].copy()
+                    trajectory.append(duplo_pos)
+                except:
+                    pass  # Skip tracking if duplo not found
+
             obs = sim_robot.get_observation()
             batch = prepare_obs_for_policy(obs, device)
             batch = preprocessor(batch)
@@ -223,6 +245,7 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
             sim_robot.send_action(action_dict)
 
             if sim_robot.is_task_complete():
+                task_completed = True
                 successes += 1
                 total_steps += step + 1
                 total_time += time.time() - ep_start
@@ -231,11 +254,48 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
             total_steps += max_steps
             total_time += time.time() - ep_start
 
+        # Analyze this episode
+        if analyze_failures and trajectory:
+            ep_duration = time.time() - ep_start
+            outcome, metrics = analyze_trajectory(
+                trajectory, task_completed, BOWL_POSITION
+            )
+            heights = [pos[2] for pos in trajectory]
+            max_height = max(heights)
+            was_lifted = max_height > 0.05
+            was_dropped = was_lifted and heights[-1] < 0.03
+
+            final_pos = trajectory[-1] if trajectory else np.zeros(3)
+            final_xy = np.array([final_pos[0], final_pos[1]])
+            final_distance = np.linalg.norm(final_xy - BOWL_POSITION)
+
+            analysis = EpisodeAnalysis(
+                outcome=outcome,
+                steps=step + 1 if task_completed else max_steps,
+                duration=ep_duration,
+                max_height=max_height,
+                was_lifted=was_lifted,
+                was_dropped=was_dropped,
+                final_distance_to_goal=final_distance,
+                trajectory=trajectory
+            )
+            episode_analyses.append(analysis)
+
     sim_robot.disconnect()
 
     success_rate = successes / num_episodes
     avg_steps = total_steps / num_episodes
     avg_time = total_time / num_episodes
+
+    # Compute failure analysis summary
+    failure_summary = None
+    if analyze_failures and episode_analyses:
+        failure_summary = compute_analysis_summary(episode_analyses)
+        # Print brief failure breakdown
+        outcome_counts = failure_summary.get("outcome_counts", {})
+        if any(outcome_counts.get(o, 0) > 0 for o in Outcome if o != Outcome.SUCCESS):
+            failures = {o.value: outcome_counts.get(o, 0) for o in Outcome if o != Outcome.SUCCESS and outcome_counts.get(o, 0) > 0}
+            print(f"  Failure breakdown: {failures}")
 
     # Report IK stats if using EE action space
     if is_ee_action_space and ik_solver:
@@ -243,9 +303,9 @@ def run_evaluation(policy, preprocessor, postprocessor, device, num_episodes: in
         if stats["total_count"] > 0:
             print(f"  IK stats: {stats['failure_count']}/{stats['total_count']} failures "
                   f"({100*stats['failure_rate']:.2f}%), avg error: {stats['avg_error_mm']:.2f}mm")
-            return success_rate, avg_steps, avg_time, stats["failure_rate"], stats["avg_error_mm"]
+            return success_rate, avg_steps, avg_time, stats["failure_rate"], stats["avg_error_mm"], failure_summary
 
-    return success_rate, avg_steps, avg_time, None, None
+    return success_rate, avg_steps, avg_time, None, None, failure_summary
 
 
 def main():
@@ -587,7 +647,7 @@ def main():
             if args.eval_episodes > 0:
                 print(f"\n  Running {args.eval_episodes} evaluation episodes...")
                 policy.eval()
-                success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error = run_evaluation(
+                success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = run_evaluation(
                     policy, preprocessor, postprocessor, device,
                     num_episodes=args.eval_episodes,
                     randomize=args.eval_randomize
@@ -605,6 +665,15 @@ def main():
                         log_data["eval/ik_failure_rate"] = ik_failure_rate
                     if avg_ik_error is not None:
                         log_data["eval/avg_ik_error_mm"] = avg_ik_error
+                    # Log failure analysis metrics
+                    if failure_summary:
+                        log_data["eval/pick_rate"] = failure_summary.get("pick_rate", 0)
+                        log_data["eval/drop_rate"] = failure_summary.get("drop_rate", 0)
+                        outcome_counts = failure_summary.get("outcome_counts", {})
+                        from utils.failure_analysis import Outcome
+                        for outcome in Outcome:
+                            count = outcome_counts.get(outcome, 0)
+                            log_data[f"eval/outcome_{outcome.value}"] = count
                     wandb.log(log_data, step=step)
 
     pbar.close()
@@ -632,7 +701,7 @@ def main():
         print()
         print(f"Running final evaluation ({args.eval_episodes} episodes)...")
         policy.eval()
-        success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error = run_evaluation(
+        success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = run_evaluation(
             policy, preprocessor, postprocessor, device,
             num_episodes=args.eval_episodes,
             randomize=args.eval_randomize
@@ -644,6 +713,9 @@ def main():
             print(f"Final IK failure rate: {ik_failure_rate*100:.2f}%")
         if avg_ik_error is not None:
             print(f"Final avg IK error: {avg_ik_error:.2f}mm")
+        if failure_summary:
+            print(f"Final pick rate: {failure_summary.get('pick_rate', 0)*100:.1f}%")
+            print(f"Final drop rate: {failure_summary.get('drop_rate', 0)*100:.1f}%")
 
         if not args.no_wandb:
             log_data = {
@@ -655,6 +727,9 @@ def main():
                 log_data["final/ik_failure_rate"] = ik_failure_rate
             if avg_ik_error is not None:
                 log_data["final/avg_ik_error_mm"] = avg_ik_error
+            if failure_summary:
+                log_data["final/pick_rate"] = failure_summary.get("pick_rate", 0)
+                log_data["final/drop_rate"] = failure_summary.get("drop_rate", 0)
             wandb.log(log_data)
 
     # Log final metrics and finish WandB

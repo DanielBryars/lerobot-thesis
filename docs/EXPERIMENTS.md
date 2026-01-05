@@ -1386,3 +1386,156 @@ Running multiple training experiments in parallel requires GPU resources beyond 
 Similar services with different pricing/features. To be evaluated.
 
 ---
+
+## SmolVLA Experiments
+
+SmolVLA is a compact (450M parameter) Vision-Language-Action model that can follow natural language instructions.
+
+### SmolVLA Architecture
+
+- **VLM Backbone**: SmolVLM2-500M (SigLIP vision encoder + SmolLM2 language decoder)
+- **Action Expert**: 100M parameter transformer using flow matching
+- **Chunk Size**: 50 actions predicted at once
+- **Language Input**: Natural language task instructions
+
+### Why SmolVLA?
+
+1. **Language conditioning**: Can follow natural language instructions, enabling multi-task learning
+2. **Pre-trained on community data**: Already trained on 10M frames from 487 LeRobot datasets
+3. **Efficient**: 450M params runs on consumer GPUs
+4. **SO100 compatible**: Pre-trained on SO100 robot data
+
+### Planned SmolVLA Experiments
+
+#### Experiment S1: SmolVLA Finetuning from Pretrained Base
+
+**Goal:** Finetune the pretrained SmolVLA base model on our pick-and-place dataset.
+
+**Hypothesis:** The pretrained model should require fewer steps to achieve good performance since it already has general manipulation knowledge.
+
+**Training Command:**
+```bash
+python training/train_smolvla.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --from_pretrained lerobot/smolvla_base \
+    --cameras wrist_cam,overhead_cam \
+    --steps 20000 --batch_size 16 --eval_episodes 30 \
+    --language "Pick up the block and place it in the bowl"
+```
+
+**Expected Outcome:**
+- Should converge faster than training from scratch
+- May achieve >90% success with fewer steps due to transfer learning
+
+---
+
+#### Experiment S2: SmolVLA with RGB+Depth
+
+**Goal:** Test if SmolVLA can leverage depth information better than ACT.
+
+**Hypothesis:** SmolVLA's vision-language backbone may extract more useful features from depth images.
+
+**Training Command:**
+```bash
+python training/train_smolvla.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --from_pretrained lerobot/smolvla_base \
+    --cameras wrist_cam,overhead_cam,overhead_cam_depth \
+    --steps 20000 --batch_size 16 --eval_episodes 30 \
+    --language "Pick up the block and place it in the bowl"
+```
+
+---
+
+#### Experiment S3: SmolVLA vs ACT Comparison
+
+**Goal:** Direct comparison of SmolVLA and ACT on the same dataset.
+
+**Variables to Compare:**
+- Peak success rate
+- Training stability (variance across checkpoints)
+- Convergence speed (steps to 90% success)
+- Inference speed
+
+**ACT Baseline:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam --steps 50000 --batch_size 16 --eval_episodes 30
+```
+
+**SmolVLA:**
+```bash
+python training/train_smolvla.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --from_pretrained lerobot/smolvla_base \
+    --cameras wrist_cam,overhead_cam \
+    --steps 50000 --batch_size 16 --eval_episodes 30 \
+    --language "Pick up the block and place it in the bowl"
+```
+
+---
+
+#### Experiment S4: SmolVLA Multi-Task with Language
+
+**Goal:** Test SmolVLA's ability to learn multiple tasks with language conditioning.
+
+**Setup:**
+1. Create dataset with multiple task variations (different object positions, different target locations)
+2. Use different language instructions for each variation
+3. Train single SmolVLA model on combined dataset
+
+**Example Instructions:**
+- "Pick up the block and place it in the bowl"
+- "Pick up the block and place it on the left"
+- "Pick up the block and place it on the right"
+- "Move the block to the center"
+
+**Hypothesis:** SmolVLA should be able to distinguish tasks via language, enabling one model for multiple behaviors.
+
+---
+
+#### Experiment S5: SmolVLA Training from Scratch vs Finetuning
+
+**Goal:** Compare training SmolVLA from scratch vs finetuning from pretrained.
+
+**From Scratch:**
+```bash
+python training/train_smolvla.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam \
+    --steps 100000 --batch_size 16 --eval_episodes 30 \
+    --language "Pick up the block and place it in the bowl"
+```
+
+**Finetuning:**
+```bash
+python training/train_smolvla.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --from_pretrained lerobot/smolvla_base \
+    --cameras wrist_cam,overhead_cam \
+    --steps 20000 --batch_size 16 --eval_episodes 30 \
+    --language "Pick up the block and place it in the bowl"
+```
+
+**Expected:** Finetuning should be 5-10x faster and achieve similar or better results.
+
+---
+
+### Recommended Testing Order
+
+Based on the ACT experiments completed, here's the recommended order for SmolVLA testing:
+
+1. **S1 (Finetuning from pretrained)** - Quick sanity check that SmolVLA works with our setup
+2. **S3 (SmolVLA vs ACT comparison)** - Direct comparison on RGB-only
+3. **S2 (RGB+Depth)** - Test if SmolVLA handles depth better than ACT
+4. **S5 (From scratch vs finetuning)** - Understand transfer learning benefit
+5. **S4 (Multi-task)** - Advanced experiment if time permits
+
+### SmolVLA Dependencies
+
+SmolVLA requires additional dependencies:
+
+```bash
+pip install -e ".[smolvla]"
+```
+
+This installs:
+- transformers (for SmolVLM2)
+- Additional vision processing libraries
+
+---

@@ -35,15 +35,19 @@ RUN apt-get update && apt-get install -y \
     libavformat-dev \
     libavutil-dev \
     libswscale-dev \
+    libegl1 \
+    libegl-dev \
+    libgles2 \
+    libgles2-mesa-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up Python
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
 RUN python -m pip install --upgrade pip
 
-# Set MuJoCo to use OSMesa for headless rendering
-ENV MUJOCO_GL=osmesa
-ENV PYOPENGL_PLATFORM=osmesa
+# Set MuJoCo to use EGL for GPU-accelerated headless rendering
+ENV MUJOCO_GL=egl
+ENV PYOPENGL_PLATFORM=egl
 
 # Create working directory
 WORKDIR /app
