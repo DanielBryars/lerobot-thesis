@@ -1184,3 +1184,162 @@ python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
 - Block and table have similar depth values (both ~0.5m from overhead camera)
 
 ---
+
+### Experiment 18: RGB + Depth Training (EE Action Space)
+
+**Goal:** Train ACT with RGB + depth input and compare to RGB-only baseline.
+
+**Dataset:** `danbhf/sim_pick_place_40ep_rgbd_ee`
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam,overhead_cam_depth --steps 50000 --batch_size 16 --eval_episodes 30
+```
+
+**Bug Fixed During Experiment:**
+
+Initial training showed 0% success at all checkpoints. Root cause: depth images were being converted to 1-channel `[1, 1, H, W]` during evaluation, but the CNN expects 3-channel `[1, 3, H, W]`.
+
+**Fix:** Added `img.repeat(1, 3, 1, 1)` to expand depth to 3 channels in `prepare_obs_for_policy()`.
+
+**Results (After Fix):**
+
+| Checkpoint | Success Rate | Avg Steps | Avg Time | IK Failures |
+|------------|--------------|-----------|----------|-------------|
+| 5k         | 0.0%         | 300.0     | 2.95s    | 1.33%       |
+| 10k        | 0.0%         | 300.0     | 2.70s    | 0.00%       |
+| **15k**    | **100.0%**   | 130.0     | 1.23s    | 0.00%       |
+| **20k**    | **100.0%**   | 135.5     | 1.35s    | 0.00%       |
+| **25k**    | **100.0%**   | 135.6     | 1.26s    | 0.00%       |
+| 30k        | 23.3%        | 261.6     | 2.50s    | 0.00%       |
+| 35k        | 66.7%        | 197.7     | 1.97s    | 0.00%       |
+| **40k**    | **100.0%**   | 136.7     | 1.25s    | 0.00%       |
+| 45k        | 6.7%         | 289.2     | 2.49s    | 0.00%       |
+| 50k        | 23.3%        | 262.0     | 2.46s    | 0.00%       |
+| Final      | 33.3%        | 245.3     | 2.16s    | 0.00%       |
+
+**Training Stats:**
+- Total time: 220.4 minutes
+- Best loss: 0.0487
+- Model: `outputs/train/act_20260104_221957`
+
+**Key Observations:**
+
+1. **Peak: 100% success** at checkpoints 15k, 20k, 25k, and 40k - **better than RGB-only baseline (93.3%)!**
+2. **Very high variance** - swings from 6.7% to 100% between consecutive checkpoints
+3. **Severe performance collapse** after 25k steps (100% → 23.3%)
+4. **Partial recovery** at 40k (100%) then another collapse at 45k (6.7%)
+5. **Best checkpoints: 15k-25k range** - use these instead of final model
+
+**Comparison with RGB-only EE Baseline (Experiment 15):**
+
+| Metric | RGB-only (Exp 15) | RGB+Depth (Exp 18) |
+|--------|-------------------|-------------------|
+| Peak success | 93.3% @ 30k | **100.0% @ 15-25k** |
+| Final success | **80.0%** | 33.3% |
+| Stability | Moderate variance | **Very high variance** |
+| Best checkpoint | 30k or 50k | 20k or 25k |
+
+**Conclusions:**
+
+1. **Depth CAN improve peak performance** - 100% vs 93.3%
+2. **But training is much less stable** - likely overfitting to depth features
+3. **Early stopping critical** - best results at 15-25k, not 50k
+4. **Use checkpoint_020000 or checkpoint_025000** for deployment
+
+**Hypothesis for Instability:**
+- 3 camera inputs (wrist + overhead + depth) = more parameters to learn
+- 40 episodes may be insufficient for stable 3-camera learning
+- Depth provides strong signal that model overfits to quickly
+
+---
+
+### Experiment 19: RGB-only Baseline on RGBD Dataset (In Progress)
+
+**Goal:** Establish RGB-only baseline on the same RGBD dataset for fair comparison.
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam --steps 50000 --batch_size 16 --eval_episodes 30
+```
+
+**Status:** Running
+
+---
+
+### Planned Experiments
+
+#### Experiment 20: Extended Depth Training (100k+ steps)
+
+**Goal:** Test if longer training stabilizes RGB+Depth performance.
+
+**Hypothesis:** The instability may be due to learning rate schedule - longer training with slower decay might help.
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam,overhead_cam_depth --steps 100000 --batch_size 16 --eval_episodes 30
+```
+
+#### Experiment 21: Joint Action Space with Depth
+
+**Goal:** Compare EE vs joint action space when using depth input.
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam,overhead_cam_depth --steps 50000 --batch_size 16 --eval_episodes 30 --use_joint_actions
+```
+
+#### Experiment 22: RGB-only Joint Action Space
+
+**Goal:** Joint action baseline for comparison with depth experiments.
+
+**Training Command:**
+```bash
+python training/train_act.py danbhf/sim_pick_place_40ep_rgbd_ee \
+    --cameras wrist_cam,overhead_cam --steps 50000 --batch_size 16 --eval_episodes 30 --use_joint_actions
+```
+
+---
+
+## Remote Training Infrastructure
+
+### Motivation
+
+Running multiple training experiments in parallel requires GPU resources beyond a single local machine. Options being evaluated:
+
+### vast.ai
+
+**Pros:**
+- Cheap GPU rental (often $0.20-0.50/hr for RTX 3090/4090)
+- Docker-based - easy to replicate environment
+- Spot instances for even lower cost
+- API for automation
+
+**Cons:**
+- Spot instances can be interrupted
+- Network transfer for datasets
+- Need to manage remote state
+
+### Automation Plan
+
+1. **Docker image** with all dependencies pre-installed
+2. **Training script** that:
+   - Downloads dataset from HuggingFace
+   - Runs training with specified config
+   - Uploads checkpoints to HuggingFace/WandB
+   - Self-terminates when complete
+3. **Orchestration script** to:
+   - Spin up multiple vast.ai instances
+   - Dispatch different experiment configs
+   - Monitor progress via WandB
+   - Collect results
+
+### Alternative: Modal.com / RunPod
+
+Similar services with different pricing/features. To be evaluated.
+
+---

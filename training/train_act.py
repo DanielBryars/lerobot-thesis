@@ -122,9 +122,11 @@ def prepare_obs_for_policy(obs: dict, device: torch.device) -> dict:
         if isinstance(value, np.ndarray) and value.ndim == 3:
             # Check if this is a depth image (grayscale stored as 3-channel)
             if "_depth" in key:
-                # Depth: take first channel, normalize to 0-1 (stored as 0-255 = 0-2m)
+                # Depth: take first channel, normalize to 0-1, repeat to 3 channels for CNN
+                # Stored as 0-255 = 0-2m range
                 depth_uint8 = value[:, :, 0]  # Take first channel
                 img = torch.from_numpy(depth_uint8).unsqueeze(0).unsqueeze(0).float() / 255.0
+                img = img.repeat(1, 3, 1, 1)  # [1, 1, H, W] -> [1, 3, H, W] for CNN compatibility
             else:
                 # RGB image: normalize to [0, 1]
                 img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
