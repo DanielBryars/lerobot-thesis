@@ -261,6 +261,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", help="Device (default: cuda)")
     parser.add_argument("--num_workers", type=int, default=4, help="Dataloader workers (default: 4)")
     parser.add_argument("--wandb_project", type=str, default="lerobot-thesis", help="WandB project name")
+    parser.add_argument("--run_name", type=str, default=None, help="WandB run name (default: auto-generated)")
     parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--eval_episodes", type=int, default=0, help="Evaluation episodes per checkpoint (0=disabled)")
     parser.add_argument("--eval_randomize", action="store_true", help="Randomize object position during eval")
@@ -428,7 +429,7 @@ def main():
         print("Initializing WandB...")
         wandb.init(
             project=args.wandb_project,
-            name=f"act_{args.dataset.split('/')[-1]}",
+            name=args.run_name or f"act_{args.dataset.split('/')[-1]}",
             config={
                 "dataset": args.dataset,
                 "training_steps": args.steps,

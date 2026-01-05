@@ -30,6 +30,11 @@ RUN apt-get update && apt-get install -y \
     libglfw3 \
     libglfw3-dev \
     patchelf \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up Python
