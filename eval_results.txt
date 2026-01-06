@@ -1,0 +1,72 @@
+Using device: cuda
+Downloading danbhf/act_rgbd_ee_100pct/checkpoint_020000...
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 29478.04it/s]
+Model path: /app/eval_cache/danbhf_act_rgbd_ee_100pct/checkpoint_020000
+Auto-detected policy type: act
+Loading ACT policy...
+Loading weights from local directory
+Loaded pre/post processors from checkpoint
+Using depth cameras: ['overhead_cam_depth']
+
+Running 30 evaluation episodes...
+============================================================
+Registered: so100_sim, so101_sim
+  Using EE action space (8-dim) with IK conversion
+  Sim cameras: ['wrist_cam', 'overhead_cam']
+  Depth cameras: ['overhead_cam_depth']
+  Episode 1/30... Traceback (most recent call last):
+  File "/app/remote/eval_remote.py", line 162, in <module>
+    main()
+  File "/app/remote/eval_remote.py", line 120, in main
+    results = run_evaluation(
+  File "/app/utils/training.py", line 264, in run_evaluation
+    action = policy.select_action(batch)
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/lerobot/policies/act/modeling_act.py", line 116, in select_action
+    actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/lerobot/policies/act/modeling_act.py", line 130, in predict_action_chunk
+    batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+  File "/usr/local/lib/python3.10/dist-packages/lerobot/policies/act/modeling_act.py", line 130, in <listcomp>
+    batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+KeyError: 'observation.images.overhead_cam_depth'
+Exception ignored in: <function Renderer.__del__ at 0x77a388e192d0>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/mujoco/renderer.py", line 340, in __del__
+    self.close()
+  File "/usr/local/lib/python3.10/dist-packages/mujoco/renderer.py", line 326, in close
+    self._gl_context.free()
+  File "/usr/local/lib/python3.10/dist-packages/mujoco/egl/__init__.py", line 131, in free
+    EGL.eglMakeCurrent(EGL_DISPLAY, EGL.EGL_NO_SURFACE,
+  File "src/errorchecker.pyx", line 59, in OpenGL_accelerate.errorchecker._ErrorChecker.glCheckError
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglMakeCurrent,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x77a388e02540>,
+		<OpenGL._opaque.EGLSurface_pointer object at 0x77a59412e2c0>,
+		<OpenGL._opaque.EGLSurface_pointer object at 0x77a59412e2c0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x77a59412e140>,
+	),
+	result = 0
+)
+Exception ignored in: <function GLContext.__del__ at 0x77a388e18940>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/mujoco/egl/__init__.py", line 138, in __del__
+    self.free()
+  File "/usr/local/lib/python3.10/dist-packages/mujoco/egl/__init__.py", line 131, in free
+    EGL.eglMakeCurrent(EGL_DISPLAY, EGL.EGL_NO_SURFACE,
+  File "src/errorchecker.pyx", line 59, in OpenGL_accelerate.errorchecker._ErrorChecker.glCheckError
+OpenGL.raw.EGL._errors.EGLError: EGLError(
+	err = EGL_NOT_INITIALIZED,
+	baseOperation = eglMakeCurrent,
+	cArguments = (
+		<OpenGL._opaque.EGLDisplay_pointer object at 0x77a388e02540>,
+		<OpenGL._opaque.EGLSurface_pointer object at 0x77a59412e2c0>,
+		<OpenGL._opaque.EGLSurface_pointer object at 0x77a59412e2c0>,
+		<OpenGL._opaque.EGLContext_pointer object at 0x77a59412e140>,
+	),
+	result = 0
+)

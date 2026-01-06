@@ -64,6 +64,30 @@ from utils.training import (
     get_camera_names,
 )
 
+# Language tokenization constants
+OBS_LANGUAGE_TOKENS = "observation.language.tokens"
+OBS_LANGUAGE_ATTENTION_MASK = "observation.language.attention_mask"
+
+
+def tokenize_language(policy, language_instruction: str, device: torch.device) -> tuple:
+    """Tokenize a language instruction for SmolVLA.
+
+    Returns:
+        Tuple of (tokens, attention_mask) tensors
+    """
+    tokenizer = policy.model.vlm_with_expert.processor.tokenizer
+    encoding = tokenizer(
+        language_instruction,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=64,
+    )
+    tokens = encoding["input_ids"].to(device)
+    # Attention mask must be boolean for SmolVLA
+    attention_mask = encoding["attention_mask"].bool().to(device)
+    return tokens, attention_mask
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train SmolVLA policy on LeRobot dataset")
@@ -179,6 +203,10 @@ def main():
 
     policy.train()
     policy.to(device)
+
+    # Pre-tokenize language instruction (do this once, not per batch)
+    print(f"Tokenizing language instruction: '{args.language}'")
+    lang_tokens, lang_attention_mask = tokenize_language(policy, args.language, device)
 
     # Create pre/post processors for normalization
     stats = dataset_metadata.stats
@@ -314,9 +342,13 @@ def main():
         # Move batch to device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
-        # Forward pass
-        loss_dict = policy.forward(batch)
-        loss = loss_dict["loss"]
+        # Add language tokens to batch (expand to batch size)
+        batch_size = batch["observation.state"].shape[0]
+        batch[OBS_LANGUAGE_TOKENS] = lang_tokens.expand(batch_size, -1)
+        batch[OBS_LANGUAGE_ATTENTION_MASK] = lang_attention_mask.expand(batch_size, -1)
+
+        # Forward pass - SmolVLA returns (loss, loss_dict) tuple
+        loss, loss_dict = policy.forward(batch)
 
         # Backward pass
         optimizer.zero_grad()
@@ -343,11 +375,13 @@ def main():
                 "train/lr": current_lr,
                 "train/step": step,
             }
-            # Add any additional losses from loss_dict
+            # Add any additional losses from loss_dict (only scalar values)
             for k, v in loss_dict.items():
-                if k != "loss" and isinstance(v, (int, float, torch.Tensor)):
-                    val = v.item() if isinstance(v, torch.Tensor) else v
-                    log_dict[f"train/{k}"] = val
+                if k != "loss":
+                    if isinstance(v, (int, float)):
+                        log_dict[f"train/{k}"] = v
+                    elif isinstance(v, torch.Tensor) and v.numel() == 1:
+                        log_dict[f"train/{k}"] = v.item()
             wandb.log(log_dict)
 
         # Save checkpoint and evaluate

@@ -88,7 +88,8 @@ def prepare_obs_for_policy(obs: dict, device: torch.device, depth_cameras: list 
     Args:
         obs: Dictionary of observations from simulation
         device: Target device for tensors
-        depth_cameras: List of camera names that are depth cameras
+        depth_cameras: List of BASE camera names that have depth (e.g., ["overhead_cam"])
+                       The actual depth observation key will have _depth suffix
 
     Returns:
         Dictionary formatted for policy input
@@ -106,8 +107,8 @@ def prepare_obs_for_policy(obs: dict, device: torch.device, depth_cameras: list 
     # Camera images
     for key, value in obs.items():
         if isinstance(value, np.ndarray) and value.ndim == 3:
-            # Check if this is a depth image
-            is_depth = "_depth" in key or key in depth_cameras
+            # Check if this is a depth image (has _depth suffix in the key)
+            is_depth = "_depth" in key
 
             if is_depth:
                 # Depth: take first channel, normalize to 0-1, repeat to 3 channels for CNN
@@ -181,32 +182,46 @@ def run_evaluation(
         else:
             print(f"  Using joint action space ({action_dim}-dim)")
 
-    # Detect depth cameras from policy config if not provided
-    if depth_cameras is None:
-        depth_cameras = []
-        try:
-            for key in policy.config.input_features.keys():
-                if "_depth" in key:
-                    cam_name = key.replace("observation.images.", "")
-                    depth_cameras.append(cam_name)
-        except:
-            pass
+    # Detect cameras from policy config
+    sim_cameras = []
+    depth_camera_names = []
+    try:
+        for key in policy.config.input_features.keys():
+            if key.startswith("observation.images."):
+                cam_name = key.replace("observation.images.", "")
+                if "_depth" in cam_name:
+                    # This is a depth camera - extract base name
+                    base_cam = cam_name.replace("_depth", "")
+                    depth_camera_names.append(base_cam)
+                    if base_cam not in sim_cameras:
+                        sim_cameras.append(base_cam)
+                else:
+                    if cam_name not in sim_cameras:
+                        sim_cameras.append(cam_name)
+    except:
+        sim_cameras = ["wrist_cam"]  # fallback
 
-    if depth_cameras and verbose:
-        print(f"  Using depth cameras: {depth_cameras}")
+    # Override with provided depth_cameras if specified
+    if depth_cameras:
+        depth_camera_names = depth_cameras
+
+    if verbose:
+        print(f"  Sim cameras: {sim_cameras}")
+        if depth_camera_names:
+            print(f"  Depth cameras: {depth_camera_names}")
 
     # Initialize IK solver if using EE actions
     ik_solver = None
     if is_ee_action_space:
-        ik_solver = IKSolver(verbose=verbose)
+        ik_solver = IKSolver()
 
     # Create simulation
     config = SO100SimConfig(
-        fps=fps,
+        sim_cameras=sim_cameras,
+        depth_cameras=depth_camera_names,
         enable_vr=False,
-        randomize_position=randomize,
-        randomize_rotation=randomize,
-        scene_xml="so101_rgbd.xml" if depth_cameras else "so101_sim.xml",
+        camera_width=640,
+        camera_height=480,
     )
     sim_robot = SO100Sim(config)
     sim_robot.connect()
@@ -222,7 +237,9 @@ def run_evaluation(
     policy.eval()
 
     for ep in range(num_episodes):
-        sim_robot.reset()
+        print(f"  Episode {ep+1}/{num_episodes}...", end=" ", flush=True)
+        policy.reset()  # Reset action chunking state
+        sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
         ep_start = time.time()
         trajectory = []  # Track object position for failure analysis
         task_completed = False
@@ -248,6 +265,8 @@ def run_evaluation(
 
             with torch.no_grad():
                 action = policy.select_action(batch)
+
+            # Apply postprocessor (denormalizes action)
             action = postprocessor(action)
 
             # Convert action to numpy
@@ -274,6 +293,10 @@ def run_evaluation(
         else:
             total_steps += max_steps
             total_time += time.time() - ep_start
+
+        # Print episode result
+        status = "OK" if task_completed else "FAIL"
+        print(f"{status} ({time.time() - ep_start:.1f}s)")
 
         # Analyze this episode
         if analyze_failures and trajectory:
