@@ -30,7 +30,7 @@ from tqdm import tqdm
 import wandb
 
 # Add project root to path for shared utilities
-REPO_ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -50,6 +50,8 @@ from utils.training import (
     cycle,
     prepare_obs_for_policy,
     run_evaluation,
+    save_checkpoint,
+    get_scene_metadata,
 )
 
 
@@ -229,6 +231,31 @@ def main():
     else:
         action_space = "unknown"
 
+    # Extract camera resolutions from input features
+    camera_resolutions = {}
+    for key, feat in input_features.items():
+        if key.startswith("observation.images."):
+            cam_name = key.replace("observation.images.", "")
+            if hasattr(feat, 'shape') and len(feat.shape) == 3:
+                camera_resolutions[cam_name] = f"{feat.shape[2]}x{feat.shape[1]}"
+
+    # Get scene metadata (camera FOVs, positions, etc.)
+    scene_meta = get_scene_metadata()
+
+    # Create training metadata to save with checkpoints
+    training_metadata = {
+        "dataset_repo_id": args.dataset,
+        "scene": scene_meta.get("scene_xml", "unknown"),
+        "scene_cameras": scene_meta.get("cameras", {}),
+        "cameras": camera_names,
+        "camera_resolutions": camera_resolutions,
+        "action_space": action_space,
+        "action_dim": action_dim,
+        "chunk_size": args.chunk_size,
+        "fps": dataset_metadata.fps,
+        "total_frames": len(dataset),
+    }
+
     # Initialize WandB
     if not args.no_wandb:
         print("Initializing WandB...")
@@ -369,21 +396,14 @@ def main():
 
         # Save checkpoint
         if step % args.save_freq == 0 or step == args.steps:
-            checkpoint_dir = output_dir / f"checkpoint_{step:06d}"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-            print(f"\n  Saving checkpoint to {checkpoint_dir}")
-            policy.save_pretrained(checkpoint_dir)
-            preprocessor.save_pretrained(checkpoint_dir)
-            postprocessor.save_pretrained(checkpoint_dir)
-
-            # Save training state for resuming
-            torch.save({
-                'step': step,
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'best_loss': best_loss,
-            }, checkpoint_dir / "training_state.pt")
+            print(f"\n  Saving checkpoint_{step:06d}")
+            save_checkpoint(
+                policy, optimizer, scheduler, step, output_dir,
+                training_metadata=training_metadata,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                best_loss=best_loss,
+            )
 
             if not args.no_wandb:
                 wandb.log({"checkpoint/step": step}, step=step)
@@ -426,11 +446,14 @@ def main():
     # Save final model
     print()
     print("Saving final model...")
-    final_dir = output_dir / "final"
-    final_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(final_dir)
-    preprocessor.save_pretrained(final_dir)
-    postprocessor.save_pretrained(final_dir)
+    save_checkpoint(
+        policy, optimizer, scheduler, args.steps, output_dir,
+        training_metadata=training_metadata,
+        checkpoint_name="final",
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        best_loss=best_loss,
+    )
 
     elapsed = time.time() - start_time
     print()

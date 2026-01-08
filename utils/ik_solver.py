@@ -72,7 +72,7 @@ class IKSolver:
         # Import here to avoid circular dependencies and allow scripts/ to be optional
         import sys
         repo_root = Path(__file__).parent.parent
-        sys.path.insert(0, str(repo_root / "scripts"))
+        sys.path.insert(0, str(repo_root / "scripts" / "tools"))
 
         from test_fk_ik import MuJoCoFK, MuJoCoIK
 

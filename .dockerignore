@@ -2,6 +2,7 @@
 datasets/
 outputs/
 wandb/
+eval_cache/
 
 # Git
 .git/

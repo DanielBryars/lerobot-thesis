@@ -11,15 +11,28 @@
 - **Status**: Training complete, uploaded to HF
 - **TODO**: Run evaluation in simulation to measure success rate
 
-### SmolVLA Model - 200k steps (2026-01-06) [IN PROGRESS]
-- **Model**: Training overnight
-- **Dataset**: `danbhf/sim_pick_place_40ep_rgbd_ee`
+### SmolVLA Model - 200k steps (2026-01-06) [FAILED - 0% SUCCESS]
+- **Model**: `danbhf/smolvla_sim_pick_place_200k`
+- **Dataset**: `danbhf/sim_pick_place_40ep_rgbd_ee` (RGBD + EE space)
 - **Training**: 200k steps on H100
-- **Status**: Running
-- **TODO**:
-  - Fix eval code (SO100SimConfig API changed)
-  - Run evaluation in simulation after training completes
-  - Upload to HuggingFace
+- **Evaluation**: 0% success across ALL checkpoints (10k through 200k)
+- **Status**: Complete failure - needs investigation
+
+**Possible causes (unknown which):**
+1. SmolVLA training didn't work well, inference code is fine
+2. Training worked, inference code is broken
+3. Both training and inference are broken
+
+**Complicating factors:**
+- Used EE action space (8-dim) with IK conversion - known to have ~28% IK failure rate
+- Used RGBD cameras - FOV mismatch issues between scenes (58° vs 52°)
+- Models from HuggingFace may differ from original source
+- No baseline comparison (SmolVLA hasn't been validated on this task before)
+
+**Next steps:**
+- Simplify: Train SmolVLA with joint space (6-dim) + RGB only (no depth)
+- Use `danbhf/sim_pick_place_merged_40ep` dataset (correct FOV, joint actions)
+- Compare against known-working ACT joint-space baseline (73.3% success)
 
 ## Engineering Issues Can Dominate Results
 
@@ -111,6 +124,76 @@ After DataProcessorPipeline:
 - train_act.py: 63% success
 - utils/training.py (fixed): 57% success
 - Both now comparable!
+
+## Evaluation Results (2026-01-07)
+
+### Joint-Space RGB Model
+**Model**: `danbhf/act_joint_space_90pct`
+```
+Success Rate: 73.3%
+Avg Steps: 182.3
+Avg Time: 0.65s
+
+Failure Analysis:
+  SUCCESS: 22
+  NEVER_PICKED_UP: 2
+  DROPPED_DURING_TRANSPORT: 6
+  pick_rate: 93.3%
+  drop_rate: 21.4%
+  avg_steps_success: 139.5
+  avg_max_height: 0.205m
+```
+
+**Observation**: 6/30 episodes dropped the block during transport. Grip could be tighter.
+
+### EE-Space RGB Model
+**Model**: `danbhf/act_ee_space_90pct`
+```
+Success Rate: 63.3%
+Avg Steps: 183.8
+Avg Time: 1.57s
+IK Failure Rate: 28.14%
+Avg IK Error: 8.02mm
+
+Failure Analysis:
+  SUCCESS: 19
+  NEVER_PICKED_UP: 7
+  DROPPED_DURING_TRANSPORT: 2
+  MISSED_GOAL: 1
+  TIMEOUT: 1
+  pick_rate: 76.7%
+  drop_rate: 13.0%
+  avg_steps_success: 116.6
+  avg_max_height: 0.155m
+```
+
+**Observation**: High IK failure rate (28%) causes many "never_picked_up" failures - the policy requests positions the IK solver can't reach.
+
+### Comparison: Joint-Space vs EE-Space (RGB only)
+
+| Metric | Joint-Space | EE-Space | Winner |
+|--------|-------------|----------|--------|
+| Success Rate | **73.3%** | 63.3% | Joint |
+| Pick Rate | **93.3%** | 76.7% | Joint |
+| Drop Rate | 21.4% | **13.0%** | EE |
+| IK Failures | 0% | 28.14% | Joint |
+| Avg Steps (success) | 139.5 | **116.6** | EE |
+
+**Conclusion**: Joint-space is more reliable due to avoiding IK failures. EE-space drops less when it does pick up, but fails to pick up more often.
+
+### TODO: Post-Training Grip Modification
+
+**Idea**: Modify trained models to grip the lego block tighter to reduce drops during transport.
+
+Possible approaches:
+1. **Action space bias**: Add constant offset to gripper action during inference
+2. **Gripper action clipping**: Clip gripper values to ensure minimum grip force
+3. **Post-hoc fine-tuning**: Fine-tune on subset of successful grasps with tighter grip
+4. **Residual policy**: Train small residual network to adjust grip based on height/velocity
+
+Need to investigate which approach is most practical without full retraining.
+
+---
 
 ## Known Issues
 

@@ -215,3 +215,6 @@ wandb/
 
 # Trained Models
 outputs/
+
+# Downloaded model cache for evaluation
+eval_cache/

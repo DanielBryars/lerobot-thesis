@@ -7,6 +7,7 @@ This module provides common functionality used across different policy training 
 - Training loop utilities
 """
 
+import re
 import time
 from pathlib import Path
 from typing import Optional, Callable, Any
@@ -18,6 +19,53 @@ from tqdm import tqdm
 
 from utils.constants import MOTOR_NAMES, NUM_JOINTS
 from utils.ik_solver import IKSolver
+
+
+# Default scene XML path
+REPO_ROOT = Path(__file__).parent.parent
+DEFAULT_SCENE_XML = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+
+
+def get_scene_metadata(scene_xml: Path = None) -> dict:
+    """Extract metadata from a MuJoCo scene XML file.
+
+    Args:
+        scene_xml: Path to scene XML. Uses default if None.
+
+    Returns:
+        Dict with scene info including camera FOVs, positions, etc.
+    """
+    if scene_xml is None:
+        scene_xml = DEFAULT_SCENE_XML
+
+    scene_xml = Path(scene_xml)
+    if not scene_xml.exists():
+        return {"scene_xml": str(scene_xml), "error": "file not found"}
+
+    content = scene_xml.read_text()
+
+    # Extract camera info using regex (simple approach, works for our XMLs)
+    cameras = {}
+    # Match: <camera name="xxx" ... fovy="yyy" .../>
+    camera_pattern = r'<camera\s+name="([^"]+)"[^>]*fovy="([^"]+)"[^>]*/>'
+    for match in re.finditer(camera_pattern, content):
+        cam_name = match.group(1)
+        fovy = float(match.group(2))
+        cameras[cam_name] = {"fovy": fovy}
+
+    # Also try to get position if available
+    camera_pos_pattern = r'<camera\s+name="([^"]+)"[^>]*pos="([^"]+)"[^>]*/>'
+    for match in re.finditer(camera_pos_pattern, content):
+        cam_name = match.group(1)
+        pos_str = match.group(2)
+        if cam_name in cameras:
+            cameras[cam_name]["pos"] = [float(x) for x in pos_str.split()]
+
+    return {
+        "scene_xml": scene_xml.name,
+        "scene_path": str(scene_xml),
+        "cameras": cameras,
+    }
 
 
 class CachedDataset(torch.utils.data.Dataset):
@@ -138,6 +186,9 @@ def run_evaluation(
     max_steps: int = 300,
     verbose: bool = True,
     analyze_failures: bool = True,
+    visualize: bool = False,
+    mujoco_viewer: bool = False,
+    dataset_repo_id: str = None,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -155,6 +206,9 @@ def run_evaluation(
         max_steps: Maximum steps per episode
         verbose: Whether to print progress
         analyze_failures: Whether to track and analyze failures
+        visualize: Whether to show live visualization (OpenCV window showing camera feeds)
+        mujoco_viewer: Whether to open the MuJoCo 3D viewer window
+        dataset_repo_id: Optional dataset repo ID to show training info
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -165,6 +219,28 @@ def run_evaluation(
         Outcome, EpisodeAnalysis, analyze_trajectory,
         compute_analysis_summary,
     )
+
+    # Tokenize language instruction for SmolVLA models
+    lang_tokens = None
+    lang_attention_mask = None
+    if language_instruction is not None:
+        # Check if this is a SmolVLA model by looking for the tokenizer
+        try:
+            tokenizer = policy.model.vlm_with_expert.processor.tokenizer
+            encoding = tokenizer(
+                language_instruction,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=512,
+            )
+            lang_tokens = encoding["input_ids"].to(device)
+            lang_attention_mask = encoding["attention_mask"].bool().to(device)
+            if verbose:
+                print(f"  Tokenized language instruction: '{language_instruction}'")
+        except AttributeError:
+            # Not a SmolVLA model, skip tokenization
+            pass
 
     # Determine if using EE action space based on action dimension
     if action_dim is None:
@@ -182,13 +258,20 @@ def run_evaluation(
         else:
             print(f"  Using joint action space ({action_dim}-dim)")
 
-    # Detect cameras from policy config
+    # Detect cameras from policy config and extract training info
     sim_cameras = []
     depth_camera_names = []
+    trained_camera_info = {}  # camera_name -> (height, width, channels)
+
     try:
-        for key in policy.config.input_features.keys():
+        for key, feature in policy.config.input_features.items():
             if key.startswith("observation.images."):
                 cam_name = key.replace("observation.images.", "")
+                # Extract shape info (channels, height, width)
+                shape = feature.shape if hasattr(feature, 'shape') else None
+                if shape and len(shape) == 3:
+                    trained_camera_info[cam_name] = (shape[1], shape[2], shape[0])  # H, W, C
+
                 if "_depth" in cam_name:
                     # This is a depth camera - extract base name
                     base_cam = cam_name.replace("_depth", "")
@@ -205,10 +288,48 @@ def run_evaluation(
     if depth_cameras:
         depth_camera_names = depth_cameras
 
+    # Evaluation settings
+    eval_camera_width = 640
+    eval_camera_height = 480
+    # Use RGBD scene if model uses depth cameras (different overhead FOV: 58° vs 52°)
+    if depth_camera_names:
+        eval_scene = "so101_rgbd.xml"
+    else:
+        eval_scene = "so101_with_wrist_cam.xml"
+
+    # Try to load training metadata from checkpoint
+    training_meta = {}
+    pretrained_path = getattr(getattr(policy, 'config', None), 'pretrained_path', None)
+    if pretrained_path:
+        meta_path = Path(pretrained_path) / "training_metadata.json"
+        if meta_path.exists():
+            import json
+            with open(meta_path) as f:
+                training_meta = json.load(f)
+
     if verbose:
-        print(f"  Sim cameras: {sim_cameras}")
+        print(f"\n  --- TRAINING CONFIG ---")
+        if training_meta:
+            print(f"    Dataset: {training_meta.get('dataset_repo_id', 'Unknown')}")
+            print(f"    Scene: {training_meta.get('scene', 'Unknown')}")
+            print(f"    Cameras: {training_meta.get('cameras', [])}")
+            # Show camera details with FOV
+            scene_cameras = training_meta.get('scene_cameras', {})
+            cam_resolutions = training_meta.get('camera_resolutions', {})
+            for cam_name in training_meta.get('cameras', []):
+                res = cam_resolutions.get(cam_name, '?')
+                fov = scene_cameras.get(cam_name, {}).get('fovy', '?')
+                print(f"      {cam_name}: {res}, FOV={fov}°")
+        else:
+            print(f"    (No training_metadata.json found)")
+            for cam_name, (h, w, c) in trained_camera_info.items():
+                print(f"      {cam_name}: {w}x{h} ({c} ch)")
+        print(f"\n  --- EVALUATION CONFIG ---")
+        print(f"    Scene: {eval_scene}")
+        print(f"    Cameras: {sim_cameras}")
+        print(f"    Resolution: {eval_camera_width}x{eval_camera_height}")
         if depth_camera_names:
-            print(f"  Depth cameras: {depth_camera_names}")
+            print(f"    Depth cameras: {depth_camera_names}")
 
     # Initialize IK solver if using EE actions
     ik_solver = None
@@ -216,15 +337,25 @@ def run_evaluation(
         ik_solver = IKSolver()
 
     # Create simulation
+    scene_path = REPO_ROOT / "scenes" / eval_scene
     config = SO100SimConfig(
+        scene_xml=str(scene_path),
         sim_cameras=sim_cameras,
         depth_cameras=depth_camera_names,
         enable_vr=False,
-        camera_width=640,
-        camera_height=480,
+        camera_width=eval_camera_width,
+        camera_height=eval_camera_height,
     )
     sim_robot = SO100Sim(config)
     sim_robot.connect()
+
+    # Setup visualization if requested
+    if visualize:
+        import cv2
+        cv2.namedWindow("Policy Evaluation", cv2.WINDOW_NORMAL)
+        print("  Camera visualization enabled - press Q to quit, R to reset episode")
+    if mujoco_viewer:
+        print("  MuJoCo 3D viewer enabled")
 
     # Goal position (bowl center) for failure analysis
     BOWL_POSITION = np.array([0.217, -0.225])
@@ -255,11 +386,65 @@ def run_evaluation(
                     pass  # Skip tracking if duplo not found
 
             obs = sim_robot.get_observation()
-            batch = prepare_obs_for_policy(obs, device, depth_cameras)
+            
+            # MuJoCo 3D viewer
+            if mujoco_viewer:
+                if not sim_robot.render():
+                    print("\nMuJoCo viewer closed")
+                    sim_robot.disconnect()
+                    if visualize:
+                        import cv2
+                        cv2.destroyAllWindows()
+                    return success_rate if 'success_rate' in dir() else 0, 0, 0, None, None, None
 
-            # Add language instruction if provided (for VLA models)
-            if language_instruction is not None:
-                batch["observation.language"] = language_instruction
+            # Camera feed visualization
+            if visualize:
+                import cv2
+                frames = []
+                # RGB cameras
+                for cam in sim_cameras:
+                    if cam in obs and isinstance(obs[cam], np.ndarray):
+                        frame = cv2.cvtColor(obs[cam], cv2.COLOR_RGB2BGR)
+                        cv2.putText(frame, f"{cam} | Ep {ep+1} Step {step}", (10, 25),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                        frames.append(frame)
+                # Depth cameras (normalize to 0-255 for display)
+                for cam in depth_camera_names:
+                    depth_key = f"{cam}_depth"
+                    if depth_key in obs and isinstance(obs[depth_key], np.ndarray):
+                        depth = obs[depth_key]
+                        # Normalize depth to 0-255 (clip to reasonable range first)
+                        depth_clipped = np.clip(depth, 0, 2.0)  # 0-2m range
+                        depth_norm = (depth_clipped / 2.0 * 255).astype(np.uint8)
+                        # Convert to 3-channel for display
+                        if depth_norm.ndim == 2:
+                            depth_vis = cv2.applyColorMap(depth_norm, cv2.COLORMAP_JET)
+                        else:
+                            depth_vis = cv2.applyColorMap(depth_norm.squeeze(), cv2.COLORMAP_JET)
+                        cv2.putText(depth_vis, f"{cam}_depth", (10, 25),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        frames.append(depth_vis)
+                if frames:
+                    display = np.hstack(frames) if len(frames) > 1 else frames[0]
+                    cv2.imshow("Policy Evaluation", display)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q') or key == 27:
+                        print("\nQuit requested")
+                        sim_robot.disconnect()
+                        cv2.destroyAllWindows()
+                        return success_rate if 'success_rate' in dir() else 0, 0, 0, None, None, None
+                    elif key == ord('r'):
+                        print(" [RESET]", end="")
+                        break  # Break inner loop to reset episode
+
+            batch = prepare_obs_for_policy(obs, device, depth_camera_names)
+
+            # Add language tokens if provided (for VLA models like SmolVLA)
+            if lang_tokens is not None:
+                batch["observation.language.tokens"] = lang_tokens
+                batch["observation.language.attention_mask"] = lang_attention_mask
+                # Also add task for preprocessor compatibility
+                batch["task"] = language_instruction
 
             batch = preprocessor(batch)
 
@@ -277,7 +462,15 @@ def run_evaluation(
             # Convert EE actions to joint actions if needed
             if is_ee_action_space:
                 action_np = action_np[:8]  # Take first 8 values (EE action)
-                joint_action, _, _ = ik_solver.ee_to_joint_action(action_np, return_normalized=True)
+
+                # Clamp EE position to approximate workspace bounds to reduce IK failures
+                # Z: minimum 3cm above table to avoid unreachable low positions
+                # This keeps robot moving in approximately right direction even if target is out of bounds
+                action_np[2] = max(action_np[2], 0.03)  # Z minimum
+
+                joint_action, _, ik_success = ik_solver.ee_to_joint_action(action_np, return_normalized=True)
+                # Always use the IK solution (even if failed) - it's the solver's best attempt
+                # Holding position causes policy/robot state mismatch and cascading failures
             else:
                 joint_action = action_np[:NUM_JOINTS]
 
@@ -326,6 +519,9 @@ def run_evaluation(
             episode_analyses.append(analysis)
 
     sim_robot.disconnect()
+    if visualize:
+        import cv2
+        cv2.destroyAllWindows()
 
     success_rate = successes / num_episodes
     avg_steps = total_steps / num_episodes
@@ -412,7 +608,11 @@ def save_checkpoint(
     scheduler,
     step: int,
     output_dir: Path,
-    checkpoint_name: str = None
+    training_metadata: dict,
+    checkpoint_name: str = None,
+    preprocessor=None,
+    postprocessor=None,
+    best_loss: float = None,
 ):
     """Save a training checkpoint.
 
@@ -422,8 +622,14 @@ def save_checkpoint(
         scheduler: The learning rate scheduler
         step: Current training step
         output_dir: Directory to save checkpoint
+        training_metadata: Dict with training info (dataset_repo_id, scene, cameras, etc.) - REQUIRED
         checkpoint_name: Optional name for checkpoint (default: checkpoint_{step:06d})
+        preprocessor: Optional preprocessor to save
+        postprocessor: Optional postprocessor to save
+        best_loss: Optional best loss value to save in training state
     """
+    import json
+
     if checkpoint_name is None:
         checkpoint_name = f"checkpoint_{step:06d}"
 
@@ -433,12 +639,25 @@ def save_checkpoint(
     # Save policy
     policy.save_pretrained(str(checkpoint_dir))
 
+    # Save preprocessor/postprocessor if provided
+    if preprocessor is not None:
+        preprocessor.save_pretrained(str(checkpoint_dir))
+    if postprocessor is not None:
+        postprocessor.save_pretrained(str(checkpoint_dir))
+
     # Save optimizer and scheduler state
-    torch.save({
+    state = {
         'step': step,
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-    }, checkpoint_dir / "training_state.pt")
+    }
+    if best_loss is not None:
+        state['best_loss'] = best_loss
+    torch.save(state, checkpoint_dir / "training_state.pt")
+
+    # Save training metadata (dataset, scene, cameras, etc.)
+    with open(checkpoint_dir / "training_metadata.json", "w") as f:
+        json.dump(training_metadata, f, indent=2)
 
 
 def load_checkpoint(
