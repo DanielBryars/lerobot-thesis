@@ -34,6 +34,68 @@
 - Use `danbhf/sim_pick_place_merged_40ep` dataset (correct FOV, joint actions)
 - Compare against known-working ACT joint-space baseline (73.3% success)
 
+### SmolVLA Training Performance Notes (2026-01-08)
+
+**Expected training times (from HuggingFace/LeRobot docs):**
+- A100: ~4-5 hours for 20k steps (default fine-tune recipe)
+- H100: ~2-3.5 hours for 20k steps (best case, compute-bound)
+
+**Observed on H100 80GB:**
+- ~2.25s/iteration with batch_size 128
+- GPU utilization bounces 0% → 90-100% → 0% (classic data loading bottleneck)
+- 100k steps ≈ 62 hours at this rate
+
+**Known issue:** SmolVLA training often becomes dataloader/IO-bound rather than compute-bound.
+- LeRobot GitHub issue shows H100 example: update step ~0.3s but data fetch spikes to ~6s
+- This makes the H100's extra compute power irrelevant
+
+**Attempted mitigations:**
+- `--cache_dataset`: Loads all data into RAM (~45GB), but sets num_workers=0 (single-threaded batch prep)
+- Without cache: default num_workers=4, still slow
+- Increasing num_workers to 16 may help
+
+**Root cause:** The bottleneck is likely CPU-side batch preparation (image preprocessing, tokenization) not raw data loading.
+
+**Solution found:** Use more DataLoader workers! With 256 CPU cores available:
+- 4 workers (default): ~4 it/s
+- 64 workers: ~20 it/s (but unstable, drops to ~3 it/s)
+- 32 workers: testing...
+- 16 workers: testing...
+
+### Pi0.5 Training Notes
+
+**Important advice (from friend with experience):**
+> "For Pi0.5, use directly the implementation of Physical Intelligence in JAX. The one in LeRobot was repeatedly reported as not working (which is the case for a lot of HF models btw)"
+
+**Action:** Use the original JAX implementation from Physical Intelligence, NOT the LeRobot/HuggingFace port.
+
+### Openpi Integration (2026-01-08)
+
+Created integration for Physical Intelligence's openpi (Pi0/Pi0.5) framework:
+
+**Files created:**
+- `scripts/openpi/so101_policy.py` - SO-101 robot input/output transforms
+- `scripts/openpi/convert_lerobot_to_openpi.py` - LeRobot to RLDS format converter
+- `tests/test_openpi_converter.py` - Unit tests (15 tests passing)
+
+**Usage:**
+```bash
+# Convert LeRobot dataset to openpi format
+python scripts/openpi/convert_lerobot_to_openpi.py danbhf/sim_pick_place_merged_40ep output/openpi_data \
+    --main_camera overhead_cam --wrist_camera wrist_cam \
+    --language "Pick up the block and place it in the bowl"
+```
+
+**Output format (RLDS compatible):**
+- `observation/state`: Joint positions [N, 6] float32
+- `observation/image`: Main camera [N, H, W, 3] uint8
+- `observation/wrist_image`: Wrist camera [N, H, W, 3] uint8 (optional)
+- `action`: Robot actions [N, 6] float32
+- `language_instruction`: Task description string
+- `is_first/is_last/is_terminal`: Episode boundaries
+
+**TODO:** Test with actual openpi training pipeline.
+
 ## Engineering Issues Can Dominate Results
 
 **Key Lesson**: When evaluation results don't match expectations, the problem is usually a bug in the evaluation code, not the model. We spent significant time debugging eval code issues before getting meaningful results.

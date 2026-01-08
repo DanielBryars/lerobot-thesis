@@ -168,8 +168,8 @@ def main():
                         help="GPU model to search for (default: H100_SXM)")
     parser.add_argument("--num-gpus", type=int, default=1,
                         help="Number of GPUs (default: 1)")
-    parser.add_argument("--image", type=str, default="aerdanielbryars101/lerobot-training:latest",
-                        help="Docker image to use")
+    parser.add_argument("--image", type=str, required=True,
+                        help="Docker image to use (e.g., aerdanielbryars101/lerobot-training:latest)")
     parser.add_argument("--disk", type=int, default=50,
                         help="Disk space in GB (default: 50)")
     parser.add_argument("--min-reliability", type=float, default=95.0,
