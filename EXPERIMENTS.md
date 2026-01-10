@@ -34,6 +34,22 @@
 - Use `danbhf/sim_pick_place_merged_40ep` dataset (correct FOV, joint actions)
 - Compare against known-working ACT joint-space baseline (73.3% success)
 
+### SmolVLA Model - Joint Space (2026-01-08)
+- **Model**: `danbhf/smolvla_so101_200k`
+- **Dataset**: `danbhf/sim_pick_place_merged_40ep` (RGB + joint space)
+- **Training**: 200k steps on H100
+- **Status**: Training complete, uploaded to HF
+- **TODO**: Run evaluation to measure success rate
+
+### Pi0 Model - SO-101 (2026-01-10)
+- **Model**: `danbhf/pi0_so101_20260110`
+- **Dataset**: `danbhf/sim_pick_place_merged_40ep` (RGB + joint space)
+- **Training**: Full training run on H100 using openpi JAX implementation
+- **Docker**: `aerdanielbryars101/openpi-training:latest`
+- **Status**: Training complete, uploaded to HF
+- **TODO**: Run evaluation to measure success rate
+
+
 ### SmolVLA Training Performance Notes (2026-01-08)
 
 **Expected training times (from HuggingFace/LeRobot docs):**
@@ -74,17 +90,20 @@
 Created integration for Physical Intelligence's openpi (Pi0/Pi0.5) framework:
 
 **Files created:**
-- `scripts/openpi/so101_policy.py` - SO-101 robot input/output transforms
-- `scripts/openpi/convert_lerobot_to_openpi.py` - LeRobot to RLDS format converter
+- `scripts/pi0/so101_policy.py` - SO-101 robot input/output transforms
+- `scripts/pi0/convert_lerobot_to_openpi.py` - LeRobot to RLDS format converter
+- `scripts/pi0/so101_config.py` - Training configs for SO-101 robot
+- `scripts/pi0/Dockerfile` - Docker image for vast.ai training
 - `tests/test_openpi_converter.py` - Unit tests (15 tests passing)
 
-**Usage:**
-```bash
-# Convert LeRobot dataset to openpi format
-python scripts/openpi/convert_lerobot_to_openpi.py danbhf/sim_pick_place_merged_40ep output/openpi_data \
-    --main_camera overhead_cam --wrist_camera wrist_cam \
-    --language "Pick up the block and place it in the bowl"
-```
+**Docker image:** `aerdanielbryars101/openpi-training:latest`
+
+**Key learnings from Docker setup:**
+1. openpi requires Python 3.11+ (original had 3.10)
+2. pip hangs on openpi's complex dependencies - use `uv` instead
+3. Folder naming collision: our `scripts/openpi` shadowed the real `openpi` package
+4. Renamed to `scripts/pi0` to avoid namespace conflict
+5. openpi imports `pytest` in non-test code (gemma_pytorch.py) - must install pytest
 
 **Output format (RLDS compatible):**
 - `observation/state`: Joint positions [N, 6] float32
@@ -94,7 +113,41 @@ python scripts/openpi/convert_lerobot_to_openpi.py danbhf/sim_pick_place_merged_
 - `language_instruction`: Task description string
 - `is_first/is_last/is_terminal`: Episode boundaries
 
-**TODO:** Test with actual openpi training pipeline.
+### Pi0 Training Test (2026-01-08)
+
+**Successfully ran test training on vast.ai H100:**
+
+```bash
+# 1. Compute normalization stats (required)
+cd /app/openpi && uv run scripts/compute_norm_stats.py --config-name=pi0_aloha_sim
+
+# 2. Run training
+cd /app/openpi && XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
+    uv run scripts/train.py pi0_aloha_sim \
+    --exp-name=test_run \
+    --num-train-steps=100 \
+    --overwrite
+```
+
+**Results (100 test steps):**
+- Initial loss: 0.3614
+- grad_norm: 4.8452
+- Training speed: ~2.33s/step
+- Memory warning: "Can't reduce memory use below 21.81GiB by rematerialization"
+- Checkpoint saved successfully to `/app/openpi/checkpoints/pi0_aloha_sim/test_run/99`
+- WandB logging worked: https://wandb.ai/bryars-bryars/openpi
+
+**Key insight - Normalization stats:**
+- openpi requires pre-computed mean/std for all features
+- Run `compute_norm_stats.py` before training
+- Stats normalize inputs to ~[-1, 1] range for stable training
+- Model output is denormalized back to real units at inference
+
+**TODO:**
+- Create proper SO-101 config (not using aloha_sim hack)
+- Compute norm stats for `danbhf/sim_pick_place_merged_40ep`
+- Run full training run on SO-101 dataset
+- Compare Pi0 vs SmolVLA on same task
 
 ## Engineering Issues Can Dominate Results
 

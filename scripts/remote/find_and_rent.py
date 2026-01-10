@@ -116,9 +116,9 @@ def create_instance(offer_id: int, image: str, disk_gb: int = 50) -> tuple[bool,
         return False, output
 
 
-def get_instance_info(contract_id: str, max_wait: int = 120) -> dict:
+def get_instance_info(contract_id: str, max_wait: int = 600) -> dict:
     """Wait for instance to be ready and get connection info."""
-    print(f"Waiting for instance {contract_id} to be ready", end="", flush=True)
+    print(f"Waiting for instance {contract_id} to be ready. max wait time {max_wait} seconds", end="", flush=True)
 
     start_time = time.time()
     while time.time() - start_time < max_wait:
