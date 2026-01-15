@@ -34,20 +34,143 @@
 - Use `danbhf/sim_pick_place_merged_40ep` dataset (correct FOV, joint actions)
 - Compare against known-working ACT joint-space baseline (73.3% success)
 
-### SmolVLA Model - Joint Space (2026-01-08)
+### SmolVLA Model - Joint Space (2026-01-08) [FAILED - 0% SUCCESS]
 - **Model**: `danbhf/smolvla_so101_200k`
 - **Dataset**: `danbhf/sim_pick_place_merged_40ep` (RGB + joint space)
 - **Training**: 200k steps on H100
-- **Status**: Training complete, uploaded to HF
-- **TODO**: Run evaluation to measure success rate
+- **Evaluation** (2026-01-10): 0% success across ALL checkpoints (2k through 200k)
+- **Status**: Complete failure - same as EE-space version
 
-### Pi0 Model - SO-101 (2026-01-10)
+**Evaluation Results:**
+| Checkpoint | Success Rate |
+|------------|-------------|
+| checkpoint_002000 | 0.0% |
+| checkpoint_004000 | 0.0% |
+| checkpoint_006000 | 0.0% |
+| checkpoint_008000 | 0.0% |
+| checkpoint_010000 | 0.0% |
+| checkpoint_012000 | 0.0% |
+| checkpoint_014000 | 0.0% |
+| checkpoint_016000 | 0.0% |
+| checkpoint_018000 | 0.0% |
+| checkpoint_020000 | 0.0% |
+| final | 0.0% |
+
+**Failure mode**: All episodes result in "never_picked_up" - the robot doesn't attempt to grasp.
+
+**Baseline comparison**: ACT joint-space model achieves 80% success on same task, confirming eval infrastructure works.
+
+**Conclusion**: SmolVLA training is not working for this task. Issue is NOT the action space (tried both EE and joint), NOT the dataset format. Likely a fundamental issue with SmolVLA training or inference code.
+
+### Pi0 Model - 40k Training Attempt (2026-01-11) [FAILED - DISK FULL x2]
+- **Attempted**: 40k steps to see if longer training helps
+- **Failed at**: Step 10000 with "No space left on device"
+- **Root cause**: vast.ai instance had NO usable large disk - only 50GB overlay
+
+**What went wrong:**
+- `df -h` showed 2TB disks, but they were read-only nvidia driver mounts
+- `/workspace` was on the same 50GB overlay as `/`, not a separate disk
+- Symlink trick didn't help because there was no actual large disk to symlink to
+
+**vast.ai Disk Verification Checklist (DO THIS BEFORE TRAINING):**
+```bash
+# 1. Check total disk space
+df -h
+
+# 2. CRITICAL: Verify /workspace (or /data) is on a SEPARATE large disk
+df -h /workspace
+# BAD: Shows "overlay" filesystem → it's on the small Docker disk
+# GOOD: Shows "/dev/sda1" or similar → it's a real separate disk
+
+# 3. If /workspace is on overlay, look for actual large disk:
+mount | grep -v "tmpfs\|proc\|sys\|nvidia\|loop"
+# Look for a large ext4 mount you can write to
+
+# 4. Test write access to the large disk:
+touch /path/to/large/disk/test && rm /path/to/large/disk/test
+
+# 5. Estimate storage needed:
+#    - Pi0 checkpoints: ~13GB each (train_state + params + assets)
+#    - 40k steps with save_interval=5000 → 8 checkpoints → ~100GB needed
+#    - 40k steps with save_interval=10000 → 4 checkpoints → ~50GB needed
+```
+
+**When renting vast.ai instance:**
+- Look for "Disk Space" in the listing - ensure it's >100GB
+- Prefer instances that explicitly show disk mounted at `/workspace` or `/data`
+- After connecting, ALWAYS run the verification checklist above
+
+**Training command (once disk is verified):**
+```bash
+cd /app/openpi
+
+# Symlink checkpoints to large disk (replace /data with actual mount point)
+rm -rf checkpoints && ln -s /data/checkpoints checkpoints
+mkdir -p /data/checkpoints
+
+# Run training
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
+    --exp-name=pi0_so101_40k \
+    --num-train-steps=40000 \
+    --save-interval=10000 \
+    --overwrite
+```
+
+### Pi0 Model - SO-101 (2026-01-10) [FAILED - 0% SUCCESS]
 - **Model**: `danbhf/pi0_so101_20260110`
 - **Dataset**: `danbhf/sim_pick_place_merged_40ep` (RGB + joint space)
-- **Training**: Full training run on H100 using openpi JAX implementation
+- **Training**: 20k steps on H100 using openpi JAX implementation
 - **Docker**: `aerdanielbryars101/openpi-training:latest`
-- **Status**: Training complete, uploaded to HF
-- **TODO**: Run evaluation to measure success rate
+- **Evaluation** (2026-01-10): 0% success (0/10 episodes)
+- **Status**: Complete failure - same pattern as SmolVLA
+
+**Failure mode**: Robot moves in correct general direction but **gripper never closes**:
+- Gripper values stay at 15-30 (open), should go to ~0 to grasp
+- Arm rotates anti-clockwise (towards block) but never picks up
+
+**Debug findings (2026-01-10):**
+1. **Fixed normalization bug**: Original eval converted actions incorrectly (values -2455 to +3367). Fixed to use normalized values directly (range -70 to +60).
+2. **Gripper stays open**: Both checkpoint 5000 and 19999 show same behavior - arm moves but gripper never closes
+3. **Model learned partial behavior**: Robot moves towards block area but grasping action not learned
+
+**Research on Pi0 training requirements:**
+- Typical successful fine-tuning uses **50-100+ episodes** (we only have 40)
+- Pi0 uses **delta actions** by default (relative to first state in chunk)
+- Early checkpoints (5k steps) sometimes perform better than late ones due to overfitting
+
+**Baseline comparison**: ACT joint-space model achieves 80% success on same task with same 40 episodes.
+
+**Gripper analysis:**
+The gripper is encoded differently from other joints:
+- Other joints: [-100, 100] normalized range
+- Gripper: [0, 100] range where 0=closed, 100=open
+
+Training data gripper stats:
+- Range: 0 (closed) to 76 (open)
+- Mean: 30.2, Std: 20.4
+
+Model output gripper: stays at 15-30 (near the mean!)
+- The model learned to output the **average** gripper position
+- It did NOT learn the temporal sequence of when to close the gripper
+- This is classic "mean regression" behavior from insufficient data
+
+**Checkpoint comparison:**
+| Checkpoint | Arm Movement | Gripper | Result |
+|------------|--------------|---------|--------|
+| 5000 | None | Open (~18) | 0/1 timeout |
+| 10000 | Not recorded | - | - |
+| 15000 | Not recorded | - | - |
+| 19999 | Anti-clockwise towards block | Open (15-30) | 0/1 timeout |
+
+Recordings: `pi0_recording_5000.json`, `pi0_recording_fixed.json` (19999)
+
+**Would longer training help?**
+Unlikely to help significantly because:
+1. Model already converged to outputting mean values
+2. More steps would just reinforce this behavior
+3. Need more diverse training data showing gripper close/open transitions
+
+**Conclusion**: VLA models (Pi0, SmolVLA) may need more training data than ACT for this task. The model learned some movement behavior but not the grasping action. With only 40 episodes, the model learns to output average values rather than learning conditional behavior.
 
 
 ### SmolVLA Training Performance Notes (2026-01-08)
@@ -320,3 +443,64 @@ Need to investigate which approach is most practical without full retraining.
   - Depth camera naming - FIXED
   - RGB vs depth detection - FIXED
 - Still investigating why results don't match original experiments
+
+---
+
+## Side Projects
+
+### HIL-SERL Exploration (2026-01-11)
+- **Location**: `E:\git\ai\lerobot-training-fun`
+- **Reference**: PDF tutorial from `docs/2510.12403v1.pdf` (pages 23-33)
+- **Goal**: Learn HIL-SERL (Human-in-the-Loop Sample Efficient Robot RL) workflow
+
+**What is HIL-SERL?**
+- Real-world RL training that achieves 99%+ success in 1-2 hours
+- Combines SAC + RLPD + human interventions during training
+- Uses a **learned reward classifier** instead of hand-crafted rewards
+
+**Key insight - Reward Classifier:**
+- Binary classifier: "Does this camera frame look like task success?"
+- Trained on labeled success/failure frames from demonstrations
+- Replaces manual reward engineering with visual success detection
+- Could be reusable as building block for other training pipelines
+
+**Files structure:**
+```
+lerobot-training-fun/
+├── reference/ch3/          # Original tutorial code (read-only)
+├── hilserl/                # Working copies to modify
+│   ├── 01_reward_classifier.py
+│   ├── 02_actor.py
+│   ├── 03_learner.py
+│   └── 04_hil_serl.py
+└── requirements.txt
+```
+
+**Progress:**
+- [x] Read tutorial from PDF
+- [x] Set up folder structure
+- [x] Created requirements.txt
+- [ ] Train reward classifier on example dataset
+- [ ] Train reward classifier on own dataset
+- [ ] Run full HIL-SERL training loop
+
+**Simulation limitations:**
+- Gripper friction is unrealistically high in the current MuJoCo setup
+- Some grips succeed in simulation that would likely fail on real hardware
+- This may cause sim-to-real transfer issues - policies might learn "lazy" grips that don't work physically
+- TODO: Tune friction parameters or add grip quality filtering to training data
+
+**Data augmentation strategy:**
+The main goal is to generate more training data for VLA models (Pi0, SmolVLA) which seem to need more than 40 episodes:
+1. Use trained ACT policy (73% success) to run episodes automatically in simulation
+2. Train a visual success classifier (HIL-SERL style) to filter the generated episodes
+3. Keep only successful episodes to augment the training dataset
+4. Retrain VLA models on the larger dataset
+
+This is a form of "policy distillation" - using a smaller, task-specific model (ACT) to generate data for larger generalist models.
+
+**Potential applications:**
+- Learned reward classifier as success detector for other RL/IL experiments
+- Visual "task done" detector for auto-stopping episodes
+- Data quality filtering for auto-generated episodes
+- Scalable data collection without manual teleoperation

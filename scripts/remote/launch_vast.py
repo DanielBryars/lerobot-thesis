@@ -51,12 +51,18 @@ def run_vastai_cmd(args: list, capture_output: bool = True):
 
 def search_instances(args):
     """Search for available GPU instances."""
+    # Minimum disk space needed:
+    # - Pi0 checkpoints are ~13GB each (train_state + params + assets)
+    # - 40k steps with save_interval=5000 → 8 checkpoints → ~100GB
+    # - Plus model weights, datasets, etc. → need 150GB minimum
+    min_disk = args.min_disk if hasattr(args, 'min_disk') and args.min_disk else 150
+
     # Build search query
     query_parts = [
-        "reliability > 0.95",  # High reliability
-        "inet_down > 100",     # Fast internet
-        "disk_space > 50",     # Enough disk space
-        "cuda_vers >= 12.0",   # CUDA 12+
+        "reliability > 0.95",      # High reliability
+        "inet_down > 100",         # Fast internet
+        f"disk_space > {min_disk}", # Enough disk for Pi0 checkpoints
+        "cuda_vers >= 12.0",       # CUDA 12+
     ]
 
     if args.gpu:
@@ -69,7 +75,10 @@ def search_instances(args):
 
     query = " ".join(query_parts)
 
-    print(f"Searching for instances matching: {query}")
+    print(f"Searching for instances with:")
+    print(f"  Min disk: {min_disk}GB (for Pi0 checkpoints)")
+    print(f"  GPU: {args.gpu or 'any'}")
+    print(f"  Query: {query}")
     print("-" * 60)
 
     stdout, stderr, code = run_vastai_cmd([
@@ -132,10 +141,12 @@ python remote/train_remote.py {" ".join(train_cmd)}
 '''
 
     # Search for a suitable instance first
+    # Need 150GB+ for Pi0 checkpoints (see search_instances for details)
+    min_disk = args.min_disk if hasattr(args, 'min_disk') and args.min_disk else 150
     query_parts = [
         "reliability > 0.95",
         "inet_down > 100",
-        "disk_space > 50",
+        f"disk_space > {min_disk}",
         "cuda_vers >= 12.0",
     ]
 
@@ -147,12 +158,17 @@ python remote/train_remote.py {" ".join(train_cmd)}
 
     query = " ".join(query_parts)
 
+    # Disk space to request
+    disk_gb = args.disk if hasattr(args, 'disk') and args.disk else 150
+
     print(f"Launching training job:")
     print(f"  Dataset: {args.dataset}")
     print(f"  Steps: {args.steps}")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Cameras: {args.cameras or 'all'}")
     print(f"  GPU filter: {args.gpu or 'any'}")
+    print(f"  Min disk: {min_disk}GB (filter)")
+    print(f"  Disk request: {disk_gb}GB")
     print(f"  Max price: ${args.max_price}/hr" if args.max_price else "  Max price: unlimited")
     print("-" * 60)
 
@@ -161,7 +177,7 @@ python remote/train_remote.py {" ".join(train_cmd)}
         "create", "instance",
         query,
         "--image", DOCKER_IMAGE,
-        "--disk", "50",  # 50GB disk
+        "--disk", str(disk_gb),  # Need 150GB+ for Pi0 checkpoints
         "--onstart-cmd", onstart_script,
         "--env", env_vars.replace("-e ", ""),
     ]
@@ -244,6 +260,7 @@ def main():
     search_parser = subparsers.add_parser("search", help="Search for available instances")
     search_parser.add_argument("--gpu", type=str, help="GPU name filter (e.g., RTX4090, A100)")
     search_parser.add_argument("--max_price", type=float, help="Maximum price per hour")
+    search_parser.add_argument("--min_disk", type=int, default=150, help="Minimum disk space in GB (default: 150 for Pi0)")
     search_parser.add_argument("--limit", type=int, default=10, help="Number of results")
 
     # Launch command
@@ -259,6 +276,8 @@ def main():
     launch_parser.add_argument("--upload_repo", type=str, help="HuggingFace repo for final model")
     launch_parser.add_argument("--gpu", type=str, help="GPU name filter")
     launch_parser.add_argument("--max_price", type=float, help="Maximum price per hour")
+    launch_parser.add_argument("--min_disk", type=int, default=150, help="Minimum disk space in GB (default: 150 for Pi0)")
+    launch_parser.add_argument("--disk", type=int, default=150, help="Disk space to request in GB (default: 150)")
 
     # List command
     list_parser = subparsers.add_parser("list", help="List running instances")
