@@ -115,7 +115,7 @@ lerobot-thesis/
 Record pick-and-place demonstrations for training:
 
 ```bash
-python recording/record_sim_vr_pickplace.py --num_episodes 20
+python recording/record_sim_vr_pickplace.py --task "Pick up the Duplo block and place it in the bowl" --num_episodes 20
 ```
 
 **Options**:

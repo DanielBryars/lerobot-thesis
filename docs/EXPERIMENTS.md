@@ -1539,3 +1539,294 @@ This installs:
 - Additional vision processing libraries
 
 ---
+
+## 2026-01-16
+
+### Experiment 23: Fresh Pick-and-Place Recording
+
+**Dataset:** `danbhf/sim_pick_place_20260116_000212`
+
+**Setup:**
+- 20 episodes recorded
+- Task: Pick up the Duplo block and place it in the bowl
+- FPS: 30
+- Cameras: wrist_cam, overhead_cam (480×640 RGB)
+
+**Statistics:**
+- Total frames: 3,066
+- Avg frames/episode: 153.3 (5.1s)
+- Min/Max: 96-192 frames (3.2-6.4s)
+
+**Comparison with Previous Recording (danbhf/sim_pick_place_20251229_144730):**
+
+| Metric | New (20260116) | Old (20251229) |
+|--------|----------------|----------------|
+| Episodes | 20 | 20 |
+| Total frames | 3,066 | 3,783 |
+| Avg duration | 5.1s | 6.3s |
+| Min/Max | 3.2-6.4s | 4.0-9.1s |
+
+**Observations:**
+- ~20% faster episodes on average
+- More consistent timing (tighter min/max range)
+- Improved operator skill over time
+
+**Next Steps:**
+- [x] Record additional dataset with randomized arm starting positions
+- [ ] Compare training results between fixed vs randomized start positions
+
+---
+
+### Experiment 24: Pick-and-Place with Randomized Arm Starting Positions
+
+**Dataset:** `danbhf/sim_pick_place_20260116_001731`
+
+**Setup:**
+- 20 episodes recorded
+- Task: Pick up the Duplo block and place it in the bowl
+- **Arm starts in different poses each episode** (not fixed home position)
+- FPS: 30
+- Cameras: wrist_cam, overhead_cam (480×640 RGB)
+
+**Statistics:**
+- Total frames: 2,796
+- Avg frames/episode: 139.8 (4.7s)
+- Min/Max: 116-169 frames (3.9-5.6s)
+
+**Comparison: Fixed vs Randomized Start Positions:**
+
+| Metric | Fixed Start (Exp 23) | Random Start (Exp 24) |
+|--------|----------------------|----------------------|
+| Episodes | 20 | 20 |
+| Total frames | 3,066 | 2,796 |
+| Avg duration | 5.1s | **4.7s** |
+| Min/Max | 3.2-6.4s | **3.9-5.6s** |
+| Range spread | 3.2s | **1.7s** |
+
+**Observations:**
+- Random start episodes are ~8% faster on average
+- Much tighter timing variance (1.7s spread vs 3.2s)
+- Starting closer to objects may reduce initial approach time
+- More diverse training data for policy generalization
+
+**Hypothesis:**
+Training on random start positions should improve policy robustness, especially for recovery scenarios where the arm isn't at home position.
+
+**Part of larger data collection effort:** Target 150 total episodes with randomized arm starting positions.
+
+---
+
+### Data Collection Plan: 150 Episode Dataset
+
+**Goal:** Record 150 episodes with randomized arm starting positions for more robust policy training.
+
+**Progress:**
+| Session | Dataset | Episodes | Frames | Avg Duration | Cumulative |
+|---------|---------|----------|--------|--------------|------------|
+| 1 | `danbhf/sim_pick_place_20251229_101340` | 20 | 3,276 | 5.5s | 20 (fixed start, Dec) |
+| 2 | `danbhf/sim_pick_place_20251229_144730` | 20 | 3,783 | 6.3s | 40 (fixed start, Dec) |
+| 3 | `danbhf/sim_pick_place_20260116_000212` | 20 | 3,066 | 5.1s | 60 (fixed start) |
+| 4 | `danbhf/sim_pick_place_20260116_001731` | 20 | 2,796 | 4.7s | 80 (random start) |
+| 5 | `danbhf/sim_pick_place_20260116_002742` | 20 | 2,695 | 4.5s | 100 (random start) |
+| 6 | `danbhf/sim_pick_place_20260117_182521` | 18 | 2,362 | 4.4s | 118 (random start, 2 bad eps removed) |
+| 7 | `danbhf/sim_pick_place_20260117_184751` | 20 | 2,638 | 4.4s | 138 (random start) |
+| 8 | `danbhf/sim_pick_place_20260117_190108` | 19 | 2,418 | 4.3s | 157 (random start, 1 bad ep removed) |
+| **Merged** | `danbhf/sim_pick_place_157ep` | **157** | **22,534** | **4.8s** | ✅ Complete |
+
+**Quality Analysis (2026-01-17):**
+
+| Dataset | Eps | Frames | Avg | Min | Max | Std | Issues |
+|---------|-----|--------|-----|-----|-----|-----|--------|
+| `sim_pick_place_20251229_101340` | 20 | 2,776 | 139 | 116 | 176 | 15.1 | None |
+| `sim_pick_place_20251229_144730` | 20 | 3,783 | 189 | 119 | 272 | 35.1 | None (higher variance) |
+| `sim_pick_place_20260116_000212` | 20 | 3,066 | 153 | 96 | 192 | 22.0 | ep9: wrist_roll 41% at limits |
+| `sim_pick_place_20260116_001731` | 20 | 2,796 | 140 | 116 | 169 | 15.0 | None |
+| `sim_pick_place_20260116_002742` | 20 | 2,695 | 135 | 98 | 174 | 20.2 | None |
+| `sim_pick_place_20260117_182521` | 18 | 2,362 | 131 | 99 | 175 | 21.7 | ep17: wrist_roll 44% at limits |
+| `sim_pick_place_20260117_184751` | 20 | 2,638 | 132 | 113 | 167 | 15.4 | None |
+
+**Quality Checks Performed:**
+- Short episodes (< 2 seconds): None found
+- Joint angle wraps (sudden jumps > 150): None found
+- Time at joint limits (> 40%): 2 episodes flagged (minor, no wrapping)
+
+**Conclusion:** Data quality is good. The 2 flagged episodes have wrist_roll spending significant time near limits but no actual discontinuities. Safe to include in training.
+
+**Motivation:**
+- Previous experiments showed 40 episodes → 93% peak success
+- More data should improve consistency and reduce checkpoint variance
+- Random start positions add diversity for better generalization
+- 150 episodes = ~3.75x more data than best previous experiments
+
+---
+
+## Datasets
+
+### Raw Recording Datasets
+
+| Dataset | Episodes | Frames | Avg Duration | Start Position | Date |
+|---------|----------|--------|--------------|----------------|------|
+| `danbhf/sim_pick_place_20251229_101340` | 20 | 3,276 | 5.5s | Fixed | 2025-12-29 |
+| `danbhf/sim_pick_place_20251229_144730` | 20 | 3,783 | 6.3s | Fixed | 2025-12-29 |
+| `danbhf/sim_pick_place_20260116_000212` | 20 | 3,066 | 5.1s | Fixed | 2026-01-16 |
+| `danbhf/sim_pick_place_20260116_001731` | 20 | 2,796 | 4.7s | Random | 2026-01-16 |
+| `danbhf/sim_pick_place_20260116_002742` | 20 | 2,695 | 4.5s | Random | 2026-01-16 |
+| `danbhf/sim_pick_place_20260117_182521` | 18 | 2,362 | 4.4s | Random | 2026-01-17 |
+| `danbhf/sim_pick_place_20260117_184751` | 20 | 2,638 | 4.4s | Random | 2026-01-17 |
+| `danbhf/sim_pick_place_20260117_190108` | 19 | 2,418 | 4.3s | Random | 2026-01-17 |
+
+### Merged / Processed Datasets
+
+| Dataset | Episodes | Frames | Action Space | Notes |
+|---------|----------|--------|--------------|-------|
+| `danbhf/sim_pick_place_merged_40ep` | 40 | 6,559 | Joint (6-dim) | Merged from 20251229 datasets |
+| `danbhf/sim_pick_place_merged_40ep_ee` | 40 | 6,559 | EE (8-dim) | FK-converted, quaternion bug |
+| `danbhf/sim_pick_place_merged_40ep_ee_2` | 40 | 6,559 | EE (8-dim) | Quaternion continuity fixed |
+| `danbhf/sim_pick_place_40ep_rgbd_ee` | 40 | 6,559 | EE (8-dim) | Re-recorded with depth camera |
+| `danbhf/sim_pick_place_157ep` | 157 | 22,534 | Joint (6-dim) | Merged from 8 datasets (Jan 2026) |
+| `danbhf/sim_pick_place_157ep_pi0` | 157 | 22,534 | Joint (6-dim) | **Pi0-ready**: gripper normalized [0-1] |
+
+### Task
+
+All datasets use the same task: **"Pick up the Duplo block and place it in the bowl"**
+
+- Object randomization: ±4cm position, ±180° rotation
+- Cameras: wrist_cam + overhead_cam (480×640 RGB)
+- FPS: 30
+
+---
+
+## 2026-01-17
+
+### Pi0 Dataset Preparation
+
+**Goal:** Convert existing dataset for Pi0 training, which requires:
+1. Gripper values in [0-1] range (ours were [0-97] degrees)
+2. Delta joint actions during training (handled by OpenPI transforms)
+
+**Key Findings from OpenPI Analysis:**
+
+1. **Delta Actions**: Pi0 training uses `DeltaActions` transform that converts absolute positions to deltas:
+   ```python
+   # During training: actions = target_position - current_state
+   # During inference: AbsoluteActions reverses this
+   delta_action_mask = _transforms.make_bool_mask(5, -1)  # 5 joints delta, gripper absolute
+   ```
+
+2. **Gripper Range**: Pi0 expects gripper in [0, 1] where 0=open, 1=closed
+   - Our dataset has [0, 97] (degrees)
+   - Conversion: `gripper_normalized = gripper_degrees / 97.0`
+
+3. **Normalization**: Applied AFTER delta transform using computed `norm_stats.json`
+
+**Conversion Script:** `scripts/tools/convert_dataset_pi0.py`
+
+```bash
+# Convert merged dataset for Pi0 training
+python scripts/tools/convert_dataset_pi0.py danbhf/sim_pick_place_157ep \
+    -o datasets/sim_pick_place_pi0 \
+    --upload danbhf/sim_pick_place_157ep_pi0
+```
+
+**Changes Made:**
+- Gripper (index 5) in `action` converted from [0-97] → [0-1]
+- Gripper (index 5) in `observation.state` converted from [0-97] → [0-1]
+- Statistics recalculated
+
+**Note on Training Config:**
+The OpenPI training config needs `use_delta_joint_actions=True` and appropriate delta mask for SO101:
+```python
+delta_action_mask = _transforms.make_bool_mask(5, -1)  # 5 joints delta, gripper absolute
+```
+
+---
+
+### Planned: Pi0 Finetuning (Experiment P1)
+
+**Goal:** Finetune Pi0 base model on our pick-and-place dataset.
+
+**Dataset:** `danbhf/sim_pick_place_157ep_pi0`
+
+**Training Config** (to be added to OpenPI `config.py`):
+```python
+TrainConfig(
+    name="pi0_so101_pickplace",
+    model=pi0_config.Pi0Config(
+        paligemma_variant="gemma_2b_lora",
+        action_expert_variant="gemma_300m_lora",
+        action_dim=6,  # 5 joints + 1 gripper
+        action_horizon=30,
+    ),
+    data=SO101DataConfig(
+        repo_id="danbhf/sim_pick_place_157ep_pi0",
+        base_config=DataConfig(prompt_from_task=True),
+    ),
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+    num_train_steps=5_000,
+    freeze_filter=pi0_config.Pi0Config(...).get_freeze_filter(),
+    ema_decay=None,  # Off for LoRA
+)
+```
+
+**Training Command:**
+```bash
+# In OpenPI environment
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py --config pi0_so101_pickplace
+```
+
+**Expected Outcome:**
+- Should converge in ~5k steps (similar to Ilia's LeKiwi results)
+- Pi0's delta action learning may improve generalization vs ACT's absolute actions
+
+---
+
+## Future Ideas
+
+### Hierarchical VLA with Geometric Primitives
+
+**Concept:** Train a low-level model to execute geometric movement primitives, then have a VLA compose them for complex tasks.
+
+**Low-Level Primitives:**
+- `move_left`, `move_right`, `move_forward`, `move_back`
+- `move_up`, `move_down`
+- `arc_up`, `arc_down`, `arc_left`, `arc_right`
+- `rotate_cw`, `rotate_ccw`
+- `open_gripper`, `close_gripper`
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────┐
+│  VLA (High-Level Planner)                   │
+│  Input: Vision + Language ("pick up block") │
+│  Output: Sequence of primitives             │
+└─────────────────┬───────────────────────────┘
+                  │ ["move_forward", "move_down",
+                  │  "close_gripper", "arc_up", ...]
+                  ▼
+┌─────────────────────────────────────────────┐
+│  Primitive Executor (Low-Level)             │
+│  Input: Primitive command + current state   │
+│  Output: Joint actions                      │
+└─────────────────────────────────────────────┘
+```
+
+**Potential Benefits:**
+- **Composability:** VLA learns to sequence primitives rather than raw actions
+- **Interpretability:** Can inspect what primitives the VLA chose
+- **Transfer:** Primitives learned once, reused across tasks
+- **Data efficiency:** VLA needs fewer demos if primitives handle low-level control
+- **Correction:** Easier to intervene at primitive level ("no, go left instead")
+
+**Data Collection Approach:**
+1. Record demonstrations of individual primitives (move left 5cm, arc up, etc.)
+2. Train primitive executor on this data
+3. Label existing task demos with primitive sequences (could be automated or manual)
+4. Train VLA to predict primitive sequences from vision + language
+
+**Open Questions:**
+- How to define primitive boundaries? (distance-based, time-based, state-based)
+- Fixed primitive vocabulary or parameterized? (`move_left` vs `move_left(5cm)`)
+- How does VLA handle continuous primitive parameters?
+- Can primitive sequences be inferred automatically from existing demos?
+
+---

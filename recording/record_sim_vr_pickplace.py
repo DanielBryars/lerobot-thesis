@@ -10,7 +10,7 @@ Saves to LeRobot dataset format v3.0.
 This version runs the simulation continuously (never freezes VR view).
 
 Usage:
-    python record_sim_vr_pickplace.py --task "Pick up Duplo" --num_episodes 10
+    python record_sim_vr_pickplace.py --task "Pick up the Duplo block and place it in the bowl" --num_episodes 10
 
 Controls:
     ENTER - Start recording / Save episode and continue

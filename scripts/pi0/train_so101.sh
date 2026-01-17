@@ -17,16 +17,17 @@
 set -e
 
 # Configuration
-DATASET="danbhf/sim_pick_place_merged_40ep"
+# Pi0-ready dataset with normalized gripper [0-1] and delta actions enabled
+DATASET="danbhf/sim_pick_place_157ep_pi0"
 PROMPT="Pick up the block and place it in the bowl"
 EXP_NAME="so101_pick_place"
-STEPS=20000
+STEPS=5000  # 5k steps typically sufficient for Pi0 finetuning
 BATCH_SIZE=16
-SAVE_INTERVAL=2000
+SAVE_INTERVAL=1000
 
 # Parse arguments
-# Use pi0_libero as base - it has action_dim=7 matching SO-101
-CONFIG="pi0_libero"
+# Use our patched pi0_so101 config (6 action dims, delta actions enabled)
+CONFIG="pi0_so101"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --test)
@@ -35,15 +36,16 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --pi05)
-            CONFIG="pi05_libero"
+            # Pi0.5 uses more memory, smaller batch
+            CONFIG="pi0_so101"  # Same config, will use pi05 base weights
             BATCH_SIZE=8
             EXP_NAME="so101_pi05"
             shift
             ;;
-        --fast)
-            # Pi0-FAST variant (explicit action_dim=7)
-            CONFIG="pi0_fast_libero"
-            EXP_NAME="so101_fast"
+        --libero)
+            # Fallback to libero config if pi0_so101 not available
+            CONFIG="pi0_libero"
+            EXP_NAME="so101_libero"
             shift
             ;;
         --steps)

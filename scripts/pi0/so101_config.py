@@ -41,22 +41,22 @@ except ImportError:
 
 
 # SO-101 robot specifications
-SO101_STATE_DIM = 7   # 6 joints + gripper
-SO101_ACTION_DIM = 7  # 6 joints + gripper
+# Our dataset has 5 joints + 1 gripper = 6 dimensions
+SO101_STATE_DIM = 6   # 5 joints + gripper
+SO101_ACTION_DIM = 6  # 5 joints + gripper
 
-# Joint names for reference
+# Joint names for reference (matching our dataset)
 SO101_JOINT_NAMES = [
     "rotation_base",
     "pitch_shoulder",
     "pitch_elbow",
-    "roll_wrist",
     "pitch_wrist",
-    "roll_gripper_base",
+    "roll_wrist",
     "gripper",
 ]
 
-# Default LeRobot dataset
-SO101_DEFAULT_DATASET = "danbhf/sim_pick_place_merged_40ep"
+# Default LeRobot dataset (Pi0-ready with normalized gripper [0-1])
+SO101_DEFAULT_DATASET = "danbhf/sim_pick_place_157ep_pi0"
 
 
 @dataclass
@@ -73,15 +73,16 @@ class LeRobotSO101DataConfig:
     default_prompt: str = "Pick up the block and place it in the bowl"
 
     # Whether to use delta actions (action = target - current)
-    use_delta_joint_actions: bool = False
+    # Pi0 expects delta actions for joints, absolute for gripper
+    use_delta_joint_actions: bool = True
 
     # Assets for normalization statistics
     assets: Optional[AssetsConfig] = None
 
     # Image keys in the dataset (mapped to openpi format)
     image_keys: List[str] = field(default_factory=lambda: [
-        "observation.images.top",      # overhead camera
-        "observation.images.wrist",    # wrist camera (if available)
+        "observation.images.overhead_cam",  # overhead camera
+        "observation.images.wrist_cam",     # wrist camera
     ])
 
     # State key in the dataset
@@ -99,9 +100,9 @@ class LeRobotSO101DataConfig:
             # Remap LeRobot keys to openpi format
             transforms.RepackTransform({
                 # Map overhead camera to main image
-                "observation.images.top": "observation/image",
-                # Map wrist camera if available
-                "observation.images.wrist": "observation/wrist_image",
+                "observation.images.overhead_cam": "observation/image",
+                # Map wrist camera
+                "observation.images.wrist_cam": "observation/wrist_image",
                 # Map state
                 "observation.state": "observation/state",
                 # Map action
@@ -119,7 +120,7 @@ class LeRobotSO101DataConfig:
 
 def make_pi0_so101_config(
     repo_id: str = SO101_DEFAULT_DATASET,
-    num_train_steps: int = 20000,
+    num_train_steps: int = 5000,  # 5k steps typically sufficient for Pi0 finetuning
     batch_size: int = 16,
     exp_name: str = "so101_experiment",
 ) -> "TrainConfig":
@@ -145,14 +146,14 @@ def make_pi0_so101_config(
         # Pi0 model
         model=pi0_config.Pi0Config(
             action_dim=SO101_ACTION_DIM,
-            action_horizon=50,  # Action chunk size
+            action_horizon=30,  # Action chunk size (matching Ilia's config)
         ),
 
         # Data configuration using LeRobot loader
         data=LeRobotDataConfig(
             repo_id=repo_id,
             default_prompt="Pick up the block and place it in the bowl",
-            use_delta_joint_actions=False,
+            use_delta_joint_actions=True,  # Pi0 expects delta actions for joints
         ),
 
         # Load base Pi0 weights
@@ -175,7 +176,7 @@ def make_pi0_so101_config(
 
 def make_pi05_so101_config(
     repo_id: str = SO101_DEFAULT_DATASET,
-    num_train_steps: int = 20000,
+    num_train_steps: int = 5000,  # 5k steps typically sufficient for Pi0 finetuning
     batch_size: int = 8,  # Smaller batch for Pi0.5 (more memory)
     exp_name: str = "so101_pi05_experiment",
 ) -> "TrainConfig":
@@ -203,14 +204,14 @@ def make_pi05_so101_config(
         # Pi0.5 model (larger)
         model=pi0_config.Pi05Config(
             action_dim=SO101_ACTION_DIM,
-            action_horizon=50,
+            action_horizon=30,  # Action chunk size
         ),
 
         # Data configuration
         data=LeRobotDataConfig(
             repo_id=repo_id,
             default_prompt="Pick up the block and place it in the bowl",
-            use_delta_joint_actions=False,
+            use_delta_joint_actions=True,  # Pi0 expects delta actions for joints
         ),
 
         # Load base Pi0.5 weights

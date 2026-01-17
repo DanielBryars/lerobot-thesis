@@ -37,11 +37,12 @@ class LeRobotSO101DataConfig(DataConfigFactory):
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         # Repack transform maps LeRobot dataset keys to openpi expected keys
         # These mappings match the SO-101 LeRobot dataset format
+        # Note: RepackTransform expects {new_key: old_key} format
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        # Map cameras - adjust these based on your dataset
+                        # Map cameras - format is {new_key: old_key}
                         "observation/image": "observation.images.overhead_cam",
                         "observation/wrist_image": "observation.images.wrist_cam",
                         # State and actions
@@ -62,8 +63,9 @@ class LeRobotSO101DataConfig(DataConfigFactory):
 
         # Optionally convert absolute actions to delta actions
         if self.use_delta_actions:
-            # Apply delta conversion to first 6 joints, leave gripper as absolute
-            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            # Apply delta conversion to first 5 joints, leave gripper (dim 6) as absolute
+            # SO-101 has 5 arm joints + 1 gripper = 6 total dimensions
+            delta_action_mask = _transforms.make_bool_mask(5, -1)
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],
@@ -83,19 +85,19 @@ class LeRobotSO101DataConfig(DataConfigFactory):
 '''
 
 # The training config to add to _CONFIGS list
-SO101_TRAIN_CONFIG = '''    # SO-101 Pick and Place config
+SO101_TRAIN_CONFIG = '''    # SO-101 Pick and Place config (Pi0-ready dataset with normalized gripper)
     TrainConfig(
         name="pi0_so101",
-        model=pi0_config.Pi0Config(),
+        model=pi0_config.Pi0Config(action_dim=6, action_horizon=30),
         data=LeRobotSO101DataConfig(
-            repo_id="danbhf/sim_pick_place_merged_40ep",
+            repo_id="danbhf/sim_pick_place_157ep_pi0",
             default_prompt="Pick up the block and place it in the bowl",
-            use_delta_actions=False,
+            use_delta_actions=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "gs://openpi-assets/checkpoints/pi0_base/params"
         ),
-        num_train_steps=20_000,
+        num_train_steps=5_000,
     ),
 '''
 
