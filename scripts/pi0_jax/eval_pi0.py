@@ -169,9 +169,21 @@ def main():
                 "actions": []
             }
 
+        import cv2
+        import time
+
+        # Timing stats
+        times_obs = []
+        times_prep = []
+        times_infer = []
+        times_action = []
+
         for step in range(args.max_steps):
+            t0 = time.perf_counter()
+
             # Get observation
             obs = sim.get_observation()
+            t1 = time.perf_counter()
 
             # Extract state: model was trained on normalized values, so use directly
             state = np.array([obs[m + ".pos"] for m in MOTOR_NAMES], dtype=np.float32)
@@ -184,7 +196,6 @@ def main():
 
             # Prepare policy input (openpi format)
             # Resize images to 224x224 for Pi0
-            import cv2
             overhead_img = images.get("overhead_cam", images[list(images.keys())[0]])
             wrist_img = images.get("wrist_cam", overhead_img)  # Use overhead as fallback
 
@@ -193,10 +204,12 @@ def main():
                 "observation/image": cv2.resize(overhead_img, (224, 224)),
                 "observation/wrist_image": cv2.resize(wrist_img, (224, 224)),
             }
+            t2 = time.perf_counter()
 
             # Get action from policy
             result = policy.infer(policy_input)
             action = result["actions"][0]  # First action from chunk
+            t3 = time.perf_counter()
 
             # Model outputs normalized actions directly (trained on normalized data)
             action_dict = {m + ".pos": float(action[i]) for i, m in enumerate(MOTOR_NAMES)}
@@ -207,6 +220,14 @@ def main():
 
             # Send action to simulation
             sim.send_action(action_dict)
+            t4 = time.perf_counter()
+
+            # Record times (skip first step - warmup)
+            if step > 0:
+                times_obs.append(t1 - t0)
+                times_prep.append(t2 - t1)
+                times_infer.append(t3 - t2)
+                times_action.append(t4 - t3)
 
             # Render if visualizing
             if args.visualize:
@@ -224,6 +245,17 @@ def main():
                 print("  Step", step)
         else:
             print("  TIMEOUT after", args.max_steps, "steps")
+
+        # Print timing stats
+        if times_infer:
+            avg_obs = np.mean(times_obs) * 1000
+            avg_prep = np.mean(times_prep) * 1000
+            avg_infer = np.mean(times_infer) * 1000
+            avg_action = np.mean(times_action) * 1000
+            total = avg_obs + avg_prep + avg_infer + avg_action
+            hz = 1000 / total if total > 0 else 0
+            print(f"\n  Timing (ms): obs={avg_obs:.1f}, prep={avg_prep:.1f}, infer={avg_infer:.1f}, action={avg_action:.1f}")
+            print(f"  Total: {total:.1f}ms = {hz:.1f} Hz")
 
         # Save episode to recording
         if episode_data is not None:

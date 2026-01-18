@@ -175,6 +175,20 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
 - Must upgrade to lerobot>=0.4.0 for both training (Docker) and inference (WSL)
 - Docker image patches this in Dockerfile
 - `lerobot_robot_sim` import path changed: `lerobot.cameras` → `lerobot.cameras.configs`
+- `lerobot.common.datasets` doesn't exist in 0.4.x - use `lerobot_compat.py` shim for inference
+
+**RTX 5090 + JAX - ABANDONED (2026-01-18):**
+- First run with JAX/cuDNN autotuning caused full system crash requiring power cycle
+- Disabling autotuning (`XLA_FLAGS="--xla_gpu_autotune_level=0"`) prevents crash but too slow (3.3 Hz)
+- Second crash during inference even with autotuning enabled
+- **Conclusion**: JAX + RTX 5090 + WSL2 is unstable. Switching to LeRobot PyTorch implementation.
+
+**Pivot to LeRobot PyTorch Pi0:**
+- JAX scripts moved to `scripts/pi0_jax/` (archived)
+- Using LeRobot PyTorch implementation instead: https://github.com/huggingface/lerobot
+- Base models: `lerobot/pi0_base`, `lerobot/pi05_base`
+- Will retrain from scratch rather than convert JAX weights
+- PyTorch works natively on Windows with RTX 5090
 
 **CRITICAL: uv run reverts lerobot version!**
 - `uv run` re-syncs dependencies from pyproject.toml before running
