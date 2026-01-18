@@ -18,7 +18,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
-from lerobot.cameras import CameraConfig
+from lerobot.cameras.configs import CameraConfig
 from lerobot.robots.config import RobotConfig
 from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError

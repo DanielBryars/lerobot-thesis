@@ -8,6 +8,10 @@ Usage:
     python remote/find_and_rent.py --gpu A100_SXM     # Rent cheapest A100 SXM
     python remote/find_and_rent.py --max-price 2.0    # Only consider offers under $2/hr
     python remote/find_and_rent.py --dry-run          # Show what would be rented without renting
+
+    # With persistent storage (survives instance termination):
+    python remote/find_and_rent.py --create-storage 500   # Create 500GB volume and attach
+    python remote/find_and_rent.py --storage <volume_id>  # Attach existing volume
 """
 
 import argparse
@@ -90,14 +94,52 @@ def search_offers(gpu_name: str, num_gpus: int = 1, min_reliability: float = 95.
         return []
 
 
-def create_instance(offer_id: int, image: str, disk_gb: int = 50) -> tuple[bool, str]:
-    """Create an instance from an offer."""
+def create_storage_volume(size_gb: int) -> tuple[bool, str]:
+    """Create a persistent storage volume."""
+    cmd = ["vastai", "create", "volume", "--size", str(size_gb), "--raw"]
+    code, output = run_cmd(cmd)
+
+    if code != 0:
+        return False, output
+
+    try:
+        result = json.loads(output)
+        if result.get("success"):
+            return True, str(result.get("id", result.get("volume_id", "")))
+        return False, output
+    except json.JSONDecodeError:
+        # Try to extract volume ID from output
+        if "id" in output.lower():
+            return True, output
+        return False, output
+
+
+def list_storage_volumes() -> list[dict]:
+    """List existing storage volumes."""
+    cmd = ["vastai", "show", "volumes", "--raw"]
+    code, output = run_cmd(cmd)
+
+    if code != 0:
+        return []
+
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return []
+
+
+def create_instance(offer_id: int, image: str, disk_gb: int = 50, storage_id: str = None) -> tuple[bool, str]:
+    """Create an instance from an offer, optionally with persistent storage."""
     cmd = [
         "vastai", "create", "instance", str(offer_id),
         "--image", image,
         "--disk", str(disk_gb),
         "--raw"
     ]
+
+    # Attach storage volume if specified
+    if storage_id:
+        cmd.extend(["--storage", storage_id])
 
     code, output = run_cmd(cmd)
     if code != 0:
@@ -170,8 +212,8 @@ def main():
                         help="Number of GPUs (default: 1)")
     parser.add_argument("--image", type=str, required=True,
                         help="Docker image to use (e.g., aerdanielbryars101/lerobot-training:latest)")
-    parser.add_argument("--disk", type=int, default=50,
-                        help="Disk space in GB (default: 50)")
+    parser.add_argument("--disk", type=int, default=150,
+                        help="Disk space in GB (default: 150, needed for Pi0 training)")
     parser.add_argument("--min-reliability", type=float, default=95.0,
                         help="Minimum reliability %% (default: 95)")
     parser.add_argument("--max-price", type=float, default=5.0,
@@ -182,8 +224,30 @@ def main():
                         help="Don't wait for instance to be ready")
     parser.add_argument("--exclude-countries", type=str, default="India,Taiwan,Thailand",
                         help="Comma-separated list of countries to exclude (default: India,Taiwan,Thailand)")
+    parser.add_argument("--storage", type=str, default=None,
+                        help="Existing storage volume ID to attach (persistent storage)")
+    parser.add_argument("--create-storage", type=int, default=None, metavar="SIZE_GB",
+                        help="Create new storage volume of SIZE_GB and attach it")
+    parser.add_argument("--list-storage", action="store_true",
+                        help="List existing storage volumes and exit")
 
     args = parser.parse_args()
+
+    # Handle --list-storage
+    if args.list_storage:
+        volumes = list_storage_volumes()
+        if not volumes:
+            print("No storage volumes found.")
+        else:
+            print("Existing storage volumes:")
+            print("-" * 60)
+            for vol in volumes:
+                vol_id = vol.get("id", "?")
+                size = vol.get("size", 0)
+                status = vol.get("status", "unknown")
+                print(f"  ID: {vol_id}  Size: {size}GB  Status: {status}")
+            print("-" * 60)
+        sys.exit(0)
 
     # Parse excluded countries
     exclude_countries = [c.strip() for c in args.exclude_countries.split(",")] if args.exclude_countries else []
@@ -218,13 +282,29 @@ def main():
     print(f"  Reliability: {reliability*100:.1f}%")
     print("=" * 60)
 
+    # Handle storage volume creation
+    storage_id = args.storage
+    if args.create_storage:
+        print(f"\nCreating {args.create_storage}GB persistent storage volume...")
+        success, vol_result = create_storage_volume(args.create_storage)
+        if not success:
+            print(f"Error creating storage volume: {vol_result}")
+            sys.exit(1)
+        storage_id = vol_result
+        print(f"Created storage volume: {storage_id}")
+
     if args.dry_run:
         print("\n[DRY RUN] Would run:")
-        print(f"  vastai create instance {offer_id} --image {args.image} --disk {args.disk}")
+        cmd = f"  vastai create instance {offer_id} --image {args.image} --disk {args.disk}"
+        if storage_id:
+            cmd += f" --storage {storage_id}"
+        print(cmd)
         sys.exit(0)
 
     print(f"\nRenting instance with image: {args.image}")
-    success, result = create_instance(offer_id, args.image, args.disk)
+    if storage_id:
+        print(f"Attaching storage volume: {storage_id}")
+    success, result = create_instance(offer_id, args.image, args.disk, storage_id)
 
     if not success:
         print(f"Error creating instance: {result}")
@@ -255,17 +335,23 @@ def main():
     print("=" * 60)
     print(f"  Contract ID: {contract_id}")
     print(f"  SSH Command: {ssh_cmd}")
+    if storage_id:
+        print(f"  Storage:     {storage_id} (mounted at /storage)")
     print()
-    print("To run training:")
+    print("To run Pi0 training:")
     print(f"  {ssh_cmd}")
-    print("  # Then inside the container:")
-    print("  python remote/train_remote.py --policy smolvla \\")
-    print("      --dataset danbhf/sim_pick_place_40ep_rgbd_ee \\")
-    print("      --from_pretrained lerobot/smolvla_base \\")
-    print("      --cameras wrist_cam,overhead_cam \\")
-    print("      --steps 20000 --batch_size 16 --eval_episodes 30")
+    print("  cd /app/openpi")
+    if storage_id:
+        print("  # Symlink checkpoints to persistent storage")
+        print("  rm -rf checkpoints && ln -s /storage/checkpoints checkpoints")
+        print("  mkdir -p /storage/checkpoints")
+    print("  XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \\")
+    print("      --exp-name=so101_pick_place_157 --num-train-steps=20000 \\")
+    print("      --batch-size=16 --save-interval=5000 --overwrite")
     print()
     print(f"To destroy when done: vastai destroy instance {contract_id}")
+    if storage_id:
+        print(f"Storage volume {storage_id} will persist - reuse with --storage {storage_id}")
     print("=" * 60)
 
 

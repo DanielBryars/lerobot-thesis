@@ -116,6 +116,103 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
     --overwrite
 ```
 
+### Pi0 Model - SO-101 with 157 Episodes (2026-01-18) [PENDING EVAL]
+- **Model**: `danbhf/pi0_so101_pick_place_157`
+- **Dataset**: `danbhf/sim_pick_place_157ep_pi0` (157 episodes, normalized gripper [0-1])
+- **Training**: 5k steps on H100 using openpi JAX implementation
+- **Docker**: `aerdanielbryars101/openpi-training:latest`
+- **Checkpoint**: 4999 (final)
+- **Size**: ~43GB
+- **Status**: Training complete, uploaded to HF, awaiting evaluation
+
+**Key improvements over previous attempt:**
+1. **More data**: 157 episodes vs 40 episodes (nearly 4x more)
+2. **Normalized gripper**: Converted gripper from [0-97] to [0-1] range for Pi0 compatibility
+3. **Delta actions enabled**: Using `use_delta_actions=True` in config
+4. **Fixed action padding**: Actions padded from 6→32 dims (matching Pi0 base weights)
+
+**Dataset conversion:**
+- Created `scripts/tools/convert_dataset_pi0.py` to normalize gripper values
+- Original: `danbhf/sim_pick_place_157ep` → Converted: `danbhf/sim_pick_place_157ep_pi0`
+
+**Training command:**
+```bash
+cd /app/openpi
+uv run scripts/compute_norm_stats.py --config-name=pi0_so101
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
+    --exp-name=so101_pick_place_157 \
+    --num-train-steps=5000 \
+    --batch-size=16 \
+    --save-interval=1000 \
+    --overwrite
+```
+
+**Local inference setup (2026-01-18):**
+- Windows: openpi has complex JAX dependencies that conflict with existing packages
+- Solution: Use WSL2 with GPU passthrough (RTX 5090 works with CUDA 13.1)
+- WSL setup:
+  ```bash
+  # Clone openpi and sync deps
+  git clone https://github.com/Physical-Intelligence/openpi.git ~/openpi
+  cd ~/openpi
+  uv sync
+
+  # Patch for SO-101 config
+  uv run python /mnt/e/git/ai/lerobot-thesis/scripts/pi0/patch_openpi_so101.py \
+      --config-path ~/openpi/src/openpi/training/config.py
+
+  # CRITICAL: openpi bundles old lerobot 0.1.0 - upgrade for v3 dataset support
+  uv pip install "lerobot>=0.4.0" --upgrade
+
+  # Run eval
+  PYTHONPATH="/mnt/e/git/ai/lerobot-thesis/src:$PYTHONPATH" uv run python \
+      /mnt/e/git/ai/lerobot-thesis/scripts/pi0/eval_pi0.py \
+      --model danbhf/pi0_so101_pick_place_157 --checkpoint 4999 --episodes 5 --visualize
+  ```
+
+**Known issues:**
+- openpi pins lerobot==0.1.0 which lacks `lerobot.cameras` module and v3 dataset support
+- Must upgrade to lerobot>=0.4.0 for both training (Docker) and inference (WSL)
+- Docker image patches this in Dockerfile
+- `lerobot_robot_sim` import path changed: `lerobot.cameras` → `lerobot.cameras.configs`
+
+**CRITICAL: uv run reverts lerobot version!**
+- `uv run` re-syncs dependencies from pyproject.toml before running
+- This REVERTS any `uv pip install` upgrades back to the pinned version
+- Solution: Run the fix script OR manually edit openpi's pyproject.toml:
+  ```bash
+  cd ~/openpi
+  bash /mnt/e/git/ai/lerobot-thesis/scripts/pi0/fix_openpi_lerobot.sh
+  ```
+
+**Manual fix (if script not available):**
+```bash
+cd ~/openpi
+
+# 1. Change lerobot pin to >=0.4.0
+sed -i 's/"lerobot",/"lerobot>=0.4.0",/' pyproject.toml
+
+# 2. Remove lerobot git source (conflicts with PyPI)
+sed -i '/^lerobot = { git/d' pyproject.toml
+
+# 3. Remove numpy<2.0.0 constraint (needed for newer lerobot)
+sed -i 's/"numpy>=1.22.4,<2.0.0"/"numpy>=1.22.4"/' pyproject.toml
+sed -i 's/"numpy>=1.22.4,<2.0.0"/"numpy>=1.22.4"/' packages/openpi-client/pyproject.toml
+
+# 4. Remove rlds dependency group (conflicts with numpy>=2)
+sed -i '/^rlds = \[/,/^\]/d' pyproject.toml
+sed -i '/^dlimp = { git/d' pyproject.toml
+
+# 5. Re-sync dependencies
+uv sync
+```
+
+After running, verify: `uv run python -c "import lerobot; print(lerobot.__version__)"` → should show 0.4.x
+
+- This is the same fix applied in the Docker image (see `scripts/pi0/Dockerfile`)
+
+---
+
 ### Pi0 Model - SO-101 (2026-01-10) [FAILED - 0% SUCCESS]
 - **Model**: `danbhf/pi0_so101_20260110`
 - **Dataset**: `danbhf/sim_pick_place_merged_40ep` (RGB + joint space)
@@ -445,6 +542,33 @@ Need to investigate which approach is most practical without full retraining.
 - Still investigating why results don't match original experiments
 
 ---
+
+## Real Robot Datasets
+
+| Dataset | Task | Episodes | Date | Notes |
+|---------|------|----------|------|-------|
+| `danbhf/real_pick_place_0001` | Pick up the block and place it in the bowl | - | 2026-01-17 | First real robot recording |
+
+**Recording setup (2026-01-17):**
+- Scripts in `scripts/real_robot/`
+- Hardware config in `scripts/real_robot/config.json` (COM7/COM8, cameras 0/2)
+- Recording controls: Right arrow = save episode, Left arrow = discard, Escape = stop
+- Camera names match Pi0: `base_0_rgb`, `left_wrist_0_rgb`
+
+## Vast.ai Storage Notes
+
+**Disk quota issues:**
+- Default 50GB is NOT enough for Pi0 training
+- Updated `find_and_rent.py` default to 150GB
+- For 20k steps with save_interval=5000: 4 checkpoints × ~40GB = ~160GB needed
+- Use `--disk 300` for safety
+
+**Persistent storage (added 2026-01-18):**
+- `find_and_rent.py` now supports persistent volumes that survive instance termination
+- `--list-storage` - show existing volumes
+- `--create-storage 500` - create 500GB persistent volume
+- `--storage <id>` - attach existing volume (mounted at `/storage`)
+- Symlink checkpoints: `ln -s /storage/checkpoints /app/openpi/checkpoints`
 
 ## Side Projects
 

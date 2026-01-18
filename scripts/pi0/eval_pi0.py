@@ -10,9 +10,15 @@ import os
 import sys
 import numpy as np
 
-# Add lerobot-thesis to path
-sys.path.insert(0, "/app/lerobot-thesis")
-sys.path.insert(0, "/app/lerobot-thesis/src")
+# Add lerobot-thesis to path (works in both Docker and WSL)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+sys.path.insert(0, SCRIPT_DIR)  # For lerobot_compat
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+
+# Apply lerobot compatibility patch for 0.4.x (must be before openpi imports)
+import lerobot_compat  # noqa: F401
 
 # Motor names in order (must match simulation)
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
@@ -52,29 +58,30 @@ def download_checkpoint(model_id, checkpoint):
     """Download checkpoint from HuggingFace and return local path."""
     from huggingface_hub import snapshot_download
 
-    cache_dir = "/app/eval_cache"
+    cache_dir = os.path.expanduser("~/.cache/openpi_eval")
     safe_id = model_id.replace("/", "_")
-    local_dir = cache_dir + "/" + safe_id + "/" + checkpoint
+    local_dir = cache_dir + "/" + safe_id
 
     if os.path.exists(local_dir) and len(os.listdir(local_dir)) > 0:
-        print("Using cached checkpoint:", local_dir)
-        return local_dir
+        # Check if params folder exists (indicates valid checkpoint)
+        if os.path.exists(os.path.join(local_dir, "params")):
+            print("Using cached checkpoint:", local_dir)
+            return local_dir
 
-    print("Downloading", model_id + "/" + checkpoint + "...")
+    print("Downloading", model_id, "...")
     os.makedirs(local_dir, exist_ok=True)
 
+    # Download everything - files may be at root or in checkpoint subfolder
     snapshot_download(
         repo_id=model_id,
         local_dir=local_dir,
-        allow_patterns=[checkpoint + "/*", checkpoint + "/**/*"],
     )
 
+    # If checkpoint is in a subfolder, return that path
     ckpt_subdir = os.path.join(local_dir, checkpoint)
-    if os.path.exists(ckpt_subdir):
-        import shutil
-        for item in os.listdir(ckpt_subdir):
-            shutil.move(os.path.join(ckpt_subdir, item), local_dir)
-        os.rmdir(ckpt_subdir)
+    if os.path.exists(ckpt_subdir) and os.path.exists(os.path.join(ckpt_subdir, "params")):
+        print("Downloaded to:", ckpt_subdir)
+        return ckpt_subdir
 
     print("Downloaded to:", local_dir)
     return local_dir

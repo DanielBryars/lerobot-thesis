@@ -87,10 +87,8 @@ if [[ ! -d "$ASSETS_DIR" ]]; then
     echo "Normalization stats not found for $CONFIG"
     echo "Computing stats first (this may take a few minutes)..."
     echo ""
-    uv run scripts/compute_norm_stats.py \
-        --config-name="$CONFIG" \
-        --data.repo_id="$DATASET" \
-        --data.default_prompt="$PROMPT"
+    # Dataset and prompt are baked into the pi0_so101 config via patch
+    uv run scripts/compute_norm_stats.py --config-name="$CONFIG"
 fi
 
 # Run training
@@ -98,13 +96,12 @@ echo ""
 echo "Starting training..."
 echo ""
 
+# Dataset and prompt are baked into the pi0_so101 config via patch
 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py "$CONFIG" \
     --exp-name="$EXP_NAME" \
     --num-train-steps="$STEPS" \
     --batch-size="$BATCH_SIZE" \
     --save-interval="$SAVE_INTERVAL" \
-    --data.repo_id="$DATASET" \
-    --data.default_prompt="$PROMPT" \
     --overwrite
 
 echo ""
