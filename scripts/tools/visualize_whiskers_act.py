@@ -19,6 +19,8 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import torch
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 # Add project paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -29,6 +31,91 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from lerobot_robot_sim import SO100Sim, SO100SimConfig
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+class JointPlotter:
+    """Real-time matplotlib plot showing predicted joint trajectories."""
+
+    def __init__(self, chunk_size: int = 100):
+        self.chunk_size = chunk_size
+
+        # Set up interactive mode
+        plt.ion()
+
+        # Create figure with subplots for each joint
+        self.fig = plt.figure(figsize=(12, 8))
+        self.fig.canvas.manager.set_window_title('Joint Predictions')
+        gs = GridSpec(3, 2, figure=self.fig, hspace=0.3, wspace=0.25)
+
+        self.axes = []
+        self.lines = []
+        self.current_step_lines = []  # Vertical lines showing current step
+
+        colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628']
+
+        for i, (motor, color) in enumerate(zip(MOTOR_NAMES, colors)):
+            row, col = i // 2, i % 2
+            ax = self.fig.add_subplot(gs[row, col])
+            ax.set_title(motor, fontsize=10, fontweight='bold')
+            ax.set_xlabel('Step', fontsize=8)
+            ax.set_ylabel('Value', fontsize=8)
+            ax.set_xlim(0, chunk_size)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=7)
+
+            # Create line for predictions
+            line, = ax.plot([], [], color=color, linewidth=2, label='Predicted')
+            # Create vertical line for current execution point
+            vline = ax.axvline(x=0, color='gray', linestyle='--', alpha=0.7, label='Executed')
+
+            self.axes.append(ax)
+            self.lines.append(line)
+            self.current_step_lines.append(vline)
+
+            # Set appropriate y-limits based on joint type
+            if motor == 'gripper':
+                ax.set_ylim(-5, 55)
+            else:
+                ax.set_ylim(-3.5, 3.5)
+
+        self.fig.tight_layout()
+        plt.show(block=False)
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+    def update(self, action_chunk: np.ndarray, executed_steps: int = 0):
+        """Update the plot with new action chunk predictions.
+
+        Args:
+            action_chunk: Shape (chunk_size, 6) - predicted actions
+            executed_steps: How many steps have been executed (for vertical line)
+        """
+        if action_chunk is None or len(action_chunk) == 0:
+            return
+
+        x = np.arange(len(action_chunk))
+
+        for i, (line, vline, ax) in enumerate(zip(self.lines, self.current_step_lines, self.axes)):
+            if i < action_chunk.shape[1]:
+                y = action_chunk[:, i]
+                line.set_data(x, y)
+
+                # Auto-adjust y-limits if needed (except gripper which is fixed)
+                if MOTOR_NAMES[i] != 'gripper':
+                    ymin, ymax = y.min(), y.max()
+                    margin = (ymax - ymin) * 0.1 + 0.1
+                    ax.set_ylim(ymin - margin, ymax + margin)
+
+                # Update vertical line position
+                vline.set_xdata([executed_steps, executed_steps])
+
+        # Redraw
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+    def close(self):
+        """Close the plot window."""
+        plt.close(self.fig)
 
 
 class WhiskerVisualizer:
@@ -82,9 +169,10 @@ class WhiskerVisualizer:
         # Storage for current whiskers
         self.whisker_points = None  # Shape: (horizon, 3) - EE positions
         self.whisker_gripper = None  # Shape: (horizon,) - gripper values
-        self.whisker_joints = None  # Dict of joint_name -> positions
+        self.whisker_joints = None  # Dict of joint_name -> positions (unused, kept for compatibility)
         self.whisker_moving_jaw = None  # Shape: (horizon, 3) - moving jaw positions
         self.current_ee_pos = None
+        self.current_action_chunk = None  # Shape: (chunk_size, 6) - for joint plotting
 
         # Storage for ghost trails (past predictions)
         self.ghost_trails = []  # List of past whisker data dicts
@@ -250,6 +338,7 @@ class WhiskerVisualizer:
 
         # Get action chunk from policy
         actions = self.get_action_chunk(obs)
+        self.current_action_chunk = actions  # Store for joint plotting
 
         # Forward simulate to get predicted positions (full chunk)
         result = self.forward_simulate_chunk(actions)
@@ -357,26 +446,7 @@ class WhiskerVisualizer:
                                                color, self.ghost_radius):
                     break
 
-        # Render joint arcs (show predicted path of each joint body)
-        if self.whisker_joints:
-            joint_colors = {
-                "upper_arm": (0.2, 0.9, 0.9, 0.8),   # Cyan
-                "lower_arm": (0.9, 0.9, 0.2, 0.8),   # Yellow
-                "wrist": (0.9, 0.2, 0.9, 0.8),       # Purple (was light blue)
-            }
-            for joint_name, positions in self.whisker_joints.items():
-                if len(positions) < 2:
-                    continue
-                jcolor = joint_colors.get(joint_name, (0.5, 0.5, 0.5, 0.5))
-                step = max(1, len(positions) // 20)  # More segments
-                for i in range(0, len(positions) - step, step):
-                    alpha = jcolor[3] * (1.0 - (i / len(positions)) * 0.4)  # Less fade
-                    color = np.array([jcolor[0], jcolor[1], jcolor[2], alpha])
-                    if not self._add_line_segment(scene, positions[i], positions[min(i+step, len(positions)-1)],
-                                                   color, self.whisker_radius * 1.2):  # Thicker lines
-                        break
-
-        # Moving jaw whisker removed - was adding confusion with duplicate green/red trails
+        # Joint arcs removed - now shown in separate matplotlib graph
 
         # Render current whisker (EE trajectory) - single bright green color
         if self.whisker_points is None or len(self.whisker_points) < 2:
@@ -437,6 +507,8 @@ def main():
                         help="Max steps per episode")
     parser.add_argument("--allow-cpu", action="store_true",
                         help="Allow CPU (will be slow)")
+    parser.add_argument("--show-joint-graph", action="store_true",
+                        help="Show real-time matplotlib graph of joint predictions")
     args = parser.parse_args()
 
     # Check CUDA availability
@@ -475,13 +547,20 @@ def main():
     visualizer = WhiskerVisualizer(policy, sim, device=device,
                                    preprocessor=preprocessor, postprocessor=postprocessor)
 
+    # Create joint plotter for real-time graphs (optional)
+    joint_plotter = None
+    if args.show_joint_graph:
+        chunk_size = policy.config.chunk_size if hasattr(policy.config, 'chunk_size') else 100
+        joint_plotter = JointPlotter(chunk_size=chunk_size)
+
     # Create MuJoCo viewer with custom render callback
     print("Starting visualization...")
     print("\nColor Legend:")
     print("  EE Whisker: GREEN (predicted trajectory)")
-    print("  Joint arcs: CYAN=upper_arm, YELLOW=lower_arm, PURPLE=wrist")
     print("  Ghost trails: BLUE (past predictions)")
     print("  Actual path: ORANGE")
+    if args.show_joint_graph:
+        print("  Joint Graph: Separate window showing all 6 joint predictions")
     print("\nControls:")
     print("  Mouse: Click and drag to rotate, scroll to zoom")
     print("  SPACE: Pause/unpause")
@@ -551,6 +630,9 @@ def main():
                         sim.mj_data.qpos[:] = hist['qpos']
                         sim.mj_data.qvel[:] = hist['qvel']
                         mujoco.mj_forward(sim.mj_model, sim.mj_data)
+                        # Update joint plotter with historical action chunk
+                        if joint_plotter and hist.get('action_chunk') is not None:
+                            joint_plotter.update(hist['action_chunk'], executed_steps=0)
                         # Show whiskers from that moment using saved snapshots
                         with viewer.lock():
                             viewer.user_scn.ngeom = 0
@@ -584,6 +666,9 @@ def main():
                 # Update whiskers every frame for continuous predictions
                 if step % 1 == 0:  # Every step now
                     visualizer.update_whiskers(obs)
+                    # Update joint plotter with new action chunk
+                    if joint_plotter and visualizer.current_action_chunk is not None:
+                        joint_plotter.update(visualizer.current_action_chunk, executed_steps=0)
 
                     # Record to history (including robot state for playback)
                     if visualizer.whisker_points is not None:
@@ -592,6 +677,7 @@ def main():
                             'whiskers': visualizer.whisker_points.copy(),
                             'gripper': visualizer.whisker_gripper.copy() if visualizer.whisker_gripper is not None else None,
                             'joints': {k: v.copy() for k, v in visualizer.whisker_joints.items()} if visualizer.whisker_joints else None,
+                            'action_chunk': visualizer.current_action_chunk.copy() if visualizer.current_action_chunk is not None else None,
                             'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
                             'qpos': sim.mj_data.qpos.copy(),
                             'qvel': sim.mj_data.qvel.copy(),
@@ -641,6 +727,9 @@ def main():
                             sim.mj_data.qpos[:] = hist['qpos']
                             sim.mj_data.qvel[:] = hist['qvel']
                             mujoco.mj_forward(sim.mj_model, sim.mj_data)
+                            # Update joint plotter with historical action chunk
+                            if hist.get('action_chunk') is not None:
+                                joint_plotter.update(hist['action_chunk'], executed_steps=0)
                             # Show whiskers from that moment using saved snapshots
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
@@ -682,6 +771,8 @@ def main():
             viewer.sync()
             time.sleep(0.1)
 
+    if joint_plotter:
+        joint_plotter.close()
     sim.disconnect()
     print("Done")
 
