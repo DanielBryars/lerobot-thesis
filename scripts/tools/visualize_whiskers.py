@@ -170,17 +170,19 @@ class WhiskerVisualizer:
 
         return np.array(positions)
 
+    def record_actual_position(self):
+        """Record current EE position to actual path. Call every simulation step."""
+        pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
+        self.actual_path.append(pos)
+        # Keep actual path trimmed
+        max_actual_path = 500  # More points for smoother path
+        if len(self.actual_path) > max_actual_path:
+            self.actual_path.pop(0)
+
     def update_whiskers(self, obs: dict):
         """Update whisker visualization based on current observation."""
         # Get current EE position
         self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
-
-        # Track actual path (add current position)
-        self.actual_path.append(self.current_ee_pos.copy())
-        # Keep actual path trimmed
-        max_actual_path = 200
-        if len(self.actual_path) > max_actual_path:
-            self.actual_path.pop(0)
 
         # Save old whiskers as ghost trail before updating
         if self.whisker_points is not None and len(self.whisker_points) > 1:
@@ -264,8 +266,8 @@ class WhiskerVisualizer:
 
         # Render actual path taken (orange line showing where robot actually went)
         if show_actual_path and len(self.actual_path) >= 2:
-            # Sample to reduce geometry count
-            step = max(1, len(self.actual_path) // 30)
+            # Sample to reduce geometry count but keep it smooth (60 segments max)
+            step = max(1, len(self.actual_path) // 60)
             for i in range(0, len(self.actual_path) - step, step):
                 # Fade older positions
                 age_factor = i / len(self.actual_path)
@@ -498,6 +500,9 @@ def main():
                 # Apply action
                 action_dict = {m + ".pos": float(action[i]) for i, m in enumerate(MOTOR_NAMES)}
                 sim.send_action(action_dict)
+
+                # Record actual EE position every step for smooth path
+                visualizer.record_actual_position()
 
                 # Add whiskers to scene and sync viewer
                 with viewer.lock():
