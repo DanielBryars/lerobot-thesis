@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Visualize ACT policy action predictions as "whiskers" in MuJoCo simulation.
+Visualize Pi0 policy action predictions as "whiskers" in MuJoCo simulation.
 
 Shows predicted future trajectories as faint lines emanating from the robot,
 allowing visual inspection of what the policy is predicting at each timestep.
+Useful for debugging why Pi0 might be failing.
 
 Usage:
-    python scripts/tools/visualize_whiskers_act.py --checkpoint outputs/train/act_xxx/checkpoint_045000
-    python scripts/tools/visualize_whiskers_act.py --model danbhf/act_so101_157ep/checkpoint_045000
+    python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot
+    python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot_20k --instruction "pick up the block"
 """
 
 import argparse
@@ -41,6 +42,8 @@ class WhiskerVisualizer:
         device: str = "cuda",
         preprocessor=None,
         postprocessor=None,
+        language_tokens=None,  # Pre-tokenized language instruction
+        language_mask=None,    # Attention mask for language
         whisker_color: tuple = (0.2, 0.8, 0.2, 0.7),  # RGBA - green, semi-transparent
         ghost_color: tuple = (0.5, 0.5, 0.9, 0.3),  # RGBA - light blue
         actual_path_color: tuple = (1.0, 0.3, 0.1, 0.5),  # RGBA - orange for actual path taken
@@ -54,6 +57,8 @@ class WhiskerVisualizer:
         self.device = device
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
+        self.language_tokens = language_tokens
+        self.language_mask = language_mask
         self.whisker_color = whisker_color
         self.ghost_color = ghost_color
         self.actual_path_color = actual_path_color
@@ -91,35 +96,18 @@ class WhiskerVisualizer:
 
     def get_action_chunk(self, obs: dict) -> np.ndarray:
         """Get full action chunk from policy."""
-        # Prepare observation for policy
+        # Prepare observation for policy (Pi0 doesn't use preprocessor)
         batch = self._prepare_obs(obs)
 
-        # Apply preprocessor (normalizes observations)
-        if self.preprocessor is not None:
-            batch = self.preprocessor(batch)
-
         with torch.no_grad():
-            # Get full action chunk directly from model (not through select_action queue)
+            # Get full action chunk directly from model
             if hasattr(self.policy, 'predict_action_chunk'):
-                # ACT policy - get full chunk prediction
                 actions = self.policy.predict_action_chunk(batch)  # Shape: [1, chunk_size, action_dim]
                 actions = actions.squeeze(0)  # Shape: [chunk_size, action_dim]
-
-                # Apply postprocessor (denormalizes actions) to each action
-                if self.postprocessor is not None:
-                    # Postprocessor expects single actions, so process each
-                    actions_list = []
-                    for i in range(actions.shape[0]):
-                        a = self.postprocessor(actions[i])
-                        actions_list.append(a.cpu().numpy())
-                    return np.array(actions_list)
-                else:
-                    return actions.cpu().numpy()
+                return actions.cpu().numpy()
             else:
                 # Fallback for other policies - just get single action
                 action = self.policy.select_action(batch)
-                if self.postprocessor is not None:
-                    action = self.postprocessor(action)
                 return action.cpu().numpy().reshape(1, -1)
 
     def _prepare_obs(self, obs: dict) -> dict:
@@ -135,6 +123,11 @@ class WhiskerVisualizer:
             if isinstance(value, np.ndarray) and value.ndim == 3:
                 img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
                 batch[f"observation.images.{key}"] = img.to(self.device)
+
+        # Language tokens (required for Pi0)
+        if self.language_tokens is not None:
+            batch["observation.language.tokens"] = self.language_tokens
+            batch["observation.language.attention_mask"] = self.language_mask
 
         return batch
 
@@ -322,32 +315,54 @@ class WhiskerVisualizer:
                 break
 
 
-def load_act_policy(checkpoint_path: str, device: str):
-    """Load ACT policy and processors from checkpoint."""
-    from lerobot.policies.act.modeling_act import ACTPolicy
-    from lerobot.policies.factory import make_pre_post_processors
+def load_pi0_policy(checkpoint_path: str, device: str):
+    """Load Pi0 policy from checkpoint."""
+    from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
-    policy = ACTPolicy.from_pretrained(checkpoint_path)
+    print(f"Loading Pi0 from {checkpoint_path}...")
+    policy = PI0Policy.from_pretrained(checkpoint_path)
     policy.to(device)
     policy.eval()
+    print(f"Pi0 config: chunk_size={policy.config.chunk_size}, n_action_steps={policy.config.n_action_steps}")
 
-    # Load preprocessor/postprocessor for normalization
-    # Override device in processor config (needs to be passed via preprocessor_overrides kwarg)
-    device_override = {"device_processor": {"device": device}}
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy.config,
-        pretrained_path=checkpoint_path,
-        preprocessor_overrides=device_override,
-        postprocessor_overrides=device_override,
+    return policy
+
+
+def tokenize_instruction(policy, instruction: str, device: str):
+    """Tokenize language instruction for Pi0."""
+    from transformers import AutoTokenizer
+
+    # Try to get tokenizer from policy
+    try:
+        tokenizer = policy.processor.tokenizer
+    except AttributeError:
+        try:
+            tokenizer = policy.model.processor.tokenizer
+        except AttributeError:
+            # Fall back to loading tokenizer directly
+            print("Loading tokenizer from paligemma...")
+            tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+
+    encoding = tokenizer(
+        instruction,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=policy.config.tokenizer_max_length,
     )
+    tokens = encoding["input_ids"].to(device)
+    mask = encoding["attention_mask"].bool().to(device)
 
-    return policy, preprocessor, postprocessor
+    return tokens, mask
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize policy whiskers")
+    parser = argparse.ArgumentParser(description="Visualize Pi0 policy whiskers")
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to checkpoint (local or HuggingFace)")
+    parser.add_argument("--instruction", type=str,
+                        default="Pick up the block and place it in the bowl",
+                        help="Language instruction for Pi0")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device (cuda or cpu)")
     parser.add_argument("--episodes", type=int, default=5,
@@ -373,26 +388,30 @@ def main():
         device = args.device
     print(f"Using device: {device}")
 
-    # Load policy and processors
-    print(f"Loading policy from {args.checkpoint}...")
-    policy, preprocessor, postprocessor = load_act_policy(args.checkpoint, device)
+    # Load policy (Pi0 doesn't use preprocessor/postprocessor)
+    print(f"Loading Pi0 policy from {args.checkpoint}...")
+    policy = load_pi0_policy(args.checkpoint, device)
+
+    # Tokenize language instruction
+    print(f"Language instruction: '{args.instruction}'")
+    lang_tokens, lang_mask = tokenize_instruction(policy, args.instruction, device)
     print("Policy loaded")
 
-    # Create simulation
+    # Create simulation (Pi0 uses 224x224 images)
     print("Creating simulation...")
     scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
     sim_config = SO100SimConfig(
         scene_xml=str(scene_path),
         sim_cameras=["overhead_cam", "wrist_cam"],
-        camera_width=640,
-        camera_height=480,
+        camera_width=224,
+        camera_height=224,
     )
     sim = SO100Sim(sim_config)
     sim.connect()
 
-    # Create visualizer
+    # Create visualizer with language tokens (Pi0 doesn't use preprocessor/postprocessor)
     visualizer = WhiskerVisualizer(policy, sim, device=device,
-                                   preprocessor=preprocessor, postprocessor=postprocessor)
+                                   language_tokens=lang_tokens, language_mask=lang_mask)
 
     # Create MuJoCo viewer with custom render callback
     print("Starting visualization...")
@@ -513,14 +532,10 @@ def main():
                         if len(whisker_history) > max_history:
                             whisker_history.pop(0)
 
-                # Get action and step simulation
+                # Get action and step simulation (Pi0 doesn't use preprocessor)
                 batch = visualizer._prepare_obs(obs)
-                if preprocessor is not None:
-                    batch = preprocessor(batch)
                 with torch.no_grad():
                     action = policy.select_action(batch)
-                if postprocessor is not None:
-                    action = postprocessor(action)
                 action = action.cpu().numpy().flatten()
 
                 # Apply action

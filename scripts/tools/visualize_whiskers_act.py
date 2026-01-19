@@ -80,11 +80,14 @@ class WhiskerVisualizer:
         self.data_rollout = mujoco.MjData(sim.mj_model)
 
         # Storage for current whiskers
-        self.whisker_points = None  # Shape: (horizon, 3)
+        self.whisker_points = None  # Shape: (horizon, 3) - EE positions
+        self.whisker_gripper = None  # Shape: (horizon,) - gripper values
+        self.whisker_joints = None  # Dict of joint_name -> positions
+        self.whisker_moving_jaw = None  # Shape: (horizon, 3) - moving jaw positions
         self.current_ee_pos = None
 
         # Storage for ghost trails (past predictions)
-        self.ghost_trails = []  # List of past whisker_points arrays
+        self.ghost_trails = []  # List of past whisker data dicts
 
         # Storage for actual path taken
         self.actual_path = []  # List of actual EE positions
@@ -138,25 +141,52 @@ class WhiskerVisualizer:
 
         return batch
 
-    def forward_simulate_chunk(self, actions: np.ndarray, max_steps: int = None) -> np.ndarray:
-        """Forward simulate action chunk and return EE positions.
+    def forward_simulate_chunk(self, actions: np.ndarray, max_steps: int = None) -> dict:
+        """Forward simulate action chunk and return positions and gripper state.
 
         Args:
-            actions: Action chunk to simulate
+            actions: Action chunk to simulate [chunk_size, 6]
             max_steps: Max steps to simulate. If None, simulates full chunk.
+
+        Returns:
+            dict with:
+                'ee_positions': EE trajectory [N, 3]
+                'gripper_values': Gripper action values [N]
+                'joint_positions': Dict of joint_name -> positions [N, 3]
         """
         if max_steps is None:
             max_steps = len(actions)  # Use full chunk by default
+
         # Copy current sim state to rollout data
         self.data_rollout.qpos[:] = self.sim.mj_data.qpos[:]
         self.data_rollout.qvel[:] = self.sim.mj_data.qvel[:]
         self.data_rollout.ctrl[:] = self.sim.mj_data.ctrl[:]
         mujoco.mj_forward(self.sim.mj_model, self.data_rollout)
 
-        # Record starting position
-        positions = [self.data_rollout.site_xpos[self.ee_site_id].copy()]
+        # Find body IDs for joint visualization (use actual MuJoCo body names)
+        # Note: shoulder body doesn't translate (only rotates in place), so skip it
+        joint_body_ids = {}
+        for name in ["upper_arm", "lower_arm", "wrist"]:
+            body_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if body_id != -1:
+                joint_body_ids[name] = body_id
 
-        # Step through each action in the chunk (limited to max_steps for performance)
+        # Find moving jaw body for gripper visualization
+        moving_jaw_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "moving_jaw_so101_v1")
+        if moving_jaw_id == -1:
+            moving_jaw_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "moving_jaw")
+
+        # Record starting positions
+        ee_positions = [self.data_rollout.site_xpos[self.ee_site_id].copy()]
+        gripper_values = [actions[0][5] if len(actions) > 0 and len(actions[0]) > 5 else 0]
+        joint_positions = {name: [self.data_rollout.xpos[bid].copy()]
+                          for name, bid in joint_body_ids.items()}
+        # Track moving jaw position for gripper whisker
+        moving_jaw_positions = []
+        if moving_jaw_id != -1:
+            moving_jaw_positions.append(self.data_rollout.xpos[moving_jaw_id].copy())
+
+        # Step through each action in the chunk
         for action in actions[:max_steps]:
             # Set control (joint positions)
             for i, motor in enumerate(MOTOR_NAMES):
@@ -170,9 +200,25 @@ class WhiskerVisualizer:
             mujoco.mj_step(self.sim.mj_model, self.data_rollout)
 
             # Record EE position
-            positions.append(self.data_rollout.site_xpos[self.ee_site_id].copy())
+            ee_positions.append(self.data_rollout.site_xpos[self.ee_site_id].copy())
 
-        return np.array(positions)
+            # Record gripper value (index 5 = gripper)
+            gripper_values.append(action[5] if len(action) > 5 else 0)
+
+            # Record joint body positions
+            for name, bid in joint_body_ids.items():
+                joint_positions[name].append(self.data_rollout.xpos[bid].copy())
+
+            # Record moving jaw position
+            if moving_jaw_id != -1:
+                moving_jaw_positions.append(self.data_rollout.xpos[moving_jaw_id].copy())
+
+        return {
+            'ee_positions': np.array(ee_positions),
+            'gripper_values': np.array(gripper_values),
+            'joint_positions': {k: np.array(v) for k, v in joint_positions.items()},
+            'moving_jaw_positions': np.array(moving_jaw_positions) if moving_jaw_positions else None,
+        }
 
     def record_actual_position(self):
         """Record current EE position to actual path. Call every simulation step."""
@@ -193,7 +239,11 @@ class WhiskerVisualizer:
         if self.whisker_points is not None and len(self.whisker_points) > 1:
             if self._ghost_counter >= self.ghost_trail_interval:
                 self._ghost_counter = 0
-                self.ghost_trails.append(self.whisker_points.copy())
+                self.ghost_trails.append({
+                    'ee_positions': self.whisker_points.copy(),
+                    'gripper_values': self.whisker_gripper.copy() if self.whisker_gripper is not None else None,
+                    'joint_positions': {k: v.copy() for k, v in self.whisker_joints.items()} if self.whisker_joints else None,
+                })
                 # Keep only recent ghost trails
                 if len(self.ghost_trails) > self.max_ghost_trails:
                     self.ghost_trails.pop(0)
@@ -202,7 +252,11 @@ class WhiskerVisualizer:
         actions = self.get_action_chunk(obs)
 
         # Forward simulate to get predicted positions (full chunk)
-        self.whisker_points = self.forward_simulate_chunk(actions)
+        result = self.forward_simulate_chunk(actions)
+        self.whisker_points = result['ee_positions']
+        self.whisker_gripper = result['gripper_values']
+        self.whisker_joints = result['joint_positions']
+        self.whisker_moving_jaw = result.get('moving_jaw_positions')
 
     def clear_trails(self):
         """Clear ghost trails and actual path (call on episode reset)."""
@@ -250,7 +304,13 @@ class WhiskerVisualizer:
         # First render ghost trails (oldest first, so newer ones are on top)
         ghost_trails_to_show = self.ghost_trails[:ghost_trails_limit] if ghost_trails_limit else self.ghost_trails
         if show_ghosts and ghost_trails_to_show:
-            for trail_idx, ghost_pts in enumerate(ghost_trails_to_show):
+            for trail_idx, ghost_data in enumerate(ghost_trails_to_show):
+                # Handle both old format (array) and new format (dict)
+                if isinstance(ghost_data, dict):
+                    ghost_pts = ghost_data.get('ee_positions')
+                else:
+                    ghost_pts = ghost_data  # Old format compatibility
+
                 if ghost_pts is None or len(ghost_pts) < 2:
                     continue
 
@@ -297,7 +357,28 @@ class WhiskerVisualizer:
                                                color, self.ghost_radius):
                     break
 
-        # Render current whiskers (green, main prediction) last so they're on top
+        # Render joint arcs (show predicted path of each joint body)
+        if self.whisker_joints:
+            joint_colors = {
+                "upper_arm": (0.2, 0.9, 0.9, 0.8),   # Cyan
+                "lower_arm": (0.9, 0.9, 0.2, 0.8),   # Yellow
+                "wrist": (0.9, 0.2, 0.9, 0.8),       # Purple (was light blue)
+            }
+            for joint_name, positions in self.whisker_joints.items():
+                if len(positions) < 2:
+                    continue
+                jcolor = joint_colors.get(joint_name, (0.5, 0.5, 0.5, 0.5))
+                step = max(1, len(positions) // 20)  # More segments
+                for i in range(0, len(positions) - step, step):
+                    alpha = jcolor[3] * (1.0 - (i / len(positions)) * 0.4)  # Less fade
+                    color = np.array([jcolor[0], jcolor[1], jcolor[2], alpha])
+                    if not self._add_line_segment(scene, positions[i], positions[min(i+step, len(positions)-1)],
+                                                   color, self.whisker_radius * 1.2):  # Thicker lines
+                        break
+
+        # Moving jaw whisker removed - was adding confusion with duplicate green/red trails
+
+        # Render current whisker (EE trajectory) - single bright green color
         if self.whisker_points is None or len(self.whisker_points) < 2:
             return
 
@@ -308,7 +389,7 @@ class WhiskerVisualizer:
         step = max(1, len(pts) // 30)
         for i in range(0, len(pts) - step, step):
             # Calculate alpha fade based on distance into future
-            alpha = self.whisker_color[3] * (1.0 - (i / len(pts)) * 0.7)
+            alpha = self.whisker_color[3] * (1.0 - (i / len(pts)) * 0.5)
             color = np.array([
                 self.whisker_color[0],
                 self.whisker_color[1],
@@ -397,9 +478,10 @@ def main():
     # Create MuJoCo viewer with custom render callback
     print("Starting visualization...")
     print("\nColor Legend:")
-    print("  GREEN:  Current prediction (where policy thinks robot will go)")
-    print("  BLUE:   Ghost trails (past predictions)")
-    print("  ORANGE: Actual path taken")
+    print("  EE Whisker: GREEN (predicted trajectory)")
+    print("  Joint arcs: CYAN=upper_arm, YELLOW=lower_arm, PURPLE=wrist")
+    print("  Ghost trails: BLUE (past predictions)")
+    print("  Actual path: ORANGE")
     print("\nControls:")
     print("  Mouse: Click and drag to rotate, scroll to zoom")
     print("  SPACE: Pause/unpause")
@@ -474,14 +556,20 @@ def main():
                             viewer.user_scn.ngeom = 0
                             # Temporarily swap in the historical state
                             saved_whiskers = visualizer.whisker_points
+                            saved_gripper = visualizer.whisker_gripper
+                            saved_joints = visualizer.whisker_joints
                             saved_path = visualizer.actual_path
                             saved_ghosts = visualizer.ghost_trails
                             visualizer.whisker_points = hist['whiskers']
+                            visualizer.whisker_gripper = hist.get('gripper', saved_gripper)
+                            visualizer.whisker_joints = hist.get('joints', saved_joints)
                             visualizer.actual_path = hist.get('actual_path', saved_path)
                             visualizer.ghost_trails = hist.get('ghost_trails', saved_ghosts)
                             visualizer.add_whiskers_to_scene(viewer.user_scn)
                             # Restore current state
                             visualizer.whisker_points = saved_whiskers
+                            visualizer.whisker_gripper = saved_gripper
+                            visualizer.whisker_joints = saved_joints
                             visualizer.actual_path = saved_path
                             visualizer.ghost_trails = saved_ghosts
                     viewer.sync()
@@ -502,6 +590,8 @@ def main():
                         # Store snapshots of current state for perfect history playback
                         whisker_history.append({
                             'whiskers': visualizer.whisker_points.copy(),
+                            'gripper': visualizer.whisker_gripper.copy() if visualizer.whisker_gripper is not None else None,
+                            'joints': {k: v.copy() for k, v in visualizer.whisker_joints.items()} if visualizer.whisker_joints else None,
                             'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
                             'qpos': sim.mj_data.qpos.copy(),
                             'qvel': sim.mj_data.qvel.copy(),
@@ -555,13 +645,19 @@ def main():
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
                                 saved_whiskers = visualizer.whisker_points
+                                saved_gripper = visualizer.whisker_gripper
+                                saved_joints = visualizer.whisker_joints
                                 saved_path = visualizer.actual_path
                                 saved_ghosts = visualizer.ghost_trails
                                 visualizer.whisker_points = hist['whiskers']
+                                visualizer.whisker_gripper = hist.get('gripper', saved_gripper)
+                                visualizer.whisker_joints = hist.get('joints', saved_joints)
                                 visualizer.actual_path = hist.get('actual_path', saved_path)
                                 visualizer.ghost_trails = hist.get('ghost_trails', saved_ghosts)
                                 visualizer.add_whiskers_to_scene(viewer.user_scn)
                                 visualizer.whisker_points = saved_whiskers
+                                visualizer.whisker_gripper = saved_gripper
+                                visualizer.whisker_joints = saved_joints
                                 visualizer.actual_path = saved_path
                                 visualizer.ghost_trails = saved_ghosts
                         viewer.sync()

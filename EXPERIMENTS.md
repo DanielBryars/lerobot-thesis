@@ -181,7 +181,20 @@ Both models load and produce valid actions on H100, but simulation evaluation sh
 - Both 5K and 20K models fail all episodes in simulation
 - Models load correctly and produce actions at 800+ Hz
 - Actions appear to be in reasonable range but robot does not complete task
-- Need to investigate what the model is actually predicting
+
+**Whisker visualization diagnosis (2026-01-19):**
+- Used `visualize_whiskers_pi0.py` to see what model is predicting
+- **Result**: Pi0 predicts chaotic, random movements near starting position
+- Whiskers show tiny perturbations, NOT purposeful trajectories toward block
+- Compare to ACT which shows smooth arcs toward the target
+- **Conclusion**: Pi0 has NOT learned the task - outputs are essentially noise
+- See screenshot: `CameraShapshots/Pi0 Fail does not move.png`
+
+**Root cause hypothesis:**
+1. **Insufficient data**: 157 episodes may not be enough for Pi0's 3B parameters
+2. **Missing preprocessing**: Pi0 may need specific image normalization we're not applying
+3. **Action space mismatch**: Pi0 base expects different action format than our joint positions
+4. **Training issue**: The remote training may have had issues we didn't catch
 
 ---
 
@@ -209,7 +222,35 @@ the robot end-effector showing the predicted future path at each timestep.
 - Highlights multi-modal futures under partial observability
 - Provides qualitative safety and robustness diagnostics
 
-**Status:** Initial implementation created, testing locally
+**Status:** Working for ACT, extended to Pi0
+
+**Scripts:**
+- `scripts/tools/visualize_whiskers_act.py` - ACT policy visualization
+- `scripts/tools/visualize_whiskers_pi0.py` - Pi0 policy visualization
+
+**Features:**
+- Green whiskers: Current prediction (full action chunk forward-simulated)
+- Blue ghost trails: Past predictions (fading with age)
+- Orange line: Actual path robot took
+- Interactive controls: SPACE pause, LEFT/RIGHT step through history
+- History playback: Rewind to see exact state at each timestep
+
+**Key findings from ACT visualization:**
+- ACT predicts smooth, purposeful trajectories toward the target
+- Predictions align well with actual path taken
+- Model constantly re-predicts (visual servoing with learned intent)
+- Only first action is executed, rest shows "plan"
+
+**Key findings from Pi0 visualization (2026-01-19):**
+- Pi0 whiskers show chaotic, random movements near starting position
+- Model is NOT predicting purposeful trajectories toward block
+- Predictions are essentially noise - small random perturbations
+- This explains 0% success rate: model hasn't learned the task at all
+
+**Windows Pi0 loading fix:**
+- Must set `PYTHONIOENCODING=utf-8` for model weights to load
+- LeRobot Pi0 code prints checkmark character (✓) that Windows console can't encode
+- Without this, model returns random weights and silently fails
 
 **Progress made (2026-01-18):**
 - Switched from JAX/openpi to LeRobot PyTorch (JAX crashed RTX 5090)
