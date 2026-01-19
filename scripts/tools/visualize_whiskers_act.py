@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Visualize policy action predictions as "whiskers" in MuJoCo simulation.
+Visualize ACT policy action predictions as "whiskers" in MuJoCo simulation.
 
 Shows predicted future trajectories as faint lines emanating from the robot,
 allowing visual inspection of what the policy is predicting at each timestep.
 
 Usage:
-    python scripts/tools/visualize_whiskers.py --checkpoint outputs/train/act_xxx/checkpoint_045000
-    python scripts/tools/visualize_whiskers.py --model danbhf/act_so101_157ep/checkpoint_045000
+    python scripts/tools/visualize_whiskers_act.py --checkpoint outputs/train/act_xxx/checkpoint_045000
+    python scripts/tools/visualize_whiskers_act.py --model danbhf/act_so101_157ep/checkpoint_045000
 """
 
 import argparse
