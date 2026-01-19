@@ -166,8 +166,8 @@ DATASET=danbhf/sim_pick_place_157ep STEPS=20000 BATCH_SIZE=32 \
     JOB_NAME=pi0_so101_20k REPO_ID=danbhf/pi0_so101_lerobot_20k bash /app/train.sh
 ```
 
-**Inference test (2026-01-19) - SUCCESS (loads, but 0% eval):**
-Both models load and produce valid actions on H100, but simulation evaluation shows 0% success:
+**Inference test (2026-01-19) - SUCCESS (loads, but 0% eval initially):**
+Both models load and produce valid actions on H100, but initial simulation evaluation showed 0% success:
 
 | Model | Action Range | Inference Speed |
 |-------|-------------|-----------------|
@@ -177,7 +177,8 @@ Both models load and produce valid actions on H100, but simulation evaluation sh
 - 20K model has larger action range - may indicate more decisive actions
 - Both models extremely fast on H100 (~800 Hz)
 - Tied weights warning (`embed_tokens.weight`) is safe to ignore
-**Simulation evaluation (2026-01-19) - 0% SUCCESS:**
+
+**Initial simulation evaluation (2026-01-19) - 0% SUCCESS:**
 - Both 5K and 20K models fail all episodes in simulation
 - Models load correctly and produce actions at 800+ Hz
 - Actions appear to be in reasonable range but robot does not complete task
@@ -234,6 +235,9 @@ the robot end-effector showing the predicted future path at each timestep.
 - Orange line: Actual path robot took
 - Interactive controls: SPACE pause, LEFT/RIGHT step through history
 - History playback: Rewind to see exact state at each timestep
+- **Joint Graph** (opt-in with `--show-joint-graph`): Real-time matplotlib plots showing
+  all 6 joint predictions over the action chunk horizon. Critical for diagnosing
+  action scale mismatches between models.
 
 **Key findings from ACT visualization:**
 - ACT predicts smooth, purposeful trajectories toward the target
@@ -241,11 +245,43 @@ the robot end-effector showing the predicted future path at each timestep.
 - Model constantly re-predicts (visual servoing with learned intent)
 - Only first action is executed, rest shows "plan"
 
-**Key findings from Pi0 visualization (2026-01-19):**
+**Key findings from Pi0 visualization - Initial (2026-01-19):**
 - Pi0 whiskers show chaotic, random movements near starting position
 - Model is NOT predicting purposeful trajectories toward block
 - Predictions are essentially noise - small random perturbations
 - This explains 0% success rate: model hasn't learned the task at all
+
+**ROOT CAUSE FOUND - Action Normalization (2026-01-19):**
+
+Comparing joint prediction graphs revealed the issue:
+- **ACT predictions**: Large values like -40 to +40 (degrees)
+- **Pi0 predictions**: Tiny values like -0.8 to +0.8 (normalized)
+
+**The problem:** Pi0 outputs **normalized actions** (roughly -1 to 1 range) that need to be
+**unnormalized** using a postprocessor. We were sending normalized values directly to the robot.
+
+**The fix:** Apply `postprocessor` to denormalize actions before sending to robot:
+```python
+from lerobot.policies.factory import make_pre_post_processors
+
+# Load postprocessor
+preprocessor, postprocessor = make_pre_post_processors(
+    policy.config, pretrained_path=checkpoint_path
+)
+
+# Apply to robot control actions
+with torch.no_grad():
+    action = policy.select_action(batch)
+if postprocessor is not None:
+    action = postprocessor(action)  # Denormalize!
+action = action.cpu().numpy().flatten()
+```
+
+**Result after fix:** Robot now moves and heads towards the goal! The whisker predictions
+now show purposeful trajectories (large degrees) instead of tiny normalized values.
+
+**Status:** Robot moving towards goal but not yet successfully completing task (0/5 TIMEOUT).
+This is a significant milestone - tagged as **V0.1**
 
 **Windows Pi0 loading fix:**
 - Must set `PYTHONIOENCODING=utf-8` for model weights to load
