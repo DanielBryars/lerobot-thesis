@@ -714,6 +714,17 @@ Need to investigate which approach is most practical without full retraining.
 
 ---
 
+## System Notes
+
+### RTX 5090 Driver (2026-01-19)
+- **Current driver**: 591.44 (December 4th, 2025)
+- **Available update**: 591.74 (January 5th, 2026)
+- **Issue**: System crashes/reboots during training (happened twice during ACT training)
+- **Plan**: If another crash occurs, upgrade to 591.74
+- **Note**: PyTorch nightly cu128 required for RTX 5090 support
+
+---
+
 ## Real Robot Datasets
 
 | Dataset | Task | Episodes | Date | Notes |
