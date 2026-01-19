@@ -41,10 +41,12 @@ class WhiskerVisualizer:
         device: str = "cuda",
         preprocessor=None,
         postprocessor=None,
-        whisker_color: tuple = (0.2, 0.8, 0.2, 0.3),  # RGBA - green, semi-transparent
+        whisker_color: tuple = (0.2, 0.8, 0.2, 0.6),  # RGBA - green, semi-transparent
+        ghost_color: tuple = (0.5, 0.5, 0.8, 0.15),  # RGBA - light blue, very faint for history
+        actual_path_color: tuple = (1.0, 0.3, 0.1, 0.4),  # RGBA - orange for actual path taken
         whisker_radius: float = 0.003,
-        show_mean: bool = True,
-        mean_color: tuple = (1.0, 0.3, 0.3, 0.8),  # Red, more opaque for mean
+        ghost_radius: float = 0.002,
+        max_ghost_trails: int = 10,  # How many past predictions to show
     ):
         self.policy = policy
         self.sim = sim
@@ -52,9 +54,11 @@ class WhiskerVisualizer:
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
         self.whisker_color = whisker_color
+        self.ghost_color = ghost_color
+        self.actual_path_color = actual_path_color
         self.whisker_radius = whisker_radius
-        self.show_mean = show_mean
-        self.mean_color = mean_color
+        self.ghost_radius = ghost_radius
+        self.max_ghost_trails = max_ghost_trails
 
         # Get end-effector site ID
         self.ee_site_id = mujoco.mj_name2id(
@@ -75,6 +79,12 @@ class WhiskerVisualizer:
         # Storage for current whiskers
         self.whisker_points = None  # Shape: (horizon, 3)
         self.current_ee_pos = None
+
+        # Storage for ghost trails (past predictions)
+        self.ghost_trails = []  # List of past whisker_points arrays
+
+        # Storage for actual path taken
+        self.actual_path = []  # List of actual EE positions
 
     def get_action_chunk(self, obs: dict) -> np.ndarray:
         """Get full action chunk from policy."""
@@ -124,8 +134,15 @@ class WhiskerVisualizer:
 
         return batch
 
-    def forward_simulate_chunk(self, actions: np.ndarray, max_steps: int = 20) -> np.ndarray:
-        """Forward simulate action chunk and return EE positions."""
+    def forward_simulate_chunk(self, actions: np.ndarray, max_steps: int = None) -> np.ndarray:
+        """Forward simulate action chunk and return EE positions.
+
+        Args:
+            actions: Action chunk to simulate
+            max_steps: Max steps to simulate. If None, simulates full chunk.
+        """
+        if max_steps is None:
+            max_steps = len(actions)  # Use full chunk by default
         # Copy current sim state to rollout data
         self.data_rollout.qpos[:] = self.sim.mj_data.qpos[:]
         self.data_rollout.qvel[:] = self.sim.mj_data.qvel[:]
@@ -158,52 +175,135 @@ class WhiskerVisualizer:
         # Get current EE position
         self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
 
+        # Track actual path (add current position)
+        self.actual_path.append(self.current_ee_pos.copy())
+        # Keep actual path trimmed
+        max_actual_path = 200
+        if len(self.actual_path) > max_actual_path:
+            self.actual_path.pop(0)
+
+        # Save old whiskers as ghost trail before updating
+        if self.whisker_points is not None and len(self.whisker_points) > 1:
+            self.ghost_trails.append(self.whisker_points.copy())
+            # Keep only recent ghost trails
+            if len(self.ghost_trails) > self.max_ghost_trails:
+                self.ghost_trails.pop(0)
+
         # Get action chunk from policy
         actions = self.get_action_chunk(obs)
 
-        # Forward simulate to get predicted positions
+        # Forward simulate to get predicted positions (full chunk)
         self.whisker_points = self.forward_simulate_chunk(actions)
 
-    def add_whiskers_to_scene(self, scene: mujoco.MjvScene):
-        """Add whisker geometry to the MuJoCo scene for rendering."""
+    def clear_trails(self):
+        """Clear ghost trails and actual path (call on episode reset)."""
+        self.ghost_trails.clear()
+        self.actual_path.clear()
+        self.whisker_points = None
+
+    def _add_line_segment(self, scene: mujoco.MjvScene, p1: np.ndarray, p2: np.ndarray,
+                           color: np.ndarray, radius: float) -> bool:
+        """Add a single line segment to scene. Returns False if scene is full."""
+        if scene.ngeom >= scene.maxgeom:
+            return False
+
+        g = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            g,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+            np.zeros(3, dtype=np.float64),
+            np.zeros(3, dtype=np.float64),
+            np.eye(3, dtype=np.float64).flatten(),
+            color.astype(np.float64),
+        )
+        mujoco.mjv_connector(
+            g,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+            radius,
+            p1.astype(np.float64),
+            p2.astype(np.float64),
+        )
+        scene.ngeom += 1
+        return True
+
+    def add_whiskers_to_scene(self, scene: mujoco.MjvScene, show_ghosts: bool = True,
+                               show_actual_path: bool = True):
+        """Add whisker geometry to the MuJoCo scene for rendering.
+
+        Args:
+            scene: MuJoCo scene to add geometry to
+            show_ghosts: Whether to show ghost trails of past predictions
+            show_actual_path: Whether to show the actual path taken
+        """
+        # First render ghost trails (oldest first, so newer ones are on top)
+        if show_ghosts and self.ghost_trails:
+            for trail_idx, ghost_pts in enumerate(self.ghost_trails):
+                if ghost_pts is None or len(ghost_pts) < 2:
+                    continue
+
+                # Fade older ghosts more
+                age_factor = (trail_idx + 1) / len(self.ghost_trails)  # 0->1 as newer
+                base_alpha = self.ghost_color[3] * age_factor
+
+                # Sample every few points to reduce geometry count
+                step = max(1, len(ghost_pts) // 15)
+                for i in range(0, len(ghost_pts) - step, step):
+                    # Fade along the trail too
+                    dist_factor = 1.0 - (i / len(ghost_pts)) * 0.5
+                    alpha = base_alpha * dist_factor
+                    color = np.array([
+                        self.ghost_color[0],
+                        self.ghost_color[1],
+                        self.ghost_color[2],
+                        alpha
+                    ])
+
+                    if not self._add_line_segment(scene, ghost_pts[i], ghost_pts[min(i+step, len(ghost_pts)-1)],
+                                                   color, self.ghost_radius):
+                        break
+
+        # Render actual path taken (orange line showing where robot actually went)
+        if show_actual_path and len(self.actual_path) >= 2:
+            # Sample to reduce geometry count
+            step = max(1, len(self.actual_path) // 30)
+            for i in range(0, len(self.actual_path) - step, step):
+                # Fade older positions
+                age_factor = i / len(self.actual_path)
+                alpha = self.actual_path_color[3] * (0.3 + 0.7 * age_factor)
+                color = np.array([
+                    self.actual_path_color[0],
+                    self.actual_path_color[1],
+                    self.actual_path_color[2],
+                    alpha
+                ])
+
+                if not self._add_line_segment(scene, self.actual_path[i], self.actual_path[min(i+step, len(self.actual_path)-1)],
+                                               color, self.ghost_radius):
+                    break
+
+        # Render current whiskers (green, main prediction) last so they're on top
         if self.whisker_points is None or len(self.whisker_points) < 2:
             return
 
         pts = self.whisker_points
         radius = self.whisker_radius
 
-        # Add line segments as capsules
-        for i in range(len(pts) - 1):
-            if scene.ngeom >= scene.maxgeom:
-                print(f"Warning: max geoms reached ({scene.maxgeom})")
-                return
-
+        # Sample every few points for very long chunks
+        step = max(1, len(pts) // 30)
+        for i in range(0, len(pts) - step, step):
             # Calculate alpha fade based on distance into future
-            alpha = self.whisker_color[3] * (1.0 - i / len(pts))
+            alpha = self.whisker_color[3] * (1.0 - (i / len(pts)) * 0.7)
             color = np.array([
                 self.whisker_color[0],
                 self.whisker_color[1],
                 self.whisker_color[2],
                 alpha
-            ], dtype=np.float64)
+            ])
 
-            g = scene.geoms[scene.ngeom]
-            mujoco.mjv_initGeom(
-                g,
-                mujoco.mjtGeom.mjGEOM_CAPSULE,
-                np.zeros(3, dtype=np.float64),
-                np.zeros(3, dtype=np.float64),
-                np.eye(3, dtype=np.float64).flatten(),
-                color,
-            )
-            mujoco.mjv_connector(
-                g,
-                mujoco.mjtGeom.mjGEOM_CAPSULE,
-                radius,
-                pts[i].astype(np.float64),
-                pts[i+1].astype(np.float64),
-            )
-            scene.ngeom += 1
+            if not self._add_line_segment(scene, pts[i], pts[min(i+step, len(pts)-1)],
+                                           color, radius):
+                print(f"Warning: max geoms reached ({scene.maxgeom})")
+                break
 
 
 def load_act_policy(checkpoint_path: str, device: str):
@@ -216,9 +316,13 @@ def load_act_policy(checkpoint_path: str, device: str):
     policy.eval()
 
     # Load preprocessor/postprocessor for normalization
+    # Override device in processor config (needs to be passed via preprocessor_overrides kwarg)
+    device_override = {"device_processor": {"device": device}}
     preprocessor, postprocessor = make_pre_post_processors(
         policy.config,
-        pretrained_path=checkpoint_path
+        pretrained_path=checkpoint_path,
+        preprocessor_overrides=device_override,
+        postprocessor_overrides=device_override,
     )
 
     return policy, preprocessor, postprocessor
@@ -276,7 +380,11 @@ def main():
 
     # Create MuJoCo viewer with custom render callback
     print("Starting visualization...")
-    print("Controls:")
+    print("\nColor Legend:")
+    print("  GREEN:  Current prediction (where policy thinks robot will go)")
+    print("  BLUE:   Ghost trails (past predictions)")
+    print("  ORANGE: Actual path taken")
+    print("\nControls:")
     print("  Mouse: Click and drag to rotate, scroll to zoom")
     print("  SPACE: Pause/unpause")
     print("  RIGHT ARROW: Step forward (when paused)")
@@ -303,15 +411,23 @@ def main():
                 print("\n  [RESUMED]")
                 history_index = -1
         elif key == 262 and paused:  # RIGHT ARROW
-            step_forward = True
-            history_index = -1  # Back to live
+            if history_index >= 0:
+                # Move forward in history
+                history_index = min(len(whisker_history) - 1, history_index + 1)
+                if history_index == len(whisker_history) - 1:
+                    print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}] (latest)", end="", flush=True)
+                else:
+                    print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}]          ", end="", flush=True)
+            else:
+                # Step forward in simulation
+                step_forward = True
         elif key == 263 and paused:  # LEFT ARROW
             if len(whisker_history) > 0:
                 if history_index == -1:
                     history_index = len(whisker_history) - 1
                 else:
                     history_index = max(0, history_index - 1)
-                print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}]", end="", flush=True)
+                print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}]          ", end="", flush=True)
 
     with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
         for ep in range(args.episodes):
@@ -319,6 +435,7 @@ def main():
             sim.reset_scene(randomize=True, pos_range=0.04, rot_range=np.pi)
             policy.reset()
             whisker_history.clear()  # Clear history for new episode
+            visualizer.clear_trails()  # Clear ghost trails and actual path
             history_index = -1
 
             for step in range(args.max_steps):
@@ -331,10 +448,15 @@ def main():
                 while paused and not step_forward and viewer.is_running():
                     # Show history if navigating
                     if history_index >= 0 and history_index < len(whisker_history):
-                        hist_whiskers, hist_ee, _ = whisker_history[history_index]
+                        hist = whisker_history[history_index]
+                        # Restore robot state
+                        sim.mj_data.qpos[:] = hist['qpos']
+                        sim.mj_data.qvel[:] = hist['qvel']
+                        mujoco.mj_forward(sim.mj_model, sim.mj_data)
+                        # Show whiskers from that moment
                         with viewer.lock():
                             viewer.user_scn.ngeom = 0
-                            visualizer.whisker_points = hist_whiskers
+                            visualizer.whisker_points = hist['whiskers']
                             visualizer.add_whiskers_to_scene(viewer.user_scn)
                     viewer.sync()
                     time.sleep(0.05)
@@ -350,13 +472,15 @@ def main():
                 if step % update_interval == 0:
                     visualizer.update_whiskers(obs)
 
-                    # Record to history
+                    # Record to history (including robot state for playback)
                     if visualizer.whisker_points is not None:
-                        whisker_history.append((
-                            visualizer.whisker_points.copy(),
-                            visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
-                            {k: v.copy() if hasattr(v, 'copy') else v for k, v in obs.items()}
-                        ))
+                        whisker_history.append({
+                            'whiskers': visualizer.whisker_points.copy(),
+                            'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
+                            'qpos': sim.mj_data.qpos.copy(),
+                            'qvel': sim.mj_data.qvel.copy(),
+                            'step': step,
+                        })
                         # Trim history if too long
                         if len(whisker_history) > max_history:
                             whisker_history.pop(0)
@@ -388,13 +512,17 @@ def main():
                 if sim.is_task_complete():
                     print(f"  SUCCESS at step {step + 1}")
                     paused = True
-                    print("  [PAUSED] - Use arrows to review, SPACE to continue")
+                    print("  [PAUSED] - Use LEFT/RIGHT arrows to review, SPACE to continue")
                     while paused and viewer.is_running():
                         if history_index >= 0 and history_index < len(whisker_history):
-                            hist_whiskers, _, _ = whisker_history[history_index]
+                            hist = whisker_history[history_index]
+                            # Restore robot state
+                            sim.mj_data.qpos[:] = hist['qpos']
+                            sim.mj_data.qvel[:] = hist['qvel']
+                            mujoco.mj_forward(sim.mj_model, sim.mj_data)
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
-                                visualizer.whisker_points = hist_whiskers
+                                visualizer.whisker_points = hist['whiskers']
                                 visualizer.add_whiskers_to_scene(viewer.user_scn)
                         viewer.sync()
                         time.sleep(0.05)
