@@ -44,8 +44,17 @@ def main():
     language_instruction = "Pick up the block and place it in the bowl"
     print(f"Language instruction: '{language_instruction}'")
 
-    # Get tokenizer from model
-    tokenizer = policy.model.paligemma_with_expert.processor.tokenizer
+    # Get tokenizer - try different paths depending on LeRobot version
+    from transformers import AutoTokenizer
+    try:
+        tokenizer = policy.processor.tokenizer
+    except AttributeError:
+        try:
+            tokenizer = policy.model.processor.tokenizer
+        except AttributeError:
+            # Fall back to loading tokenizer directly
+            tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+
     encoding = tokenizer(
         language_instruction,
         return_tensors="pt",
