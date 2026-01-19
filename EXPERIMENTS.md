@@ -116,7 +116,46 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
     --overwrite
 ```
 
-### Pi0 Model - SO-101 with 157 Episodes (2026-01-18) [PENDING EVAL]
+### ACT Model - 157 Episodes (2026-01-18) [SUCCESS - 100% at 45k]
+- **Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, joint space)
+- **Training**: 50k steps, ~2 hours locally on RTX 5090
+- **Best checkpoint**: `checkpoint_045000` - **100% success** (10/10 episodes)
+- **Final checkpoint**: `checkpoint_050000` - 80% success (dropped during transport)
+- **Best loss**: 0.0633
+- **WandB**: https://wandb.ai/bryars-bryars/lerobot-thesis/runs/17akuj2p
+
+**Checkpoint performance:**
+| Checkpoint | Success Rate | Notes |
+|------------|-------------|-------|
+| 040000 | 60% | 3 dropped, 1 missed |
+| 045000 | **100%** | Perfect run! |
+| 050000 | 80% | 2 dropped (slight overfit) |
+
+**Key finding**: 157 episodes (4x more data) improved ACT from 73% → 100% success.
+The model peaks around 45k steps, slight overfitting after that.
+
+---
+
+### Pi0 Model - LeRobot PyTorch (2026-01-18) [IN PROGRESS]
+- **Status**: Local test training worked (10 steps), preparing Docker for vast.ai
+- **Local test**: `danbhf/pi0_so101_test` pushed to HuggingFace (10 steps only)
+- **Docker image**: `aerdanielbryars101/lerobot-pi0:latest` - build in progress
+- **Next steps**:
+  1. Rebuild Docker image (removed 14GB model pre-download that crashed Docker Desktop)
+  2. Push to Docker Hub
+  3. Train on vast.ai: `DATASET=danbhf/sim_pick_place_157ep STEPS=5000 BATCH_SIZE=32 REPO_ID=danbhf/pi0_so101_lerobot bash /app/train.sh`
+  4. Test inference locally on Windows
+
+**Progress made (2026-01-18):**
+- Switched from JAX/openpi to LeRobot PyTorch (JAX crashed RTX 5090)
+- Fixed Windows path bug in LeRobot (backslash in HF repo IDs)
+- Fixed missing image stats in dataset
+- Confirmed tied weights warning is safe to ignore
+- Local training works with batch_size=2, gradient_checkpointing on 32GB VRAM
+
+---
+
+### Pi0 Model - JAX/openpi SO-101 with 157 Episodes (2026-01-18) [ABANDONED]
 - **Model**: `danbhf/pi0_so101_pick_place_157`
 - **Dataset**: `danbhf/sim_pick_place_157ep_pi0` (157 episodes, normalized gripper [0-1])
 - **Training**: 5k steps on H100 using openpi JAX implementation
@@ -189,6 +228,104 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
 - Base models: `lerobot/pi0_base`, `lerobot/pi05_base`
 - Will retrain from scratch rather than convert JAX weights
 - PyTorch works natively on Windows with RTX 5090
+
+**LeRobot Pi0 Setup (Local Windows):**
+```bash
+# Install Pi0 dependencies
+pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"
+
+# Reinstall PyTorch nightly for RTX 5090 support (lerobot overwrites it)
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall
+
+# Train Pi0
+lerobot-train --dataset.repo_id=danbhf/sim_pick_place_157ep --policy.type=pi0 \
+    --policy.pretrained_path=lerobot/pi0_base --policy.repo_id=danbhf/pi0_so101_test \
+    --output_dir=./outputs/pi0_test --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 --policy.device=cuda --steps=5000 --batch_size=16
+```
+
+**LeRobot Pi0 Docker (vast.ai):**
+```bash
+# Build and push
+docker build -t aerdanielbryars101/lerobot-pi0:latest -f scripts/pi0/Dockerfile .
+docker push aerdanielbryars101/lerobot-pi0:latest
+
+# On vast.ai instance:
+huggingface-cli login
+DATASET=danbhf/sim_pick_place_157ep STEPS=5000 BATCH_SIZE=32 \
+    JOB_NAME=pi0_so101_5k REPO_ID=danbhf/pi0_so101_lerobot bash /app/train.sh
+```
+
+**Key differences from JAX/openpi:**
+- PyTorch instead of JAX - native Windows + CUDA support
+- Uses `lerobot.scripts.train` instead of openpi's train.py
+- Model format is PyTorch .safetensors, not JAX params
+- Should run at 20+ Hz on RTX 5090
+
+**Windows path bug fix (https://github.com/huggingface/lerobot/issues/2552):**
+LeRobot converts `/` to `\` in HuggingFace repo IDs on Windows, breaking downloads.
+Patch `venv/Lib/site-packages/lerobot/policies/factory.py` in 3 places:
+```python
+# Line ~244 (after "if pretrained_path:")
+pretrained_path = str(pretrained_path).replace("\\", "/")
+
+# Line ~491 (in make_policy, before kwargs assignment)
+kwargs["pretrained_name_or_path"] = str(cfg.pretrained_path).replace("\\", "/")
+
+# Line ~505 (in PEFT section)
+peft_pretrained_path = str(cfg.pretrained_path).replace("\\", "/")
+```
+
+**Missing embed_tokens.weight warning - SAFE TO IGNORE:**
+When loading Pi0 base, you'll see:
+```
+Warning: Could not remap state dict keys: Missing key(s) in state_dict:
+"model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+```
+This is a **tied weight** - PaliGemma has `tie_word_embeddings: True`, meaning `embed_tokens`
+and `lm_head` share the same tensor. Only `lm_head.weight` is saved in checkpoint, and
+at runtime they point to the same memory. No weights are actually missing.
+
+**Dataset stats fix:**
+LeRobot v3 datasets may be missing image stats in `meta/stats.json`. Fix with:
+```bash
+python scripts/tools/fix_dataset_stats.py danbhf/sim_pick_place_157ep
+```
+
+**IMPORTANT: Version tag caching issue:**
+LeRobot downloads datasets by version tag (e.g., `v3.0`). If you fix stats.json on HuggingFace
+but the tag still points to the old commit, LeRobot will download the old version!
+
+Fix: Delete and recreate the tag after fixing stats:
+```bash
+python -c "from huggingface_hub import HfApi; api = HfApi(); api.delete_tag('danbhf/sim_pick_place_157ep', tag='v3.0', repo_type='dataset')"
+python -c "from huggingface_hub import HfApi; api = HfApi(); api.create_tag('danbhf/sim_pick_place_157ep', tag='v3.0', repo_type='dataset')"
+```
+
+Then on vast.ai, clear LeRobot's cache:
+```bash
+rm -rf /root/.cache/huggingface/lerobot/danbhf/sim_pick_place_157ep
+```
+
+**Torchcodec ffmpeg error:**
+If you see `Could not load libtorchcodec` errors, set pyav backend:
+```bash
+export VIDEO_BACKEND=pyav
+```
+Or add to Dockerfile: `ENV VIDEO_BACKEND=pyav`
+
+**Camera configuration approach:**
+- Pi0 base expects 3 cameras (`base_0_rgb`, `left_wrist_0_rgb`, `right_wrist_0_rgb`)
+- Our dataset has 2 cameras (`overhead_cam`, `wrist_cam`)
+- Solution: Configure 2-camera variant and load weights with `strict=False`
+- Camera views are "just a list" with shared encoder, so camera count is flexible
+- Missing per-camera embeddings/projections get randomly initialized during fine-tune
+- This is fine for fine-tuning - we're re-learning the adapter that maps 2 views into shared latent space
+
+**Experiments to try:**
+1. 2-camera config, load base weights non-strict, fine-tune all
+2. 2-camera config, freeze vision backbone first few k steps, then unfreeze
+3. If mismatch issues: duplicate one camera view to satisfy 3-camera interface
 
 **CRITICAL: uv run reverts lerobot version!**
 - `uv run` re-syncs dependencies from pyproject.toml before running

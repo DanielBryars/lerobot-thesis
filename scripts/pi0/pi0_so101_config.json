@@ -1,0 +1,42 @@
+{
+  "policy": {
+    "type": "pi0",
+    "pretrained_path": "lerobot/pi0_base",
+    "compile_model": true,
+    "gradient_checkpointing": true,
+    "dtype": "bfloat16",
+    "device": "cuda",
+    "freeze_vision_encoder": false,
+    "train_expert_only": false,
+    "input_features": {
+      "observation.images.overhead_cam": {
+        "type": "VISUAL",
+        "shape": [3, 224, 224]
+      },
+      "observation.images.wrist_cam": {
+        "type": "VISUAL",
+        "shape": [3, 224, 224]
+      },
+      "observation.state": {
+        "type": "STATE",
+        "shape": [6]
+      }
+    },
+    "output_features": {
+      "action": {
+        "type": "ACTION",
+        "shape": [6]
+      }
+    }
+  },
+  "dataset": {
+    "repo_id": "danbhf/sim_pick_place_157ep"
+  },
+  "batch_size": 16,
+  "steps": 5000,
+  "output_dir": "./outputs/pi0_so101",
+  "job_name": "pi0_so101_2cam",
+  "wandb": {
+    "enable": true
+  }
+}

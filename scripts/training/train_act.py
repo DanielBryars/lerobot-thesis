@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.io")
 warnings.filterwarnings("ignore", message=".*UnsupportedFieldAttributeWarning.*")
 warnings.filterwarnings("ignore", message=".*video decoding.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*NumPy version.*SciPy.*")
 
 import argparse
 from pathlib import Path
@@ -462,7 +463,7 @@ def main():
     print("=" * 60)
     print(f"Total time: {elapsed/60:.1f} minutes")
     print(f"Best loss: {best_loss:.4f}")
-    print(f"Final model: {final_dir}")
+    print(f"Final model: {output_dir / 'final'}")
 
     # Final evaluation
     if args.eval_episodes > 0:
