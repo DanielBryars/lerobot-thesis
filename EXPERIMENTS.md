@@ -166,6 +166,19 @@ DATASET=danbhf/sim_pick_place_157ep STEPS=20000 BATCH_SIZE=32 \
     JOB_NAME=pi0_so101_20k REPO_ID=danbhf/pi0_so101_lerobot_20k bash /app/train.sh
 ```
 
+**Inference test (2026-01-19) - SUCCESS:**
+Both models load and produce valid actions on H100:
+
+| Model | Action Range | Inference Speed |
+|-------|-------------|-----------------|
+| 5K (`danbhf/pi0_so101_lerobot`) | -0.87 to 0.92 | 824 Hz (1.2ms) |
+| 20K (`danbhf/pi0_so101_lerobot_20k`) | -1.36 to 1.40 | 802 Hz (1.2ms) |
+
+- 20K model has larger action range - may indicate more decisive actions
+- Both models extremely fast on H100 (~800 Hz)
+- Tied weights warning (`embed_tokens.weight`) is safe to ignore
+- TODO: Run full simulation evaluation to measure success rates
+
 **Progress made (2026-01-18):**
 - Switched from JAX/openpi to LeRobot PyTorch (JAX crashed RTX 5090)
 - Fixed Windows path bug in LeRobot (backslash in HF repo IDs)

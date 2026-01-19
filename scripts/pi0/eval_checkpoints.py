@@ -192,7 +192,7 @@ def load_act_policy(model_path: Path, device: str):
     return policy
 
 
-def prepare_pi0_observation(obs: dict, camera_config: dict, device: str) -> dict:
+def prepare_pi0_observation(obs: dict, camera_config: dict, device: str, policy=None) -> dict:
     """Prepare observation dict for Pi0 policy."""
     import cv2
 
@@ -230,6 +230,28 @@ def prepare_pi0_observation(obs: dict, camera_config: dict, device: str) -> dict
                 img_resized = cv2.resize(img, (target_w, target_h))
                 img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1).unsqueeze(0).float() / 255.0
                 policy_input[model_key] = img_tensor.to(device)
+
+    # Add language tokens for Pi0
+    if policy is not None:
+        language_instruction = "Pick up the block and place it in the bowl"
+        from transformers import AutoTokenizer
+        try:
+            tokenizer = policy.processor.tokenizer
+        except AttributeError:
+            try:
+                tokenizer = policy.model.processor.tokenizer
+            except AttributeError:
+                tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+
+        encoding = tokenizer(
+            language_instruction,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=policy.config.tokenizer_max_length,
+        )
+        policy_input["observation.language.tokens"] = encoding["input_ids"].to(device)
+        policy_input["observation.language.attention_mask"] = encoding["attention_mask"].bool().to(device)
 
     return policy_input
 
@@ -294,7 +316,7 @@ def evaluate_checkpoint(
 
             # Prepare observation based on policy type
             if policy_type == "pi0":
-                policy_input = prepare_pi0_observation(obs, camera_config, device)
+                policy_input = prepare_pi0_observation(obs, camera_config, device, policy)
             else:
                 # ACT uses preprocessor from training
                 policy_input = prepare_act_observation(obs, camera_config, device)
