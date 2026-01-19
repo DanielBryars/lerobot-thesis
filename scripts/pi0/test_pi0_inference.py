@@ -40,10 +40,28 @@ def main():
     dummy_img1 = torch.rand(1, 3, 224, 224).to(args.device)  # Random for variety
     dummy_img2 = torch.rand(1, 3, 224, 224).to(args.device)
 
+    # Pi0 requires language instruction - tokenize it
+    language_instruction = "Pick up the block and place it in the bowl"
+    print(f"Language instruction: '{language_instruction}'")
+
+    # Get tokenizer from model
+    tokenizer = policy.model.paligemma_with_expert.processor.tokenizer
+    encoding = tokenizer(
+        language_instruction,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=policy.config.tokenizer_max_length,
+    )
+    lang_tokens = encoding["input_ids"].to(args.device)
+    lang_mask = encoding["attention_mask"].bool().to(args.device)
+
     obs = {
         "observation.state": dummy_state,
         "observation.images.overhead_cam": dummy_img1,
         "observation.images.wrist_cam": dummy_img2,
+        "observation.language.tokens": lang_tokens,
+        "observation.language.attention_mask": lang_mask,
     }
 
     print("Running inference...")
