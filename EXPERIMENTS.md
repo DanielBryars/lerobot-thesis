@@ -136,15 +136,35 @@ The model peaks around 45k steps, slight overfitting after that.
 
 ---
 
-### Pi0 Model - LeRobot PyTorch (2026-01-18) [IN PROGRESS]
-- **Status**: Local test training worked (10 steps), preparing Docker for vast.ai
-- **Local test**: `danbhf/pi0_so101_test` pushed to HuggingFace (10 steps only)
-- **Docker image**: `aerdanielbryars101/lerobot-pi0:latest` - build in progress
-- **Next steps**:
-  1. Rebuild Docker image (removed 14GB model pre-download that crashed Docker Desktop)
-  2. Push to Docker Hub
-  3. Train on vast.ai: `DATASET=danbhf/sim_pick_place_157ep STEPS=5000 BATCH_SIZE=32 REPO_ID=danbhf/pi0_so101_lerobot bash /app/train.sh`
-  4. Test inference locally on Windows
+### Pi0 Model - LeRobot PyTorch (2026-01-18/19) [SUCCESS - TRAINED]
+- **Docker image**: `aerdanielbryars101/lerobot-pi0:latest`
+- **Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, joint space)
+- **Training**: vast.ai H100, ~1.3s/step with gradient checkpointing
+
+**Models trained:**
+
+| Model | Steps | Final Loss | Training Time | HuggingFace |
+|-------|-------|------------|---------------|-------------|
+| Pi0 5K | 5,000 | 0.032 | ~1.5 hours | `danbhf/pi0_so101_lerobot` |
+| Pi0 20K | 20,000 | ~0.025 | ~7 hours | `danbhf/pi0_so101_lerobot_20k` |
+
+**Training metrics (20K run):**
+- Loss: Started ~0.25, dropped to ~0.05 by 5K, settled ~0.025 by 20K
+- grad_norm: Stable around 1.2-1.4 throughout
+- Learning rate: Decayed from 2.5e-05 to 2.5e-06
+- Loss curve was noisy after initial drop (normal for small dataset fine-tuning)
+
+**Key observations:**
+- 20K model achieved lower loss than 5K (0.025 vs 0.032)
+- Training stable throughout, no exploding gradients
+- Model size: 7.01GB (safetensors format)
+- TODO: Run inference evaluation to compare 5K vs 20K success rates
+
+**Training command:**
+```bash
+DATASET=danbhf/sim_pick_place_157ep STEPS=20000 BATCH_SIZE=32 \
+    JOB_NAME=pi0_so101_20k REPO_ID=danbhf/pi0_so101_lerobot_20k bash /app/train.sh
+```
 
 **Progress made (2026-01-18):**
 - Switched from JAX/openpi to LeRobot PyTorch (JAX crashed RTX 5090)
