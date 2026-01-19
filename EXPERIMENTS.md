@@ -166,8 +166,8 @@ DATASET=danbhf/sim_pick_place_157ep STEPS=20000 BATCH_SIZE=32 \
     JOB_NAME=pi0_so101_20k REPO_ID=danbhf/pi0_so101_lerobot_20k bash /app/train.sh
 ```
 
-**Inference test (2026-01-19) - SUCCESS:**
-Both models load and produce valid actions on H100:
+**Inference test (2026-01-19) - SUCCESS (loads, but 0% eval):**
+Both models load and produce valid actions on H100, but simulation evaluation shows 0% success:
 
 | Model | Action Range | Inference Speed |
 |-------|-------------|-----------------|
@@ -177,7 +177,39 @@ Both models load and produce valid actions on H100:
 - 20K model has larger action range - may indicate more decisive actions
 - Both models extremely fast on H100 (~800 Hz)
 - Tied weights warning (`embed_tokens.weight`) is safe to ignore
-- TODO: Run full simulation evaluation to measure success rates
+**Simulation evaluation (2026-01-19) - 0% SUCCESS:**
+- Both 5K and 20K models fail all episodes in simulation
+- Models load correctly and produce actions at 800+ Hz
+- Actions appear to be in reasonable range but robot does not complete task
+- Need to investigate what the model is actually predicting
+
+---
+
+### Whisker Visualization for Policy Debugging (2026-01-19)
+
+**Problem:** Pi0 models produce valid-looking actions but achieve 0% success in simulation.
+Need to understand what the model is actually predicting at each timestep.
+
+**Idea:** Visualize predicted action trajectories as "whiskers" - faint lines emanating from
+the robot end-effector showing the predicted future path at each timestep.
+
+**Why this is useful:**
+1. **Policy uncertainty made visible** - See where the policy is confident vs hesitant
+2. **Action-chunk structure observable** - See chunk smoothness, mode collapse, multi-modal futures
+3. **Sim-to-real diagnostics** - Wide whiskers = brittle policy, narrow bundles = robust
+4. **Compare policy heads** - ACT vs Pi0 diffusion vs Pi0 flow matching
+
+**Implementation:** `scripts/tools/visualize_whiskers.py`
+- Forward-simulate action chunks in a copy of MuJoCo state
+- Render predicted EE positions as faded capsule segments
+- Works with ACT (known working) first, then extend to Pi0
+
+**Academic framing:** "3D uncertainty-aware policy rollout visualization for VLA models"
+- Reveals temporal confidence structure of learned policies
+- Highlights multi-modal futures under partial observability
+- Provides qualitative safety and robustness diagnostics
+
+**Status:** Initial implementation created, testing locally
 
 **Progress made (2026-01-18):**
 - Switched from JAX/openpi to LeRobot PyTorch (JAX crashed RTX 5090)
