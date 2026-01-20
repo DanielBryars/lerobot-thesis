@@ -11,8 +11,16 @@ Usage:
     python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot_20k --instruction "pick up the block"
 """
 
-import argparse
+import os
 import sys
+# Fix Windows encoding issue for model loading
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
+import argparse
 import time
 from pathlib import Path
 
@@ -138,6 +146,7 @@ class WhiskerVisualizer:
         ghost_radius: float = 0.002,
         max_ghost_trails: int = 12,  # Recent ghost trails
         ghost_trail_interval: int = 1,  # Every prediction
+        blind_cameras: str = "none",  # "none", "overhead", "wrist", "both"
     ):
         self.policy = policy
         self.sim = sim
@@ -146,6 +155,7 @@ class WhiskerVisualizer:
         self.postprocessor = postprocessor
         self.language_tokens = language_tokens
         self.language_mask = language_mask
+        self.blind_cameras = blind_cameras
         self.whisker_color = whisker_color
         self.ghost_color = ghost_color
         self.actual_path_color = actual_path_color
@@ -221,6 +231,19 @@ class WhiskerVisualizer:
         for key, value in obs.items():
             if isinstance(value, np.ndarray) and value.ndim == 3:
                 img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+
+                # Blind camera if requested (replace with black image)
+                should_blind = False
+                if self.blind_cameras == "both":
+                    should_blind = True
+                elif self.blind_cameras == "overhead" and "overhead" in key:
+                    should_blind = True
+                elif self.blind_cameras == "wrist" and "wrist" in key:
+                    should_blind = True
+
+                if should_blind:
+                    img = torch.zeros_like(img)
+
                 batch[f"observation.images.{key}"] = img.to(self.device)
 
         # Language tokens (required for Pi0)
@@ -496,8 +519,12 @@ def main():
                         help="Allow CPU (will be slow)")
     parser.add_argument("--show-joint-graph", action="store_true",
                         help="Show real-time matplotlib graph of joint predictions")
+    parser.add_argument("--blind-camera", type=str, choices=["none", "overhead", "wrist", "both"],
+                        default="none", help="Blind camera(s) with black images for debugging")
     parser.add_argument("--dataset", type=str, default="danbhf/so101_pick_place_1k",
                         help="Dataset for loading normalization stats (if not in checkpoint)")
+    parser.add_argument("--rollout-length", type=int, default=None,
+                        help="Override n_action_steps (rollout length before re-prediction)")
     args = parser.parse_args()
 
     # Check CUDA availability
@@ -519,10 +546,18 @@ def main():
     print(f"Loading Pi0 policy from {args.checkpoint}...")
     policy, preprocessor, postprocessor = load_pi0_policy(args.checkpoint, device, args.dataset)
 
+    # Override rollout length if specified
+    if args.rollout_length is not None:
+        from collections import deque
+        original_n_action_steps = policy.config.n_action_steps
+        policy.config.n_action_steps = args.rollout_length
+        policy._action_queue = deque([], maxlen=args.rollout_length)
+        print(f"Rollout length overridden: {original_n_action_steps} -> {args.rollout_length}")
+
     # Tokenize language instruction
     print(f"Language instruction: '{args.instruction}'")
     lang_tokens, lang_mask = tokenize_instruction(policy, args.instruction, device)
-    print("Policy loaded")
+    print(f"Policy loaded (n_action_steps={policy.config.n_action_steps}, chunk_size={policy.config.chunk_size})")
 
     # Create simulation (Pi0 uses 224x224 images)
     print("Creating simulation...")
@@ -539,22 +574,29 @@ def main():
     # Create visualizer with language tokens and postprocessor for denormalization
     visualizer = WhiskerVisualizer(policy, sim, device=device,
                                    preprocessor=preprocessor, postprocessor=postprocessor,
-                                   language_tokens=lang_tokens, language_mask=lang_mask)
+                                   language_tokens=lang_tokens, language_mask=lang_mask,
+                                   blind_cameras=args.blind_camera)
 
     # Create joint plotter for real-time graphs (optional)
     joint_plotter = None
+    chunk_size = policy.config.n_action_steps if hasattr(policy.config, 'n_action_steps') else 50
     if args.show_joint_graph:
-        chunk_size = policy.config.chunk_size if hasattr(policy.config, 'chunk_size') else 50
         joint_plotter = JointPlotter(chunk_size=chunk_size)
+    print(f"Action chunk size: {chunk_size} steps")
 
     # Create MuJoCo viewer with custom render callback
+    if args.blind_camera != "none":
+        print(f"\n*** CAMERA BLINDING: {args.blind_camera} camera(s) replaced with BLACK images ***\n")
+
     print("Starting visualization...")
+    print(f"\nWhiskers computed when policy re-predicts (every {chunk_size} steps)")
     print("\nColor Legend:")
     print("  GREEN:  Current prediction (where policy thinks robot will go)")
     print("  BLUE:   Ghost trails (past predictions)")
     print("  ORANGE: Actual path taken")
     if args.show_joint_graph:
         print("  Joint Graph: Separate window showing all 6 joint predictions")
+        print("  Gray dashed line: Current position within chunk")
     print("\nControls:")
     print("  Mouse: Click and drag to rotate, scroll to zoom")
     print("  SPACE: Pause/unpause")
@@ -648,16 +690,22 @@ def main():
                 if step_forward:
                     step_forward = False
 
+                # Timing debug
+                t_loop_start = time.perf_counter()
+
                 # Get observation
+                t0 = time.perf_counter()
                 obs = sim.get_observation()
+                t_obs = time.perf_counter() - t0
 
-                # Update whiskers every frame for continuous predictions
-                if step % 1 == 0:  # Every step now
+                # Compute whiskers ONLY when policy is about to re-predict (action queue empty)
+                # This shows what the model actually predicts at the moment it re-predicts
+                t0 = time.perf_counter()
+                queue_empty = len(policy._action_queue) == 0
+                step_in_chunk = len(policy._action_queue)  # How many steps left in current chunk
+
+                if queue_empty:
                     visualizer.update_whiskers(obs)
-                    # Update joint plotter with new action chunk
-                    if joint_plotter and visualizer.current_action_chunk is not None:
-                        joint_plotter.update(visualizer.current_action_chunk, executed_steps=0)
-
                     # Record to history (including robot state for playback)
                     if visualizer.whisker_points is not None:
                         # Store snapshots of current state for perfect history playback
@@ -675,7 +723,16 @@ def main():
                         if len(whisker_history) > max_history:
                             whisker_history.pop(0)
 
+                # Update joint plotter - show current position in chunk
+                # step_in_chunk counts from 0 (just re-predicted) to chunk_size-1 (about to re-predict)
+                executed_in_chunk = chunk_size - len(policy._action_queue) if len(policy._action_queue) > 0 else 0
+                if joint_plotter and visualizer.current_action_chunk is not None:
+                    joint_plotter.update(visualizer.current_action_chunk, executed_steps=executed_in_chunk)
+
+                t_whiskers = time.perf_counter() - t0
+
                 # Get action and step simulation
+                t0 = time.perf_counter()
                 batch = visualizer._prepare_obs(obs)
                 with torch.no_grad():
                     action = policy.select_action(batch)
@@ -683,22 +740,34 @@ def main():
                 if postprocessor is not None:
                     action = postprocessor(action)
                 action = action.cpu().numpy().flatten()
+                t_policy = time.perf_counter() - t0
 
                 # Apply action
+                t0 = time.perf_counter()
                 action_dict = {m + ".pos": float(action[i]) for i, m in enumerate(MOTOR_NAMES)}
                 sim.send_action(action_dict)
+                t_sim = time.perf_counter() - t0
 
                 # Record actual EE position every step for smooth path
                 visualizer.record_actual_position()
 
                 # Add whiskers to scene and sync viewer
+                t0 = time.perf_counter()
                 with viewer.lock():
                     # Clear previous custom geometry
                     viewer.user_scn.ngeom = 0
-                    # Add new whiskers
+                    # Add whiskers to scene
                     visualizer.add_whiskers_to_scene(viewer.user_scn)
 
                 viewer.sync()
+                t_render = time.perf_counter() - t0
+
+                t_loop = time.perf_counter() - t_loop_start
+
+                # Print timing every 10 steps
+                if step % 10 == 0:
+                    repredict_marker = " *REPREDICT*" if queue_empty else ""
+                    print(f"  Step {step} [{executed_in_chunk}/{chunk_size}]: loop={t_loop*1000:.1f}ms | obs={t_obs*1000:.1f} whiskers={t_whiskers*1000:.1f} policy={t_policy*1000:.1f} sim={t_sim*1000:.1f} render={t_render*1000:.1f}{repredict_marker}")
 
                 # Check task completion
                 if sim.is_task_complete():

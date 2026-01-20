@@ -7,6 +7,13 @@ Usage:
     python scripts/pi0/test_pi0_inference.py --model danbhf/pi0_so101_lerobot_20k
 """
 
+import sys
+import os
+# Fix Windows encoding issue
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 import argparse
 import torch
 
@@ -35,10 +42,12 @@ def main():
     print("Model loaded successfully!")
 
     # Create dummy input matching training config
+    # Use float32 for images (model handles dtype conversion internally)
     print("\nCreating dummy observation...")
-    dummy_state = torch.zeros(1, 6).to(args.device)
-    dummy_img1 = torch.rand(1, 3, 224, 224).to(args.device)  # Random for variety
-    dummy_img2 = torch.rand(1, 3, 224, 224).to(args.device)
+    dummy_state = torch.zeros(1, 6, dtype=torch.float32).to(args.device)
+    # Use 480x640 images like the actual camera (model resizes to 224x224 internally)
+    dummy_img1 = torch.rand(1, 3, 480, 640, dtype=torch.float32).to(args.device)
+    dummy_img2 = torch.rand(1, 3, 480, 640, dtype=torch.float32).to(args.device)
 
     # Pi0 requires language instruction - tokenize it
     language_instruction = "Pick up the block and place it in the bowl"

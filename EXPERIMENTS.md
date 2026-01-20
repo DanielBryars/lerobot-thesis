@@ -171,8 +171,11 @@ Both models load and produce valid actions on H100, but initial simulation evalu
 
 | Model | Action Range | Inference Speed |
 |-------|-------------|-----------------|
-| 5K (`danbhf/pi0_so101_lerobot`) | -0.87 to 0.92 | 824 Hz (1.2ms) |
-| 20K (`danbhf/pi0_so101_lerobot_20k`) | -1.36 to 1.40 | 802 Hz (1.2ms) |
+| 5K (`danbhf/pi0_so101_lerobot`) | -0.87 to 0.92 | 824 Hz (1.2ms) | H100 |
+| 20K (`danbhf/pi0_so101_lerobot_20k`) | -1.36 to 1.40 | 802 Hz (1.2ms) | H100 |
+| 20K (`danbhf/pi0_so101_lerobot_20k`) | -1.18 to 0.81 | 803 Hz (1.2ms) | RTX 5090 |
+
+Benchmark script: `scripts/pi0/test_pi0_inference.py`
 
 - 20K model has larger action range - may indicate more decisive actions
 - Both models extremely fast on H100 (~800 Hz)
@@ -282,6 +285,222 @@ now show purposeful trajectories (large degrees) instead of tiny normalized valu
 
 **Status:** Robot moving towards goal but not yet successfully completing task (0/5 TIMEOUT).
 This is a significant milestone - tagged as **V0.1**
+
+### Pi0 vs ACT Control Rate Analysis (2026-01-20)
+
+**Timing comparison with whisker visualization:**
+
+| Metric | ACT | Pi0 | Ratio |
+|--------|-----|-----|-------|
+| Loop time | ~40ms (25 Hz) | ~260ms (4 Hz) | 6.5x slower |
+| Whiskers (action chunk) | ~31ms | ~250ms | 8x slower |
+| Policy (select_action) | ~1.7ms | ~2ms | Similar |
+| Chunk exhaustion spike | ~15ms | ~240ms | 16x slower |
+
+**Key finding:** Pi0's action chunk inference (`predict_action_chunk`) is ~8x slower than ACT's.
+This is expected - Pi0 is a 3B parameter VLM while ACT is a small transformer.
+
+**Impact on control:**
+- ACT runs at ~25 Hz effective control with whisker visualization
+- Pi0 runs at ~4 Hz effective control with whisker visualization
+- At 4 Hz, the robot can't react fast enough to visual feedback
+- This causes overshoot/correction cycles ("elastic band" effect)
+
+**Solution:** Added `--no-whiskers` flag to `visualize_whiskers_pi0.py` to disable
+whisker computation during evaluation. Without whiskers, Pi0 should run at ~500 Hz
+(based on `select_action` taking ~2ms).
+
+**Benchmark script timing added:** `scripts/pi0/test_pi0_inference.py`
+
+### Pi0 "Almost Works" Investigation (2026-01-20)
+
+**Observation:** Pi0 consistently moves toward the goal but doesn't complete the task (0/5 TIMEOUT).
+Robot gets close to the block but doesn't quite reach/grasp it - like an "elastic band" pulling it back.
+
+**Ruled out:**
+- ❌ Whisker visualization overhead (same behavior with `--no-whiskers`)
+- ❌ Control rate (physics is paused during inference, timing doesn't affect behavior)
+- ❌ Missing postprocessor (fixed - actions now denormalized properly)
+- ❌ Cameras not being used (blinded both cameras - similar behavior, so model IS using vision)
+
+**Camera blinding test results:**
+- `--blind-camera none`: Moves toward goal, doesn't complete
+- `--blind-camera overhead`: Similar behavior
+- `--blind-camera wrist`: Similar behavior
+- `--blind-camera both`: Still moves in same general pattern (!!)
+
+This is actually encouraging - the model learned SOMETHING from vision during training, but at inference
+the proprioceptive state alone seems to drive most of the behavior. Or the vision features are
+so entangled in the model that even black images produce similar activations.
+
+### ACT vs Pi0 Action Chunking - Key Architectural Difference
+
+**The code is IDENTICAL** - both policies use the same queue-based action selection:
+```python
+def select_action(self, batch):
+    if len(self._action_queue) == 0:
+        actions = self.predict_action_chunk(batch)[:, :self.config.n_action_steps]
+        self._action_queue.extend(actions.transpose(0, 1))
+    return self._action_queue.popleft()
+```
+
+**The difference is in CONFIG VALUES:**
+
+| Parameter | ACT (default) | ACT (temporal ensemble) | Pi0 (our config) |
+|-----------|---------------|-------------------------|------------------|
+| chunk_size | 100 | 100 | 50 |
+| n_action_steps | 100 | 1 | 50 |
+| temporal_ensemble | None | 0.01 | N/A |
+| Re-predict frequency | Every 100 steps | EVERY step | Every 50 steps |
+
+**ACT has two operating modes:**
+
+1. **Without temporal ensemble** (default): Predicts 100 actions, executes ALL 100, then re-predicts.
+   Same as Pi0 - fully "open loop" within each chunk.
+
+2. **With temporal ensemble** (`temporal_ensemble_coeff=0.01`):
+   - `n_action_steps` MUST be 1
+   - Predicts a NEW full chunk EVERY SINGLE STEP
+   - Blends overlapping predictions with exponential weighting
+   - This is the "visual servoing" effect - constantly re-evaluating
+   - Default weight (0.01) favors older predictions (smoothing)
+
+**Pi0:** No temporal ensemble option. Always commits to full chunk (50 steps) before re-predicting.
+
+**Implication for debugging:**
+If Pi0's initial prediction is slightly off, it commits to that trajectory for ~50 steps without
+correction. ACT with temporal ensemble would correct every step. This could explain why Pi0
+"almost works" - small initial errors compound without correction.
+
+**Possible solutions:**
+1. ~~Reduce Pi0's `n_action_steps` (e.g., 10) to re-predict more often~~ **WON'T WORK - see below**
+2. ~~Implement temporal ensemble for Pi0~~ **WON'T WORK - see below**
+3. More training data to improve initial predictions
+4. Check if whiskers show prediction error accumulating over the chunk
+
+### Why Pi0 Can't Do Frequent Re-prediction (Fundamental Trade-off)
+
+**Inference timing comparison:**
+
+| Model | predict_action_chunk | select_action (from queue) |
+|-------|---------------------|---------------------------|
+| ACT | ~31ms | ~1.7ms |
+| Pi0 | ~250ms | ~2ms |
+
+**If we reduce n_action_steps to 1 (re-predict every step):**
+- ACT: 31ms/step = **32 Hz** ✓ (viable for real-time control)
+- Pi0: 250ms/step = **4 Hz** ✗ (too slow for reactive control)
+
+**This is a fundamental architectural trade-off:**
+- **ACT**: Small transformer (~few M params), fast inference → CAN do temporal ensemble / visual servoing
+- **Pi0**: Large VLM (3B params), slow inference → MUST commit to longer action chunks
+
+The 50-step chunking in Pi0 isn't a bug - it's **necessary** to amortize the slow inference cost.
+Pi0 achieves ~500 Hz effective control by predicting 50 actions in 250ms, then executing them
+quickly from the queue. But this means it can only "see" and react every 50 steps.
+
+**The real question becomes:** Can a VLM predict accurately enough 50 steps into the future
+that it doesn't need frequent visual feedback? Or is the task too dynamic for open-loop chunks?
+
+**Implications for VLMs in robotics:**
+- VLMs may be better suited for **high-level planning** (what to do) than **low-level control** (how to do it)
+- Hybrid approaches: VLM for goal/waypoint generation, small policy for reactive execution
+- Or: Accept lower control rates for tasks where 4 Hz is sufficient (slow manipulation)
+- Or: Distill VLM knowledge into smaller, faster models for deployment
+
+**Possible causes still to investigate:**
+1. **Delta vs absolute actions** - Pi0 base might expect delta actions but we're treating as absolute?
+2. **Camera mismatch** - Pi0 base trained on `base_0_rgb`, `left_wrist_0_rgb`, `right_wrist_0_rgb`
+   but our dataset has `overhead_cam`, `wrist_cam` - fine-tuning may not fully adapt
+3. **Image preprocessing** - Different normalization or resolution handling
+4. **Gripper action range** - Original Pi0 expects [0,1] gripper, our data might be different
+5. **More fine-tuning needed** - 20K steps may not be enough to override base model biases
+
+**Next steps:**
+- ~~Try reducing `n_action_steps` in Pi0 config to re-predict more frequently~~ **SEE RESULTS BELOW**
+- Compare action ranges between ACT (working) and Pi0 (not working)
+- Watch whiskers to see if error accumulates over a chunk
+- Try longer training (40K+ steps)
+
+### ACT Rollout Length Experiment (2026-01-20)
+
+**Question:** Does reducing `n_action_steps` (re-predicting more often) help or hurt performance?
+
+**Setup:**
+- Model: `act_20260118_155135/checkpoint_045000` (100% success with default settings)
+- chunk_size=100 (fixed - this is how many actions the model predicts)
+- n_action_steps=varied (how many to execute before re-predicting)
+- 10 episodes per setting
+
+**Results:**
+
+| n_action_steps | Success Rate | Avg Steps | Avg Time | Notes |
+|----------------|--------------|-----------|----------|-------|
+| 1 | **0%** | 300.0 | 5.78s | Too much jitter - constant re-prediction destabilizes |
+| 2 | **0%** | 300.0 | 3.51s | Still too frequent |
+| 5 | **0%** | 300.0 | 2.10s | Still failing |
+| 10 | 80% | 187.3 | 1.00s | Starts working |
+| **20** | **100%** | 134.9 | 0.63s | **OPTIMAL** - sweet spot! |
+| 50 | 80% | 168.4 | 0.71s | Slightly worse |
+| 100 | 90% | 151.0 | 0.61s | Good but not optimal |
+
+**Key Findings:**
+
+1. **There's an optimal rollout length** - not too short, not too long
+   - Too short (1-5): Constant re-prediction causes jitter/instability, policy can't execute smooth trajectories
+   - Too long (50-100): Commits too long to potentially suboptimal trajectories
+   - Sweet spot (~20): Balance between reactivity and smoothness
+
+2. **Frequent re-prediction HURTS performance** - contrary to "visual servoing" intuition
+   - At n_action_steps=1, success drops from 100% to 0%
+   - The noise from constant re-prediction overwhelms the benefits of visual feedback
+
+3. **The 100-step default is actually suboptimal** for this task
+   - 100 steps: 90% success
+   - 20 steps: 100% success
+   - Re-predicting every 20 steps (~0.67s at 30Hz) is better than every 100 steps (~3.3s)
+
+4. **Timing shows re-prediction overhead**
+   - n_action_steps=1: 5.78s for 300 steps = 19ms/step (constant inference)
+   - n_action_steps=100: 0.61s for 151 steps = 4ms/step (rare inference)
+
+**Implications for Pi0:**
+
+Pi0 uses n_action_steps=50. Based on ACT results:
+- 50 steps gave 80% for ACT, so might not be optimal
+- But Pi0 CAN'T use smaller values due to slow inference (~250ms per chunk)
+- If Pi0 used n_action_steps=20, it would need to infer every 20 steps
+- At 250ms/inference, that's 250ms every 20 steps = 12.5ms overhead per step
+- Still potentially viable, but pushing the limits
+
+**Experiment script:** `scripts/experiments/test_act_chunking_rollout_length.py`
+
+### Whisker Visualization Bug Fix (2026-01-20)
+
+**Critical bug found:** Whiskers didn't match the actual robot trajectory!
+
+**Root cause:** The visualizer was making a SEPARATE prediction call to show whiskers,
+but the robot executed a DIFFERENT prediction due to VAE sampling randomness:
+
+1. `update_whiskers()` called `predict_action_chunk()` → Prediction A (shown)
+2. `policy.select_action()` called `predict_action_chunk()` → Prediction B (executed)
+
+Since ACT uses VAE sampling, these predictions differ even with the same input!
+
+**Fix:** Capture the ACTUAL actions from the policy's internal queue after `select_action()`
+fills it, then forward simulate THOSE actions for whisker visualization.
+
+**Additional fixes:**
+- History now records every step (not just at re-prediction) for smooth playback
+- History navigation: RIGHT at end exits to live mode
+- History shows step number and position within chunk
+
+**TODO - Multi-prediction visualization mode:**
+Add a mode to show N predictions (e.g., 10) simultaneously to visualize model uncertainty.
+Execute only the last prediction but show all trajectories overlaid. This would reveal:
+- How consistent/uncertain the model is
+- Whether the model has multimodal predictions
+- Variance in the predicted trajectories
 
 **Windows Pi0 loading fix:**
 - Must set `PYTHONIOENCODING=utf-8` for model weights to load
@@ -844,6 +1063,12 @@ Need to investigate which approach is most practical without full retraining.
 - **Issue**: System crashes/reboots during training (happened twice during ACT training)
 - **Plan**: If another crash occurs, upgrade to 591.74
 - **Note**: PyTorch nightly cu128 required for RTX 5090 support
+
+### RTX 5090 Pi0 Inference Benchmark (2026-01-19)
+- **Result**: 803.2 Hz (1.2ms per inference) - matches H100 performance!
+- **PyTorch**: nightly cu128 (required for RTX 5090 sm_120 support)
+- **Note**: Do NOT call `policy.float()` - this breaks attention mask computation.
+  Keep model in bfloat16 and pass float32 inputs (model handles conversion internally).
 
 ---
 

@@ -318,7 +318,11 @@ class WhiskerVisualizer:
             self.actual_path.pop(0)
 
     def update_whiskers(self, obs: dict):
-        """Update whisker visualization based on current observation."""
+        """Update whisker visualization based on current observation.
+
+        DEPRECATED: Use update_whiskers_from_actions() instead to ensure
+        whiskers match the actual executed actions.
+        """
         # Get current EE position
         self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
 
@@ -341,6 +345,42 @@ class WhiskerVisualizer:
         self.current_action_chunk = actions  # Store for joint plotting
 
         # Forward simulate to get predicted positions (full chunk)
+        result = self.forward_simulate_chunk(actions)
+        self.whisker_points = result['ee_positions']
+        self.whisker_gripper = result['gripper_values']
+        self.whisker_joints = result['joint_positions']
+        self.whisker_moving_jaw = result.get('moving_jaw_positions')
+
+    def update_whiskers_from_actions(self, actions: np.ndarray):
+        """Update whisker visualization from pre-computed actions.
+
+        This ensures whiskers match the ACTUAL actions being executed,
+        rather than making a separate prediction that may differ due to
+        VAE sampling or other stochastic elements.
+
+        Args:
+            actions: Action chunk that will actually be executed [N, action_dim]
+        """
+        # Get current EE position
+        self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
+
+        # Save old whiskers as ghost trail
+        self._ghost_counter += 1
+        if self.whisker_points is not None and len(self.whisker_points) > 1:
+            if self._ghost_counter >= self.ghost_trail_interval:
+                self._ghost_counter = 0
+                self.ghost_trails.append({
+                    'ee_positions': self.whisker_points.copy(),
+                    'gripper_values': self.whisker_gripper.copy() if self.whisker_gripper is not None else None,
+                    'joint_positions': {k: v.copy() for k, v in self.whisker_joints.items()} if self.whisker_joints else None,
+                })
+                if len(self.ghost_trails) > self.max_ghost_trails:
+                    self.ghost_trails.pop(0)
+
+        # Store actions for joint plotting
+        self.current_action_chunk = actions
+
+        # Forward simulate to get predicted positions
         result = self.forward_simulate_chunk(actions)
         self.whisker_points = result['ee_positions']
         self.whisker_gripper = result['gripper_values']
@@ -477,6 +517,11 @@ def load_act_policy(checkpoint_path: str, device: str):
     """Load ACT policy and processors from checkpoint."""
     from lerobot.policies.act.modeling_act import ACTPolicy
     from lerobot.policies.factory import make_pre_post_processors
+    from pathlib import Path
+
+    # Convert to absolute path if it's a local path
+    if Path(checkpoint_path).exists():
+        checkpoint_path = str(Path(checkpoint_path).resolve())
 
     policy = ACTPolicy.from_pretrained(checkpoint_path)
     policy.to(device)
@@ -509,6 +554,8 @@ def main():
                         help="Allow CPU (will be slow)")
     parser.add_argument("--show-joint-graph", action="store_true",
                         help="Show real-time matplotlib graph of joint predictions")
+    parser.add_argument("--rollout-length", type=int, default=None,
+                        help="Override n_action_steps (rollout length before re-prediction)")
     args = parser.parse_args()
 
     # Check CUDA availability
@@ -529,7 +576,16 @@ def main():
     # Load policy and processors
     print(f"Loading policy from {args.checkpoint}...")
     policy, preprocessor, postprocessor = load_act_policy(args.checkpoint, device)
-    print("Policy loaded")
+
+    # Override rollout length if specified
+    if args.rollout_length is not None:
+        from collections import deque
+        original_n_action_steps = policy.config.n_action_steps
+        policy.config.n_action_steps = args.rollout_length
+        policy._action_queue = deque([], maxlen=args.rollout_length)
+        print(f"Rollout length overridden: {original_n_action_steps} -> {args.rollout_length}")
+
+    print(f"Policy loaded (n_action_steps={policy.config.n_action_steps}, chunk_size={policy.config.chunk_size})")
 
     # Create simulation
     print("Creating simulation...")
@@ -547,10 +603,12 @@ def main():
     visualizer = WhiskerVisualizer(policy, sim, device=device,
                                    preprocessor=preprocessor, postprocessor=postprocessor)
 
+    # Get chunk size for display
+    chunk_size = policy.config.n_action_steps if hasattr(policy.config, 'n_action_steps') else 100
+
     # Create joint plotter for real-time graphs (optional)
     joint_plotter = None
     if args.show_joint_graph:
-        chunk_size = policy.config.chunk_size if hasattr(policy.config, 'chunk_size') else 100
         joint_plotter = JointPlotter(chunk_size=chunk_size)
 
     # Create MuJoCo viewer with custom render callback
@@ -590,11 +648,13 @@ def main():
         elif key == 262 and paused:  # RIGHT ARROW
             if history_index >= 0:
                 # Move forward in history
-                history_index = min(len(whisker_history) - 1, history_index + 1)
-                if history_index == len(whisker_history) - 1:
-                    print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}] (latest)", end="", flush=True)
+                if history_index >= len(whisker_history) - 1:
+                    # At end of history - exit history mode to live view
+                    history_index = -1
+                    print(f"\r  [LIVE - at step {whisker_history[-1]['step'] if whisker_history else 0}]          ", end="", flush=True)
                 else:
-                    print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}]          ", end="", flush=True)
+                    history_index += 1
+                    print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}] step {whisker_history[history_index]['step']}          ", end="", flush=True)
             else:
                 # Step forward in simulation
                 step_forward = True
@@ -604,7 +664,8 @@ def main():
                     history_index = len(whisker_history) - 1
                 else:
                     history_index = max(0, history_index - 1)
-                print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}]          ", end="", flush=True)
+                hist = whisker_history[history_index]
+                print(f"\r  [HISTORY {history_index + 1}/{len(whisker_history)}] step {hist['step']} [{hist.get('executed_in_chunk', 0)}/{chunk_size}]          ", end="", flush=True)
 
     with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
         for ep in range(args.episodes):
@@ -632,7 +693,8 @@ def main():
                         mujoco.mj_forward(sim.mj_model, sim.mj_data)
                         # Update joint plotter with historical action chunk
                         if joint_plotter and hist.get('action_chunk') is not None:
-                            joint_plotter.update(hist['action_chunk'], executed_steps=0)
+                            executed = hist.get('executed_in_chunk', 0)
+                            joint_plotter.update(hist['action_chunk'], executed_steps=executed)
                         # Show whiskers from that moment using saved snapshots
                         with viewer.lock():
                             viewer.user_scn.ngeom = 0
@@ -660,60 +722,110 @@ def main():
                 if step_forward:
                     step_forward = False
 
+                # Timing debug
+                t_loop_start = time.perf_counter()
+
                 # Get observation
+                t0 = time.perf_counter()
                 obs = sim.get_observation()
+                t_obs = time.perf_counter() - t0
 
-                # Update whiskers every frame for continuous predictions
-                if step % 1 == 0:  # Every step now
-                    visualizer.update_whiskers(obs)
-                    # Update joint plotter with new action chunk
-                    if joint_plotter and visualizer.current_action_chunk is not None:
-                        joint_plotter.update(visualizer.current_action_chunk, executed_steps=0)
+                # Get action FIRST, then compute whiskers from the ACTUAL actions being executed
+                # This ensures whiskers match the real trajectory
+                t0 = time.perf_counter()
+                queue_was_empty = len(policy._action_queue) == 0
 
-                    # Record to history (including robot state for playback)
-                    if visualizer.whisker_points is not None:
-                        # Store snapshots of current state for perfect history playback
-                        whisker_history.append({
-                            'whiskers': visualizer.whisker_points.copy(),
-                            'gripper': visualizer.whisker_gripper.copy() if visualizer.whisker_gripper is not None else None,
-                            'joints': {k: v.copy() for k, v in visualizer.whisker_joints.items()} if visualizer.whisker_joints else None,
-                            'action_chunk': visualizer.current_action_chunk.copy() if visualizer.current_action_chunk is not None else None,
-                            'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
-                            'qpos': sim.mj_data.qpos.copy(),
-                            'qvel': sim.mj_data.qvel.copy(),
-                            'step': step,
-                            'actual_path': [p.copy() for p in visualizer.actual_path],  # Snapshot of path
-                            'ghost_trails': [g.copy() for g in visualizer.ghost_trails],  # Snapshot of ghosts
-                        })
-                        # Trim history if too long
-                        if len(whisker_history) > max_history:
-                            whisker_history.pop(0)
-
-                # Get action and step simulation
                 batch = visualizer._prepare_obs(obs)
                 if preprocessor is not None:
                     batch = preprocessor(batch)
                 with torch.no_grad():
                     action = policy.select_action(batch)
+
+                # If queue was empty, select_action just filled it with a new chunk
+                # Capture the ACTUAL actions that will be executed for whisker visualization
+                if queue_was_empty:
+                    # Reconstruct the full chunk: current action + remaining queue
+                    # The queue now has n_action_steps-1 actions (we just popped one)
+                    remaining_actions = list(policy._action_queue)
+
+                    # Build full chunk array [n_actions, action_dim]
+                    if postprocessor is not None:
+                        # Denormalize all actions
+                        current_action_denorm = postprocessor(action).cpu().numpy().flatten()
+                        remaining_denorm = [postprocessor(a).cpu().numpy().flatten() for a in remaining_actions]
+                        full_chunk = np.vstack([current_action_denorm] + remaining_denorm)
+                    else:
+                        current_action_np = action.cpu().numpy().flatten()
+                        remaining_np = [a.cpu().numpy().flatten() for a in remaining_actions]
+                        full_chunk = np.vstack([current_action_np] + remaining_np)
+
+                    # Forward simulate the ACTUAL chunk to get whisker positions
+                    visualizer.update_whiskers_from_actions(full_chunk)
+
+                    # Debug: show whisker info
+                    if visualizer.whisker_points is not None:
+                        pts = visualizer.whisker_points
+                        print(f"    Whiskers: {len(pts)} points, range: [{pts.min():.3f}, {pts.max():.3f}]")
+
                 if postprocessor is not None:
                     action = postprocessor(action)
                 action = action.cpu().numpy().flatten()
+                t_policy = time.perf_counter() - t0
+
+                # Compute whisker timing and update joint plotter
+                t0 = time.perf_counter()
+                chunk_size = policy.config.n_action_steps
+                executed_in_chunk = chunk_size - len(policy._action_queue)
+                if joint_plotter and visualizer.current_action_chunk is not None:
+                    joint_plotter.update(visualizer.current_action_chunk, executed_steps=executed_in_chunk)
+
+                # Record history every step for smooth playback
+                whisker_history.append({
+                    'whiskers': visualizer.whisker_points.copy() if visualizer.whisker_points is not None else None,
+                    'gripper': visualizer.whisker_gripper.copy() if visualizer.whisker_gripper is not None else None,
+                    'action_chunk': visualizer.current_action_chunk.copy() if visualizer.current_action_chunk is not None else None,
+                    'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
+                    'qpos': sim.mj_data.qpos.copy(),
+                    'qvel': sim.mj_data.qvel.copy(),
+                    'step': step,
+                    'executed_in_chunk': executed_in_chunk,
+                    'actual_path': [p.copy() for p in visualizer.actual_path],
+                    'ghost_trails': [g.copy() for g in visualizer.ghost_trails],
+                })
+                if len(whisker_history) > max_history:
+                    whisker_history.pop(0)
+
+                t_whiskers = time.perf_counter() - t0
 
                 # Apply action
+                t0 = time.perf_counter()
                 action_dict = {m + ".pos": float(action[i]) for i, m in enumerate(MOTOR_NAMES)}
                 sim.send_action(action_dict)
+                t_sim = time.perf_counter() - t0
 
                 # Record actual EE position every step for smooth path
                 visualizer.record_actual_position()
 
                 # Add whiskers to scene and sync viewer
+                t0 = time.perf_counter()
                 with viewer.lock():
                     # Clear previous custom geometry
                     viewer.user_scn.ngeom = 0
                     # Add new whiskers
                     visualizer.add_whiskers_to_scene(viewer.user_scn)
+                    # Debug: print geom count on first step
+                    if step == 0:
+                        print(f"    Scene geoms added: {viewer.user_scn.ngeom}")
 
                 viewer.sync()
+                t_render = time.perf_counter() - t0
+
+                t_loop = time.perf_counter() - t_loop_start
+
+                # Print timing every 10 steps
+                if step % 10 == 0:
+                    repredict_marker = " *REPREDICT*" if queue_was_empty else ""
+                    print(f"  Step {step} [{executed_in_chunk}/{chunk_size}]: loop={t_loop*1000:.1f}ms | obs={t_obs*1000:.1f} whiskers={t_whiskers*1000:.1f} policy={t_policy*1000:.1f} sim={t_sim*1000:.1f} render={t_render*1000:.1f}{repredict_marker}")
 
                 # Check task completion
                 if sim.is_task_complete():
@@ -728,8 +840,9 @@ def main():
                             sim.mj_data.qvel[:] = hist['qvel']
                             mujoco.mj_forward(sim.mj_model, sim.mj_data)
                             # Update joint plotter with historical action chunk
-                            if hist.get('action_chunk') is not None:
-                                joint_plotter.update(hist['action_chunk'], executed_steps=0)
+                            if joint_plotter and hist.get('action_chunk') is not None:
+                                executed = hist.get('executed_in_chunk', 0)
+                                joint_plotter.update(hist['action_chunk'], executed_steps=executed)
                             # Show whiskers from that moment using saved snapshots
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
