@@ -502,6 +502,28 @@ Execute only the last prediction but show all trajectories overlaid. This would 
 - Whether the model has multimodal predictions
 - Variance in the predicted trajectories
 
+### Joint Position Tracking for Whisker Debugging (2026-01-20)
+
+**Problem:** Whisker predictions still diverge from actual robot path even after fixing
+the VAE sampling bug. Forward simulation in whiskers uses 1 `mj_step()` per action,
+but actual physics uses `n_sim_steps` iterations plus action clipping.
+
+**Investigation approach:** Since servo motors should track commanded positions closely
+(not much physics involved), compare desired vs actual JOINT positions directly,
+bypassing the forward kinematics / EE position comparison entirely.
+
+**Implementation:** Enhanced `JointPlotter` class in `visualize_whiskers_act.py`:
+- **Black solid line**: ACTUAL joint position (where robot is) - from `obs[motor.pos]`
+- **Colored dotted line**: COMMANDED position (what we asked for) - from `action[i]`
+- **Colored dashed line**: PREDICTED chunk (future trajectory) - from policy output
+
+**Usage:** `python visualize_whiskers_act.py --checkpoint ... --show-joint-graph`
+
+**What this reveals:**
+- If actual tracks commanded closely → issue is forward simulation mismatch
+- If actual lags/overshoots commanded → issue is servo dynamics / physics model
+- Helps identify if normalization, clipping, or conversion is causing drift
+
 **Windows Pi0 loading fix:**
 - Must set `PYTHONIOENCODING=utf-8` for model weights to load
 - LeRobot Pi0 code prints checkmark character (✓) that Windows console can't encode

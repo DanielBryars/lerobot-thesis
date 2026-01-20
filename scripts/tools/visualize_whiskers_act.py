@@ -34,21 +34,29 @@ MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wri
 
 
 class JointPlotter:
-    """Real-time matplotlib plot showing predicted joint trajectories."""
+    """Real-time matplotlib plot showing predicted vs actual joint trajectories."""
 
-    def __init__(self, chunk_size: int = 100):
+    def __init__(self, chunk_size: int = 100, history_size: int = 200):
         self.chunk_size = chunk_size
+        self.history_size = history_size
+
+        # History of actual joint positions and desired positions
+        self.actual_history = []  # List of (step, joint_values) tuples
+        self.desired_history = []  # List of (step, joint_values) tuples
+        self.global_step = 0
 
         # Set up interactive mode
         plt.ion()
 
         # Create figure with subplots for each joint
-        self.fig = plt.figure(figsize=(12, 8))
-        self.fig.canvas.manager.set_window_title('Joint Predictions')
-        gs = GridSpec(3, 2, figure=self.fig, hspace=0.3, wspace=0.25)
+        self.fig = plt.figure(figsize=(14, 9))
+        self.fig.canvas.manager.set_window_title('Joint Predictions vs Actual')
+        gs = GridSpec(3, 2, figure=self.fig, hspace=0.35, wspace=0.25)
 
         self.axes = []
-        self.lines = []
+        self.predicted_lines = []  # Current chunk prediction
+        self.actual_lines = []  # Actual joint position history
+        self.desired_lines = []  # Desired (commanded) position history
         self.current_step_lines = []  # Vertical lines showing current step
 
         colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628']
@@ -58,60 +66,134 @@ class JointPlotter:
             ax = self.fig.add_subplot(gs[row, col])
             ax.set_title(motor, fontsize=10, fontweight='bold')
             ax.set_xlabel('Step', fontsize=8)
-            ax.set_ylabel('Value', fontsize=8)
+            ax.set_ylabel('Value (model-norm)', fontsize=8)
             ax.set_xlim(0, chunk_size)
             ax.grid(True, alpha=0.3)
             ax.tick_params(labelsize=7)
 
-            # Create line for predictions
-            line, = ax.plot([], [], color=color, linewidth=2, label='Predicted')
+            # Create line for current chunk prediction (dashed, shows future)
+            pred_line, = ax.plot([], [], color=color, linewidth=2, linestyle='--',
+                                  alpha=0.7, label='Predicted chunk')
+            # Create line for actual joint positions (solid, historical)
+            actual_line, = ax.plot([], [], color='black', linewidth=1.5,
+                                    alpha=0.8, label='Actual')
+            # Create line for desired/commanded positions (dotted, historical)
+            desired_line, = ax.plot([], [], color=color, linewidth=1.5, linestyle=':',
+                                     alpha=0.6, label='Commanded')
             # Create vertical line for current execution point
-            vline = ax.axvline(x=0, color='gray', linestyle='--', alpha=0.7, label='Executed')
+            vline = ax.axvline(x=0, color='gray', linestyle='-', alpha=0.5, linewidth=1)
+
+            # Add legend only on first subplot
+            if i == 0:
+                ax.legend(loc='upper right', fontsize=7)
 
             self.axes.append(ax)
-            self.lines.append(line)
+            self.predicted_lines.append(pred_line)
+            self.actual_lines.append(actual_line)
+            self.desired_lines.append(desired_line)
             self.current_step_lines.append(vline)
 
-            # Set appropriate y-limits based on joint type
-            if motor == 'gripper':
-                ax.set_ylim(-5, 55)
-            else:
-                ax.set_ylim(-3.5, 3.5)
+            # Set appropriate y-limits for model-normalized space (roughly -3 to 3)
+            ax.set_ylim(-4, 4)
 
         self.fig.tight_layout()
         plt.show(block=False)
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
-    def update(self, action_chunk: np.ndarray, executed_steps: int = 0):
-        """Update the plot with new action chunk predictions.
+    def record_actual(self, joint_positions: np.ndarray):
+        """Record actual joint position at current step.
 
         Args:
-            action_chunk: Shape (chunk_size, 6) - predicted actions
-            executed_steps: How many steps have been executed (for vertical line)
+            joint_positions: Array of 6 joint positions (normalized)
+        """
+        self.actual_history.append((self.global_step, joint_positions.copy()))
+        # Trim history
+        if len(self.actual_history) > self.history_size:
+            self.actual_history.pop(0)
+
+    def record_desired(self, joint_positions: np.ndarray):
+        """Record desired/commanded joint position at current step.
+
+        Args:
+            joint_positions: Array of 6 joint positions (normalized, from action)
+        """
+        self.desired_history.append((self.global_step, joint_positions.copy()))
+        # Trim history
+        if len(self.desired_history) > self.history_size:
+            self.desired_history.pop(0)
+        self.global_step += 1
+
+    def update(self, action_chunk: np.ndarray, executed_steps: int = 0):
+        """Update the plot with new action chunk predictions and history.
+
+        Args:
+            action_chunk: Shape (chunk_size, 6) - predicted actions for current chunk
+            executed_steps: How many steps have been executed in current chunk
         """
         if action_chunk is None or len(action_chunk) == 0:
             return
 
-        x = np.arange(len(action_chunk))
+        # Calculate x-axis range to show: history leading up to now + future prediction
+        # The current step is at global_step, chunk extends into future
+        history_steps = min(len(self.actual_history), self.history_size // 2)
+        future_steps = len(action_chunk) - executed_steps
 
-        for i, (line, vline, ax) in enumerate(zip(self.lines, self.current_step_lines, self.axes)):
+        # X-axis: [global_step - history_steps, global_step + future_steps]
+        x_min = max(0, self.global_step - history_steps)
+        x_max = self.global_step + future_steps + 10
+
+        # Prepare chunk prediction x-coords (starting from current global step - executed)
+        chunk_start_step = self.global_step - executed_steps
+        chunk_x = np.arange(len(action_chunk)) + chunk_start_step
+
+        for i, (pred_line, actual_line, desired_line, vline, ax) in enumerate(
+            zip(self.predicted_lines, self.actual_lines, self.desired_lines,
+                self.current_step_lines, self.axes)):
+
+            # Update predicted chunk line
             if i < action_chunk.shape[1]:
-                y = action_chunk[:, i]
-                line.set_data(x, y)
+                pred_line.set_data(chunk_x, action_chunk[:, i])
 
-                # Auto-adjust y-limits if needed (except gripper which is fixed)
-                if MOTOR_NAMES[i] != 'gripper':
-                    ymin, ymax = y.min(), y.max()
-                    margin = (ymax - ymin) * 0.1 + 0.1
+            # Update actual history line
+            if self.actual_history:
+                actual_x = [h[0] for h in self.actual_history]
+                actual_y = [h[1][i] for h in self.actual_history if i < len(h[1])]
+                actual_x = actual_x[:len(actual_y)]
+                actual_line.set_data(actual_x, actual_y)
+
+            # Update desired history line
+            if self.desired_history:
+                desired_x = [h[0] for h in self.desired_history]
+                desired_y = [h[1][i] for h in self.desired_history if i < len(h[1])]
+                desired_x = desired_x[:len(desired_y)]
+                desired_line.set_data(desired_x, desired_y)
+
+            # Update x-limits to follow the action
+            ax.set_xlim(x_min, x_max)
+
+            # Auto-adjust y-limits based on visible data
+            if MOTOR_NAMES[i] != 'gripper':
+                all_y = list(action_chunk[:, i])
+                if self.actual_history:
+                    all_y.extend([h[1][i] for h in self.actual_history if i < len(h[1])])
+                if all_y:
+                    ymin, ymax = min(all_y), max(all_y)
+                    margin = (ymax - ymin) * 0.15 + 1
                     ax.set_ylim(ymin - margin, ymax + margin)
 
-                # Update vertical line position
-                vline.set_xdata([executed_steps, executed_steps])
+            # Update vertical line to show current position
+            vline.set_xdata([self.global_step, self.global_step])
 
         # Redraw
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
+
+    def reset(self):
+        """Reset history for new episode."""
+        self.actual_history.clear()
+        self.desired_history.clear()
+        self.global_step = 0
 
     def close(self):
         """Close the plot window."""
@@ -172,7 +254,8 @@ class WhiskerVisualizer:
         self.whisker_joints = None  # Dict of joint_name -> positions (unused, kept for compatibility)
         self.whisker_moving_jaw = None  # Shape: (horizon, 3) - moving jaw positions
         self.current_ee_pos = None
-        self.current_action_chunk = None  # Shape: (chunk_size, 6) - for joint plotting
+        self.current_action_chunk = None  # Shape: (chunk_size, 6) - denormalized for whiskers
+        self.current_action_chunk_normalized = None  # Shape: (chunk_size, 6) - model-normalized for joint plotting
 
         # Storage for ghost trails (past predictions)
         self.ghost_trails = []  # List of past whisker data dicts
@@ -618,7 +701,11 @@ def main():
     print("  Ghost trails: BLUE (past predictions)")
     print("  Actual path: ORANGE")
     if args.show_joint_graph:
-        print("  Joint Graph: Separate window showing all 6 joint predictions")
+        print("  Joint Graph: Separate window showing all 6 joints (in MODEL-NORMALIZED space)")
+        print("    - Black solid: ACTUAL position (observation after preprocessing)")
+        print("    - Colored dotted: COMMANDED position (model output before postprocessing)")
+        print("    - Colored dashed: PREDICTED chunk (future trajectory)")
+        print("    (Values near 0 = at dataset mean, +/-3 = ~3 std devs from mean)")
     print("\nControls:")
     print("  Mouse: Click and drag to rotate, scroll to zoom")
     print("  SPACE: Pause/unpause")
@@ -674,6 +761,8 @@ def main():
             policy.reset()
             whisker_history.clear()  # Clear history for new episode
             visualizer.clear_trails()  # Clear ghost trails and actual path
+            if joint_plotter:
+                joint_plotter.reset()  # Reset joint position history
             history_index = -1
 
             for step in range(args.max_steps):
@@ -738,6 +827,13 @@ def main():
                 batch = visualizer._prepare_obs(obs)
                 if preprocessor is not None:
                     batch = preprocessor(batch)
+
+                # Record ACTUAL joint positions in MODEL-NORMALIZED space
+                # This allows proper comparison with model output (before postprocessor)
+                if joint_plotter:
+                    # Extract normalized state from preprocessed batch
+                    actual_normalized = batch["observation.state"].cpu().numpy().flatten()
+                    joint_plotter.record_actual(actual_normalized)
                 with torch.no_grad():
                     action = policy.select_action(batch)
 
@@ -748,24 +844,40 @@ def main():
                     # The queue now has n_action_steps-1 actions (we just popped one)
                     remaining_actions = list(policy._action_queue)
 
-                    # Build full chunk array [n_actions, action_dim]
+                    # Build NORMALIZED chunk for joint plotter (model-normalized space)
+                    current_action_norm = action.cpu().numpy().flatten()
+                    remaining_norm = [a.cpu().numpy().flatten() for a in remaining_actions]
+                    full_chunk_normalized = np.vstack([current_action_norm] + remaining_norm)
+
+                    # Build DENORMALIZED chunk for whisker forward simulation (robot space)
                     if postprocessor is not None:
-                        # Denormalize all actions
                         current_action_denorm = postprocessor(action).cpu().numpy().flatten()
                         remaining_denorm = [postprocessor(a).cpu().numpy().flatten() for a in remaining_actions]
-                        full_chunk = np.vstack([current_action_denorm] + remaining_denorm)
+                        full_chunk_denorm = np.vstack([current_action_denorm] + remaining_denorm)
                     else:
-                        current_action_np = action.cpu().numpy().flatten()
-                        remaining_np = [a.cpu().numpy().flatten() for a in remaining_actions]
-                        full_chunk = np.vstack([current_action_np] + remaining_np)
+                        full_chunk_denorm = full_chunk_normalized
 
                     # Forward simulate the ACTUAL chunk to get whisker positions
-                    visualizer.update_whiskers_from_actions(full_chunk)
+                    visualizer.update_whiskers_from_actions(full_chunk_denorm)
 
-                    # Debug: show whisker info
+                    # Store normalized chunk for joint plotter
+                    visualizer.current_action_chunk_normalized = full_chunk_normalized
+
+                    # Debug: show whisker info and compare with actual
                     if visualizer.whisker_points is not None:
                         pts = visualizer.whisker_points
                         print(f"    Whiskers: {len(pts)} points, range: [{pts.min():.3f}, {pts.max():.3f}]")
+                        print(f"    Whisker start: {pts[0]}")
+                        print(f"    Whisker end:   {pts[-1]}")
+                        print(f"    Action chunk shape: {full_chunk_denorm.shape}")
+                        print(f"    First action: {full_chunk_denorm[0]}")
+                        print(f"    Current EE pos: {sim.mj_data.site_xpos[visualizer.ee_site_id]}")
+
+                # Record DESIRED action in MODEL-NORMALIZED space (before postprocessor)
+                # This allows proper comparison with normalized observation
+                if joint_plotter:
+                    action_normalized = action.cpu().numpy().flatten()
+                    joint_plotter.record_desired(action_normalized)
 
                 if postprocessor is not None:
                     action = postprocessor(action)
@@ -776,8 +888,9 @@ def main():
                 t0 = time.perf_counter()
                 chunk_size = policy.config.n_action_steps
                 executed_in_chunk = chunk_size - len(policy._action_queue)
-                if joint_plotter and visualizer.current_action_chunk is not None:
-                    joint_plotter.update(visualizer.current_action_chunk, executed_steps=executed_in_chunk)
+                # Use normalized chunk for joint plotter (model-normalized space)
+                if joint_plotter and hasattr(visualizer, 'current_action_chunk_normalized') and visualizer.current_action_chunk_normalized is not None:
+                    joint_plotter.update(visualizer.current_action_chunk_normalized, executed_steps=executed_in_chunk)
 
                 # Record history every step for smooth playback
                 whisker_history.append({
@@ -803,8 +916,22 @@ def main():
                 sim.send_action(action_dict)
                 t_sim = time.perf_counter() - t0
 
+                # Debug: compare normalized values (first few steps only)
+                if step < 3 and joint_plotter:
+                    print(f"    DEBUG Step {step} (model-normalized space):")
+                    print(f"      Obs (actual):    {joint_plotter.actual_history[-1][1] if joint_plotter.actual_history else 'N/A'}")
+                    print(f"      Action (desired): {joint_plotter.desired_history[-1][1] if joint_plotter.desired_history else 'N/A'}")
+
                 # Record actual EE position every step for smooth path
                 visualizer.record_actual_position()
+
+                # Debug: compare whisker prediction vs actual at key steps
+                if step < 5 or step % 20 == 0:
+                    actual_ee = sim.mj_data.site_xpos[visualizer.ee_site_id].copy()
+                    if visualizer.whisker_points is not None and executed_in_chunk < len(visualizer.whisker_points):
+                        predicted_ee = visualizer.whisker_points[executed_in_chunk]
+                        diff = np.linalg.norm(actual_ee - predicted_ee)
+                        print(f"    Step {step}: predicted={predicted_ee}, actual={actual_ee}, diff={diff:.4f}m")
 
                 # Add whiskers to scene and sync viewer
                 t0 = time.perf_counter()
