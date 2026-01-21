@@ -201,399 +201,119 @@ class JointPlotter:
 
 
 class WhiskerVisualizer:
-    """Visualizes action chunk predictions as whiskers in MuJoCo."""
+    """Visualizes action chunk predictions as whiskers in MuJoCo.
+
+    Uses utility classes from utils.mujoco_viz for clean separation of concerns.
+    """
 
     def __init__(
         self,
-        policy,
         sim: SO100Sim,
-        device: str = "cuda",
-        preprocessor=None,
-        postprocessor=None,
-        whisker_color: tuple = (0.2, 0.8, 0.2, 0.7),  # RGBA - green, semi-transparent
+        whisker_color: tuple = (0.2, 0.8, 0.2, 0.7),  # RGBA - green
         ghost_color: tuple = (0.5, 0.5, 0.9, 0.3),  # RGBA - light blue
-        actual_path_color: tuple = (1.0, 0.3, 0.1, 0.5),  # RGBA - orange for actual path taken
+        actual_path_color: tuple = (1.0, 0.3, 0.1, 0.5),  # RGBA - orange
         whisker_radius: float = 0.003,
         ghost_radius: float = 0.002,
-        max_ghost_trails: int = 12,  # Recent ghost trails
-        ghost_trail_interval: int = 1,  # Every prediction
+        max_ghost_trails: int = 12,
     ):
-        self.policy = policy
         self.sim = sim
-        self.device = device
-        self.preprocessor = preprocessor
-        self.postprocessor = postprocessor
         self.whisker_color = whisker_color
         self.ghost_color = ghost_color
         self.actual_path_color = actual_path_color
         self.whisker_radius = whisker_radius
         self.ghost_radius = ghost_radius
         self.max_ghost_trails = max_ghost_trails
-        self.ghost_trail_interval = ghost_trail_interval
-        self._ghost_counter = 0  # Counter for spacing out ghost trails
 
-        # Get end-effector site ID
-        self.ee_site_id = mujoco.mj_name2id(
-            sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripper_site"
-        )
-        if self.ee_site_id == -1:
-            # Try alternate names
-            for name in ["ee_site", "end_effector", "gripper"]:
-                self.ee_site_id = mujoco.mj_name2id(
-                    sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, name
-                )
-                if self.ee_site_id != -1:
-                    break
+        # Import utilities
+        from utils.mujoco_viz import MujocoPathRenderer, TrajectoryTracker, FKSolver
 
-        # Create rollout data (copy of sim state for forward simulation)
-        self.data_rollout = mujoco.MjData(sim.mj_model)
+        # Initialize components
+        self.fk_solver = FKSolver(sim.mj_model, sim.mj_data, ee_site_name="gripperframe")
+        self.actual_path_tracker = TrajectoryTracker(max_length=500)
+        self.renderer = MujocoPathRenderer()
 
-        # Storage for current whiskers
-        self.whisker_points = None  # Shape: (horizon, 3) - EE positions
-        self.whisker_gripper = None  # Shape: (horizon,) - gripper values
-        self.whisker_joints = None  # Dict of joint_name -> positions (unused, kept for compatibility)
-        self.whisker_moving_jaw = None  # Shape: (horizon, 3) - moving jaw positions
-        self.current_ee_pos = None
-        self.current_action_chunk = None  # Shape: (chunk_size, 6) - denormalized for whiskers
-        self.current_action_chunk_normalized = None  # Shape: (chunk_size, 6) - model-normalized for joint plotting
+        # Get end-effector site ID (for recording actual position)
+        self.ee_site_id = self.fk_solver.ee_site_id
 
-        # Storage for ghost trails (past predictions)
-        self.ghost_trails = []  # List of past whisker data dicts
+        # Current whisker data
+        self.whisker_points = None  # Shape: (N, 3) - predicted EE positions
+        self.ghost_trails = []  # List of past whisker points arrays
 
-        # Storage for actual path taken
-        self.actual_path = []  # List of actual EE positions
+        # Action chunk management
+        self.current_action_chunk_normalized = None
+        self.current_action_chunk_denorm = None
+        self.chunk_step = 0
 
-    def get_action_chunk(self, obs: dict) -> np.ndarray:
-        """Get full action chunk from policy."""
-        # Prepare observation for policy
-        batch = self._prepare_obs(obs)
-
-        # Apply preprocessor (normalizes observations)
-        if self.preprocessor is not None:
-            batch = self.preprocessor(batch)
-
-        with torch.no_grad():
-            # Get full action chunk directly from model (not through select_action queue)
-            if hasattr(self.policy, 'predict_action_chunk'):
-                # ACT policy - get full chunk prediction
-                actions = self.policy.predict_action_chunk(batch)  # Shape: [1, chunk_size, action_dim]
-                actions = actions.squeeze(0)  # Shape: [chunk_size, action_dim]
-
-                # Apply postprocessor (denormalizes actions) to each action
-                if self.postprocessor is not None:
-                    # Postprocessor expects single actions, so process each
-                    actions_list = []
-                    for i in range(actions.shape[0]):
-                        a = self.postprocessor(actions[i])
-                        actions_list.append(a.cpu().numpy())
-                    return np.array(actions_list)
-                else:
-                    return actions.cpu().numpy()
-            else:
-                # Fallback for other policies - just get single action
-                action = self.policy.select_action(batch)
-                if self.postprocessor is not None:
-                    action = self.postprocessor(action)
-                return action.cpu().numpy().reshape(1, -1)
-
-    def _prepare_obs(self, obs: dict) -> dict:
+    def _prepare_obs(self, obs: dict, device: str = "cuda") -> dict:
         """Convert sim observation to policy input format."""
         batch = {}
 
         # State
         state = np.array([obs[m + ".pos"] for m in MOTOR_NAMES], dtype=np.float32)
-        batch["observation.state"] = torch.from_numpy(state).unsqueeze(0).to(self.device)
+        batch["observation.state"] = torch.from_numpy(state).unsqueeze(0).to(device)
 
         # Images
         for key, value in obs.items():
             if isinstance(value, np.ndarray) and value.ndim == 3:
                 img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
-                batch[f"observation.images.{key}"] = img.to(self.device)
+                batch[f"observation.images.{key}"] = img.to(device)
 
         return batch
 
-    def forward_simulate_chunk(self, actions: np.ndarray, max_steps: int = None) -> dict:
-        """Forward simulate action chunk and return positions and gripper state.
+    def update_whiskers_from_actions(self, action_chunk_denorm: np.ndarray):
+        """Update whisker visualization from action chunk.
 
         Args:
-            actions: Action chunk to simulate [chunk_size, 6]
-            max_steps: Max steps to simulate. If None, simulates full chunk.
-
-        Returns:
-            dict with:
-                'ee_positions': EE trajectory [N, 3]
-                'gripper_values': Gripper action values [N]
-                'joint_positions': Dict of joint_name -> positions [N, 3]
+            action_chunk_denorm: Denormalized joint targets, shape (N, 6)
         """
-        if max_steps is None:
-            max_steps = len(actions)  # Use full chunk by default
+        # Save old whiskers as ghost trail
+        if self.whisker_points is not None and len(self.whisker_points) > 1:
+            self.ghost_trails.append(self.whisker_points.copy())
+            if len(self.ghost_trails) > self.max_ghost_trails:
+                self.ghost_trails.pop(0)
 
-        # Copy current sim state to rollout data
-        self.data_rollout.qpos[:] = self.sim.mj_data.qpos[:]
-        self.data_rollout.qvel[:] = self.sim.mj_data.qvel[:]
-        self.data_rollout.ctrl[:] = self.sim.mj_data.ctrl[:]
-        mujoco.mj_forward(self.sim.mj_model, self.data_rollout)
-
-        # Find body IDs for joint visualization (use actual MuJoCo body names)
-        # Note: shoulder body doesn't translate (only rotates in place), so skip it
-        joint_body_ids = {}
-        for name in ["upper_arm", "lower_arm", "wrist"]:
-            body_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
-            if body_id != -1:
-                joint_body_ids[name] = body_id
-
-        # Find moving jaw body for gripper visualization
-        moving_jaw_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "moving_jaw_so101_v1")
-        if moving_jaw_id == -1:
-            moving_jaw_id = mujoco.mj_name2id(self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "moving_jaw")
-
-        # Record starting positions
-        ee_positions = [self.data_rollout.site_xpos[self.ee_site_id].copy()]
-        gripper_values = [actions[0][5] if len(actions) > 0 and len(actions[0]) > 5 else 0]
-        joint_positions = {name: [self.data_rollout.xpos[bid].copy()]
-                          for name, bid in joint_body_ids.items()}
-        # Track moving jaw position for gripper whisker
-        moving_jaw_positions = []
-        if moving_jaw_id != -1:
-            moving_jaw_positions.append(self.data_rollout.xpos[moving_jaw_id].copy())
-
-        # Step through each action in the chunk
-        for action in actions[:max_steps]:
-            # Set control (joint positions)
-            for i, motor in enumerate(MOTOR_NAMES):
-                actuator_id = mujoco.mj_name2id(
-                    self.sim.mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, motor
-                )
-                if actuator_id != -1 and i < len(action):
-                    self.data_rollout.ctrl[actuator_id] = action[i]
-
-            # Step simulation
-            mujoco.mj_step(self.sim.mj_model, self.data_rollout)
-
-            # Record EE position
-            ee_positions.append(self.data_rollout.site_xpos[self.ee_site_id].copy())
-
-            # Record gripper value (index 5 = gripper)
-            gripper_values.append(action[5] if len(action) > 5 else 0)
-
-            # Record joint body positions
-            for name, bid in joint_body_ids.items():
-                joint_positions[name].append(self.data_rollout.xpos[bid].copy())
-
-            # Record moving jaw position
-            if moving_jaw_id != -1:
-                moving_jaw_positions.append(self.data_rollout.xpos[moving_jaw_id].copy())
-
-        return {
-            'ee_positions': np.array(ee_positions),
-            'gripper_values': np.array(gripper_values),
-            'joint_positions': {k: np.array(v) for k, v in joint_positions.items()},
-            'moving_jaw_positions': np.array(moving_jaw_positions) if moving_jaw_positions else None,
-        }
+        # Compute predicted EE positions using FK
+        self.whisker_points = self.fk_solver.compute_ee_positions(action_chunk_denorm)
 
     def record_actual_position(self):
-        """Record current EE position to actual path. Call every simulation step."""
+        """Record current EE position. Call every simulation step."""
         pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
-        self.actual_path.append(pos)
-        # Keep actual path trimmed
-        max_actual_path = 500  # More points for smoother path
-        if len(self.actual_path) > max_actual_path:
-            self.actual_path.pop(0)
-
-    def update_whiskers(self, obs: dict):
-        """Update whisker visualization based on current observation.
-
-        DEPRECATED: Use update_whiskers_from_actions() instead to ensure
-        whiskers match the actual executed actions.
-        """
-        # Get current EE position
-        self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
-
-        # Save old whiskers as ghost trail (only every N predictions to avoid clutter)
-        self._ghost_counter += 1
-        if self.whisker_points is not None and len(self.whisker_points) > 1:
-            if self._ghost_counter >= self.ghost_trail_interval:
-                self._ghost_counter = 0
-                self.ghost_trails.append({
-                    'ee_positions': self.whisker_points.copy(),
-                    'gripper_values': self.whisker_gripper.copy() if self.whisker_gripper is not None else None,
-                    'joint_positions': {k: v.copy() for k, v in self.whisker_joints.items()} if self.whisker_joints else None,
-                })
-                # Keep only recent ghost trails
-                if len(self.ghost_trails) > self.max_ghost_trails:
-                    self.ghost_trails.pop(0)
-
-        # Get action chunk from policy
-        actions = self.get_action_chunk(obs)
-        self.current_action_chunk = actions  # Store for joint plotting
-
-        # Forward simulate to get predicted positions (full chunk)
-        result = self.forward_simulate_chunk(actions)
-        self.whisker_points = result['ee_positions']
-        self.whisker_gripper = result['gripper_values']
-        self.whisker_joints = result['joint_positions']
-        self.whisker_moving_jaw = result.get('moving_jaw_positions')
-
-    def update_whiskers_from_actions(self, actions: np.ndarray):
-        """Update whisker visualization from pre-computed actions.
-
-        This ensures whiskers match the ACTUAL actions being executed,
-        rather than making a separate prediction that may differ due to
-        VAE sampling or other stochastic elements.
-
-        Args:
-            actions: Action chunk that will actually be executed [N, action_dim]
-        """
-        # Get current EE position
-        self.current_ee_pos = self.sim.mj_data.site_xpos[self.ee_site_id].copy()
-
-        # Save old whiskers as ghost trail
-        self._ghost_counter += 1
-        if self.whisker_points is not None and len(self.whisker_points) > 1:
-            if self._ghost_counter >= self.ghost_trail_interval:
-                self._ghost_counter = 0
-                self.ghost_trails.append({
-                    'ee_positions': self.whisker_points.copy(),
-                    'gripper_values': self.whisker_gripper.copy() if self.whisker_gripper is not None else None,
-                    'joint_positions': {k: v.copy() for k, v in self.whisker_joints.items()} if self.whisker_joints else None,
-                })
-                if len(self.ghost_trails) > self.max_ghost_trails:
-                    self.ghost_trails.pop(0)
-
-        # Store actions for joint plotting
-        self.current_action_chunk = actions
-
-        # Forward simulate to get predicted positions
-        result = self.forward_simulate_chunk(actions)
-        self.whisker_points = result['ee_positions']
-        self.whisker_gripper = result['gripper_values']
-        self.whisker_joints = result['joint_positions']
-        self.whisker_moving_jaw = result.get('moving_jaw_positions')
+        self.actual_path_tracker.record(pos)
 
     def clear_trails(self):
-        """Clear ghost trails and actual path (call on episode reset)."""
+        """Clear all trails and whiskers (call on episode reset)."""
         self.ghost_trails.clear()
-        self.actual_path.clear()
+        self.actual_path_tracker.clear()
         self.whisker_points = None
 
-    def _add_line_segment(self, scene: mujoco.MjvScene, p1: np.ndarray, p2: np.ndarray,
-                           color: np.ndarray, radius: float) -> bool:
-        """Add a single line segment to scene. Returns False if scene is full."""
-        if scene.ngeom >= scene.maxgeom:
-            return False
+    def draw_actual_path(self, scene: mujoco.MjvScene):
+        """Draw the actual path taken (updates every step)."""       
+        actual_pts = self.actual_path_tracker.get_points()
+        if len(actual_pts) >= 2:
+            self.renderer.draw_path(scene, actual_pts, self.actual_path_color, self.ghost_radius, max_segments=60)
 
-        g = scene.geoms[scene.ngeom]
-        mujoco.mjv_initGeom(
-            g,
-            mujoco.mjtGeom.mjGEOM_CAPSULE,
-            np.zeros(3, dtype=np.float64),
-            np.zeros(3, dtype=np.float64),
-            np.eye(3, dtype=np.float64).flatten(),
-            color.astype(np.float64),
-        )
-        mujoco.mjv_connector(
-            g,
-            mujoco.mjtGeom.mjGEOM_CAPSULE,
-            radius,
-            p1.astype(np.float64),
-            p2.astype(np.float64),
-        )
-        scene.ngeom += 1
-        return True
+    def draw_whisker(self, scene: mujoco.MjvScene):
+        """Draw current whisker prediction and ghost trails."""
+        # Ghost trails (older = more faded)
+        for i, ghost_pts in enumerate(self.ghost_trails):
+            if ghost_pts is None or len(ghost_pts) < 2:
+                continue
+            age_factor = (i + 1) / max(len(self.ghost_trails), 1)
+            alpha = self.ghost_color[3] * (age_factor ** 2)
+            color = (self.ghost_color[0], self.ghost_color[1], self.ghost_color[2], alpha)
+            self.renderer.draw_path(scene, ghost_pts, color, self.ghost_radius, max_segments=20)
 
-    def add_whiskers_to_scene(self, scene: mujoco.MjvScene, show_ghosts: bool = True,
-                               show_actual_path: bool = True, actual_path_limit: int = None,
-                               ghost_trails_limit: int = None):
-        """Add whisker geometry to the MuJoCo scene for rendering.
+        # Current whisker
+        if self.whisker_points is not None and len(self.whisker_points) >= 2:
+            self.renderer.draw_path(scene, self.whisker_points, self.whisker_color, self.whisker_radius, max_segments=30)
 
-        Args:
-            scene: MuJoCo scene to add geometry to
-            show_ghosts: Whether to show ghost trails of past predictions
-            show_actual_path: Whether to show the actual path taken
-            actual_path_limit: Only show first N points of actual path (for history viewing)
-            ghost_trails_limit: Only show first N ghost trails (for history viewing)
-        """
-        # First render ghost trails (oldest first, so newer ones are on top)
-        ghost_trails_to_show = self.ghost_trails[:ghost_trails_limit] if ghost_trails_limit else self.ghost_trails
-        if show_ghosts and ghost_trails_to_show:
-            for trail_idx, ghost_data in enumerate(ghost_trails_to_show):
-                # Handle both old format (array) and new format (dict)
-                if isinstance(ghost_data, dict):
-                    ghost_pts = ghost_data.get('ee_positions')
-                else:
-                    ghost_pts = ghost_data  # Old format compatibility
-
-                if ghost_pts is None or len(ghost_pts) < 2:
-                    continue
-
-                # Fade older ghosts very aggressively - only recent ones visible
-                age_factor = (trail_idx + 1) / len(ghost_trails_to_show)  # 0->1 as newer
-                # Very aggressive fade - older trails nearly invisible
-                base_alpha = self.ghost_color[3] * (age_factor ** 2.5)
-
-                # Shift color slightly for older trails (more purple/faded)
-                color_fade = 1.0 - (1.0 - age_factor) * 0.3
-                r = self.ghost_color[0] * color_fade
-                g = self.ghost_color[1] * color_fade
-                b = self.ghost_color[2]
-
-                # Sample every few points to reduce geometry count
-                step = max(1, len(ghost_pts) // 20)  # More segments for smoother trails
-                for i in range(0, len(ghost_pts) - step, step):
-                    # Fade along the trail too
-                    dist_factor = 1.0 - (i / len(ghost_pts)) * 0.4
-                    alpha = base_alpha * dist_factor
-                    color = np.array([r, g, b, alpha])
-
-                    if not self._add_line_segment(scene, ghost_pts[i], ghost_pts[min(i+step, len(ghost_pts)-1)],
-                                                   color, self.ghost_radius):
-                        break
-
-        # Render actual path taken (orange line showing where robot actually went)
-        actual_path_to_show = self.actual_path[:actual_path_limit] if actual_path_limit else self.actual_path
-        if show_actual_path and len(actual_path_to_show) >= 2:
-            # Sample to reduce geometry count but keep it smooth (60 segments max)
-            step = max(1, len(actual_path_to_show) // 60)
-            for i in range(0, len(actual_path_to_show) - step, step):
-                # Fade older positions
-                age_factor = i / len(actual_path_to_show)
-                alpha = self.actual_path_color[3] * (0.3 + 0.7 * age_factor)
-                color = np.array([
-                    self.actual_path_color[0],
-                    self.actual_path_color[1],
-                    self.actual_path_color[2],
-                    alpha
-                ])
-
-                if not self._add_line_segment(scene, actual_path_to_show[i], actual_path_to_show[min(i+step, len(actual_path_to_show)-1)],
-                                               color, self.ghost_radius):
-                    break
-
-        # Joint arcs removed - now shown in separate matplotlib graph
-
-        # Render current whisker (EE trajectory) - single bright green color
-        if self.whisker_points is None or len(self.whisker_points) < 2:
-            return
-
-        pts = self.whisker_points
-        radius = self.whisker_radius
-
-        # Sample every few points for very long chunks
-        step = max(1, len(pts) // 30)
-        for i in range(0, len(pts) - step, step):
-            # Calculate alpha fade based on distance into future
-            alpha = self.whisker_color[3] * (1.0 - (i / len(pts)) * 0.5)
-            color = np.array([
-                self.whisker_color[0],
-                self.whisker_color[1],
-                self.whisker_color[2],
-                alpha
-            ])
-
-            if not self._add_line_segment(scene, pts[i], pts[min(i+step, len(pts)-1)],
-                                           color, radius):
-                print(f"Warning: max geoms reached ({scene.maxgeom})")
-                break
+    def add_whiskers_to_scene(self, scene: mujoco.MjvScene, show_ghosts: bool = True, show_actual_path: bool = True,
+                               actual_path_limit: int = None, ghost_trails_limit: int = None):
+        """Draw all visualization elements to the MuJoCo scene (legacy method)."""
+        if show_ghosts:
+            self.draw_whisker(scene)
+        if show_actual_path:
+            self.draw_actual_path(scene)
 
 
 def load_act_policy(checkpoint_path: str, device: str):
@@ -683,8 +403,7 @@ def main():
     sim.connect()
 
     # Create visualizer
-    visualizer = WhiskerVisualizer(policy, sim, device=device,
-                                   preprocessor=preprocessor, postprocessor=postprocessor)
+    visualizer = WhiskerVisualizer(sim)
 
     # Get chunk size for display
     chunk_size = policy.config.n_action_steps if hasattr(policy.config, 'n_action_steps') else 100
@@ -761,6 +480,9 @@ def main():
             policy.reset()
             whisker_history.clear()  # Clear history for new episode
             visualizer.clear_trails()  # Clear ghost trails and actual path
+            visualizer.chunk_step = 0  # Reset chunk step counter
+            visualizer.current_action_chunk_normalized = None
+            visualizer.current_action_chunk_denorm = None
             if joint_plotter:
                 joint_plotter.reset()  # Reset joint position history
             history_index = -1
@@ -780,30 +502,22 @@ def main():
                         sim.mj_data.qpos[:] = hist['qpos']
                         sim.mj_data.qvel[:] = hist['qvel']
                         mujoco.mj_forward(sim.mj_model, sim.mj_data)
-                        # Update joint plotter with historical action chunk
+                        # Update joint plotter
                         if joint_plotter and hist.get('action_chunk') is not None:
-                            executed = hist.get('executed_in_chunk', 0)
-                            joint_plotter.update(hist['action_chunk'], executed_steps=executed)
-                        # Show whiskers from that moment using saved snapshots
+                            joint_plotter.update(hist['action_chunk'], executed_steps=hist.get('executed_in_chunk', 0))
+                        # Draw historical state
                         with viewer.lock():
                             viewer.user_scn.ngeom = 0
-                            # Temporarily swap in the historical state
                             saved_whiskers = visualizer.whisker_points
-                            saved_gripper = visualizer.whisker_gripper
-                            saved_joints = visualizer.whisker_joints
-                            saved_path = visualizer.actual_path
                             saved_ghosts = visualizer.ghost_trails
                             visualizer.whisker_points = hist['whiskers']
-                            visualizer.whisker_gripper = hist.get('gripper', saved_gripper)
-                            visualizer.whisker_joints = hist.get('joints', saved_joints)
-                            visualizer.actual_path = hist.get('actual_path', saved_path)
-                            visualizer.ghost_trails = hist.get('ghost_trails', saved_ghosts)
-                            visualizer.add_whiskers_to_scene(viewer.user_scn)
-                            # Restore current state
+                            visualizer.ghost_trails = hist.get('ghost_trails', [])
+                            visualizer.draw_whisker(viewer.user_scn)
+                            if hist.get('actual_path'):
+                                from utils.mujoco_viz import MujocoPathRenderer
+                                MujocoPathRenderer.draw_path(viewer.user_scn, np.array(hist['actual_path']),
+                                                              visualizer.actual_path_color, visualizer.ghost_radius)
                             visualizer.whisker_points = saved_whiskers
-                            visualizer.whisker_gripper = saved_gripper
-                            visualizer.whisker_joints = saved_joints
-                            visualizer.actual_path = saved_path
                             visualizer.ghost_trails = saved_ghosts
                     viewer.sync()
                     time.sleep(0.05)
@@ -819,140 +533,102 @@ def main():
                 obs = sim.get_observation()
                 t_obs = time.perf_counter() - t0
 
-                # Get action FIRST, then compute whiskers from the ACTUAL actions being executed
-                # This ensures whiskers match the real trajectory
+                # Get action from our managed chunk (not the policy's queue)
+                # This ensures whiskers match exactly what we execute
                 t0 = time.perf_counter()
-                queue_was_empty = len(policy._action_queue) == 0
+                n_action_steps = policy.config.n_action_steps
 
-                batch = visualizer._prepare_obs(obs)
+                batch = visualizer._prepare_obs(obs, device)
                 if preprocessor is not None:
                     batch = preprocessor(batch)
 
                 # Record ACTUAL joint positions in MODEL-NORMALIZED space
-                # This allows proper comparison with model output (before postprocessor)
                 if joint_plotter:
-                    # Extract normalized state from preprocessed batch
                     actual_normalized = batch["observation.state"].cpu().numpy().flatten()
                     joint_plotter.record_actual(actual_normalized)
+
+                # Check if we need a new prediction
+                need_new_chunk = (visualizer.current_action_chunk_denorm is None or
+                                  visualizer.chunk_step >= n_action_steps)
+
+                # ===== GET CHUNK (only when needed) =====
                 with torch.no_grad():
-                    action = policy.select_action(batch)
+                    if need_new_chunk:
+                        print(f"  [GetChunk] step={step}")
+                        full_chunk_tensor = policy.predict_action_chunk(batch)
+                        full_chunk_tensor = full_chunk_tensor.squeeze(0)
 
-                # If queue was empty, select_action just filled it with a new chunk
-                # Capture the ACTUAL actions that will be executed for whisker visualization
-                if queue_was_empty:
-                    # Reconstruct the full chunk: current action + remaining queue
-                    # The queue now has n_action_steps-1 actions (we just popped one)
-                    remaining_actions = list(policy._action_queue)
+                        full_chunk_normalized = full_chunk_tensor.cpu().numpy()
+                        visualizer.current_action_chunk_normalized = full_chunk_normalized
 
-                    # Build NORMALIZED chunk for joint plotter (model-normalized space)
-                    current_action_norm = action.cpu().numpy().flatten()
-                    remaining_norm = [a.cpu().numpy().flatten() for a in remaining_actions]
-                    full_chunk_normalized = np.vstack([current_action_norm] + remaining_norm)
+                        if postprocessor is not None:
+                            full_chunk_denorm = np.array([
+                                postprocessor(full_chunk_tensor[i]).cpu().numpy().flatten()
+                                for i in range(full_chunk_tensor.shape[0])
+                            ])
+                        else:
+                            full_chunk_denorm = full_chunk_normalized.copy()
 
-                    # Build DENORMALIZED chunk for whisker forward simulation (robot space)
-                    if postprocessor is not None:
-                        current_action_denorm = postprocessor(action).cpu().numpy().flatten()
-                        remaining_denorm = [postprocessor(a).cpu().numpy().flatten() for a in remaining_actions]
-                        full_chunk_denorm = np.vstack([current_action_denorm] + remaining_denorm)
-                    else:
-                        full_chunk_denorm = full_chunk_normalized
+                        visualizer.current_action_chunk_denorm = full_chunk_denorm
+                        visualizer.chunk_step = 0
 
-                    # Forward simulate the ACTUAL chunk to get whisker positions
-                    visualizer.update_whiskers_from_actions(full_chunk_denorm)
+                        # ===== CALCULATE FK (only when new chunk) =====
+                        print(f"  [CalculateFK] {len(full_chunk_denorm)} positions")
+                        visualizer.update_whiskers_from_actions(full_chunk_denorm)
 
-                    # Store normalized chunk for joint plotter
-                    visualizer.current_action_chunk_normalized = full_chunk_normalized
+                        # ===== DRAW WHISKER (only when new chunk) =====
+                        print(f"  [DrawWhisker] {len(visualizer.whisker_points)} pts, first={visualizer.whisker_points[0]}, last={visualizer.whisker_points[-1]}")
 
-                    # Debug: show whisker info and compare with actual
-                    if visualizer.whisker_points is not None:
-                        pts = visualizer.whisker_points
-                        print(f"    Whiskers: {len(pts)} points, range: [{pts.min():.3f}, {pts.max():.3f}]")
-                        print(f"    Whisker start: {pts[0]}")
-                        print(f"    Whisker end:   {pts[-1]}")
-                        print(f"    Action chunk shape: {full_chunk_denorm.shape}")
-                        print(f"    First action: {full_chunk_denorm[0]}")
-                        print(f"    Current EE pos: {sim.mj_data.site_xpos[visualizer.ee_site_id]}")
+                    # Get action from stored chunk
+                    action_normalized = visualizer.current_action_chunk_normalized[visualizer.chunk_step]
+                    action = visualizer.current_action_chunk_denorm[visualizer.chunk_step]
+                    visualizer.chunk_step += 1
 
-                # Record DESIRED action in MODEL-NORMALIZED space (before postprocessor)
-                # This allows proper comparison with normalized observation
-                if joint_plotter:
-                    action_normalized = action.cpu().numpy().flatten()
-                    joint_plotter.record_desired(action_normalized)
-
-                if postprocessor is not None:
-                    action = postprocessor(action)
-                action = action.cpu().numpy().flatten()
+                executed_in_chunk = visualizer.chunk_step
                 t_policy = time.perf_counter() - t0
 
-                # Compute whisker timing and update joint plotter
-                t0 = time.perf_counter()
-                chunk_size = policy.config.n_action_steps
-                executed_in_chunk = chunk_size - len(policy._action_queue)
-                # Use normalized chunk for joint plotter (model-normalized space)
-                if joint_plotter and hasattr(visualizer, 'current_action_chunk_normalized') and visualizer.current_action_chunk_normalized is not None:
+                # Record for joint plotter
+                if joint_plotter:
+                    joint_plotter.record_desired(action_normalized)
                     joint_plotter.update(visualizer.current_action_chunk_normalized, executed_steps=executed_in_chunk)
 
-                # Record history every step for smooth playback
+                # Record history for playback
                 whisker_history.append({
                     'whiskers': visualizer.whisker_points.copy() if visualizer.whisker_points is not None else None,
-                    'gripper': visualizer.whisker_gripper.copy() if visualizer.whisker_gripper is not None else None,
-                    'action_chunk': visualizer.current_action_chunk.copy() if visualizer.current_action_chunk is not None else None,
-                    'ee_pos': visualizer.current_ee_pos.copy() if visualizer.current_ee_pos is not None else None,
+                    'action_chunk': visualizer.current_action_chunk_normalized.copy() if visualizer.current_action_chunk_normalized is not None else None,
                     'qpos': sim.mj_data.qpos.copy(),
                     'qvel': sim.mj_data.qvel.copy(),
                     'step': step,
                     'executed_in_chunk': executed_in_chunk,
-                    'actual_path': [p.copy() for p in visualizer.actual_path],
+                    'actual_path': [p.copy() for p in visualizer.actual_path_tracker.points],
                     'ghost_trails': [g.copy() for g in visualizer.ghost_trails],
                 })
                 if len(whisker_history) > max_history:
                     whisker_history.pop(0)
 
-                t_whiskers = time.perf_counter() - t0
-
-                # Apply action
+                # ===== APPLY ACTION =====
                 t0 = time.perf_counter()
                 action_dict = {m + ".pos": float(action[i]) for i, m in enumerate(MOTOR_NAMES)}
                 sim.send_action(action_dict)
                 t_sim = time.perf_counter() - t0
 
-                # Debug: compare normalized values (first few steps only)
-                if step < 3 and joint_plotter:
-                    print(f"    DEBUG Step {step} (model-normalized space):")
-                    print(f"      Obs (actual):    {joint_plotter.actual_history[-1][1] if joint_plotter.actual_history else 'N/A'}")
-                    print(f"      Action (desired): {joint_plotter.desired_history[-1][1] if joint_plotter.desired_history else 'N/A'}")
-
-                # Record actual EE position every step for smooth path
+                # ===== RECORD PATH (every step) =====
                 visualizer.record_actual_position()
 
-                # Debug: compare whisker prediction vs actual at key steps
-                if step < 5 or step % 20 == 0:
-                    actual_ee = sim.mj_data.site_xpos[visualizer.ee_site_id].copy()
-                    if visualizer.whisker_points is not None and executed_in_chunk < len(visualizer.whisker_points):
-                        predicted_ee = visualizer.whisker_points[executed_in_chunk]
-                        diff = np.linalg.norm(actual_ee - predicted_ee)
-                        print(f"    Step {step}: predicted={predicted_ee}, actual={actual_ee}, diff={diff:.4f}m")
-
-                # Add whiskers to scene and sync viewer
+                # ===== RENDER SCENE (every step - MuJoCo requires redraw) =====
                 t0 = time.perf_counter()
                 with viewer.lock():
-                    # Clear previous custom geometry
                     viewer.user_scn.ngeom = 0
-                    # Add new whiskers
-                    visualizer.add_whiskers_to_scene(viewer.user_scn)
-                    # Debug: print geom count on first step
-                    if step == 0:
-                        print(f"    Scene geoms added: {viewer.user_scn.ngeom}")
-
+                    visualizer.draw_whisker(viewer.user_scn)
+                    visualizer.draw_actual_path(viewer.user_scn)
                 viewer.sync()
                 t_render = time.perf_counter() - t0
 
                 t_loop = time.perf_counter() - t_loop_start
 
-                # Print timing every 10 steps
+                # Status every 10 steps
                 if step % 10 == 0:
-                    repredict_marker = " *REPREDICT*" if queue_was_empty else ""
-                    print(f"  Step {step} [{executed_in_chunk}/{chunk_size}]: loop={t_loop*1000:.1f}ms | obs={t_obs*1000:.1f} whiskers={t_whiskers*1000:.1f} policy={t_policy*1000:.1f} sim={t_sim*1000:.1f} render={t_render*1000:.1f}{repredict_marker}")
+                    print(f"  Step {step} [{executed_in_chunk}/{n_action_steps}]: {t_loop*1000:.1f}ms")
 
                 # Check task completion
                 if sim.is_task_complete():
@@ -966,28 +642,24 @@ def main():
                             sim.mj_data.qpos[:] = hist['qpos']
                             sim.mj_data.qvel[:] = hist['qvel']
                             mujoco.mj_forward(sim.mj_model, sim.mj_data)
-                            # Update joint plotter with historical action chunk
+                            # Update joint plotter
                             if joint_plotter and hist.get('action_chunk') is not None:
-                                executed = hist.get('executed_in_chunk', 0)
-                                joint_plotter.update(hist['action_chunk'], executed_steps=executed)
-                            # Show whiskers from that moment using saved snapshots
+                                joint_plotter.update(hist['action_chunk'], executed_steps=hist.get('executed_in_chunk', 0))
+                            # Draw historical state
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
+                                # Temporarily swap state for drawing
                                 saved_whiskers = visualizer.whisker_points
-                                saved_gripper = visualizer.whisker_gripper
-                                saved_joints = visualizer.whisker_joints
-                                saved_path = visualizer.actual_path
                                 saved_ghosts = visualizer.ghost_trails
                                 visualizer.whisker_points = hist['whiskers']
-                                visualizer.whisker_gripper = hist.get('gripper', saved_gripper)
-                                visualizer.whisker_joints = hist.get('joints', saved_joints)
-                                visualizer.actual_path = hist.get('actual_path', saved_path)
-                                visualizer.ghost_trails = hist.get('ghost_trails', saved_ghosts)
-                                visualizer.add_whiskers_to_scene(viewer.user_scn)
+                                visualizer.ghost_trails = hist.get('ghost_trails', [])
+                                visualizer.draw_whisker(viewer.user_scn)
+                                # Draw historical actual path
+                                if hist.get('actual_path'):
+                                    from utils.mujoco_viz import MujocoPathRenderer
+                                    MujocoPathRenderer.draw_path(viewer.user_scn, np.array(hist['actual_path']),
+                                                                  visualizer.actual_path_color, visualizer.ghost_radius)
                                 visualizer.whisker_points = saved_whiskers
-                                visualizer.whisker_gripper = saved_gripper
-                                visualizer.whisker_joints = saved_joints
-                                visualizer.actual_path = saved_path
                                 visualizer.ghost_trails = saved_ghosts
                         viewer.sync()
                         time.sleep(0.05)
