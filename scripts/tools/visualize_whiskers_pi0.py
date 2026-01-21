@@ -6,8 +6,12 @@ Shows predicted future trajectories as faint lines emanating from the robot,
 allowing visual inspection of what the policy is predicting at each timestep.
 Useful for debugging why Pi0 might be failing.
 
+Features:
+    --show-flow: Visualize the flow matching denoising process (10 steps from noise to actions)
+
 Usage:
     python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot
+    python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot --show-flow
     python scripts/tools/visualize_whiskers_pi0.py --checkpoint danbhf/pi0_so101_lerobot_20k --instruction "pick up the block"
 """
 
@@ -41,6 +45,87 @@ from utils.whisker_visualizer import WhiskerVisualizer
 from utils.mujoco_viz import MujocoPathRenderer
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+def sample_actions_with_flow(policy, batch, num_steps=None):
+    """Sample actions while capturing all intermediate denoising steps.
+
+    Returns:
+        final_actions: The final action chunk (same as predict_action_chunk)
+        intermediates: List of (time, x_t) tuples for each denoising step
+    """
+    from lerobot.policies.pi0.modeling_pi0 import make_att_2d_masks
+    from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
+
+    model = policy.model
+    config = policy.config
+
+    if num_steps is None:
+        num_steps = config.num_inference_steps
+
+    # Prepare inputs (same as policy.predict_action_chunk)
+    images, img_masks = policy._preprocess_images(batch)
+    lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+    lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+    state = policy.prepare_state(batch)
+
+    bsize = state.shape[0]
+    device = state.device
+
+    # Sample initial noise
+    actions_shape = (bsize, config.chunk_size, config.max_action_dim)
+    noise = model.sample_noise(actions_shape, device)
+
+    # Embed prefix (images + language) and cache key-values
+    prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
+        images, img_masks, lang_tokens, lang_masks
+    )
+    prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+    prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+    prefix_att_2d_masks_4d = model._prepare_attention_masks_4d(prefix_att_2d_masks)
+    model.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
+
+    _, past_key_values = model.paligemma_with_expert.forward(
+        attention_mask=prefix_att_2d_masks_4d,
+        position_ids=prefix_position_ids,
+        past_key_values=None,
+        inputs_embeds=[prefix_embs, None],
+        use_cache=True,
+    )
+
+    # Denoising loop - capture all intermediates
+    dt = -1.0 / num_steps
+    x_t = noise
+    intermediates = [(1.0, x_t.clone())]  # Step 0: pure noise at t=1.0
+
+    for step in range(num_steps):
+        time_val = 1.0 + step * dt
+        time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
+
+        # Single denoising step
+        v_t = model.denoise_step(
+            state=state,
+            prefix_pad_masks=prefix_pad_masks,
+            past_key_values=past_key_values,
+            x_t=x_t,
+            timestep=time_tensor,
+        )
+
+        x_t = x_t + dt * v_t
+        intermediates.append((time_val + dt, x_t.clone()))
+
+    # Unpad to actual action dimension
+    original_action_dim = config.output_features[ACTION].shape[0]
+    final_actions = x_t[:, :, :original_action_dim]
+
+    # Also unpad intermediates
+    intermediates_unpadded = [
+        (t, actions[:, :, :original_action_dim])
+        for t, actions in intermediates
+    ]
+
+    return final_actions, intermediates_unpadded
 
 
 def load_pi0_policy(checkpoint_path: str, device: str, dataset: str = None):
@@ -130,6 +215,8 @@ def main():
                         help="Dataset for loading normalization stats (if not in checkpoint)")
     parser.add_argument("--rollout-length", type=int, default=None,
                         help="Override n_action_steps (rollout length before re-prediction)")
+    parser.add_argument("--show-flow", action="store_true",
+                        help="Visualize flow matching denoising steps (noise -> actions)")
     args = parser.parse_args()
 
     # Check CUDA availability
@@ -197,6 +284,9 @@ def main():
     print("  EE Whisker: GREEN (predicted trajectory - the one we follow)")
     print("  Ghost trails: BLUE (past predictions)")
     print("  Actual path: ORANGE")
+    if args.show_flow:
+        print("  Flow steps: GREY (faint -> solid) with GREEN final")
+        print(f"    {policy.config.num_inference_steps} denoising steps shown")
     if args.show_joint_graph:
         print("  Joint Graph: Separate window showing all 6 joints (in MODEL-NORMALIZED space)")
         print("    - Black solid: ACTUAL position (observation after preprocessing)")
@@ -260,6 +350,7 @@ def main():
             visualizer.chunk_step = 0
             visualizer.current_action_chunk_normalized = None
             visualizer.current_action_chunk_denorm = None
+            current_flow_whiskers = []  # Persistent storage for flow visualization
             if joint_plotter:
                 joint_plotter.reset()
             history_index = -1
@@ -285,6 +376,24 @@ def main():
                         # Draw historical state
                         with viewer.lock():
                             viewer.user_scn.ngeom = 0
+                            # Draw historical flow whiskers
+                            hist_flow = hist.get('current_flow_whiskers', [])
+                            if args.show_flow and hist_flow:
+                                num_flows = len(hist_flow)
+                                for i, (time_val, fk_points) in enumerate(hist_flow):
+                                    if fk_points is None or len(fk_points) < 2:
+                                        continue
+                                    progress = i / max(num_flows - 1, 1)
+                                    is_final = (i == num_flows - 1)
+                                    if is_final:
+                                        color = (0.2, 1.0, 0.2, 0.9)
+                                        radius = 0.004
+                                    else:
+                                        grey = 0.6 + 0.2 * progress
+                                        alpha = 0.03 + 0.15 * (progress ** 1.2)
+                                        color = (grey, grey, grey, alpha)
+                                        radius = 0.001 + 0.002 * progress
+                                    MujocoPathRenderer.draw_path(viewer.user_scn, fk_points, color, radius, max_segments=30)
                             saved_whiskers = visualizer.whisker_points
                             saved_ghosts = visualizer.ghost_trails
                             visualizer.whisker_points = hist['whiskers']
@@ -353,8 +462,38 @@ def main():
                     if need_new_chunk:
                         print(f"  [GetChunk] step={step}")
 
-                        # Get full action chunk from policy
-                        chunk_tensor = policy.predict_action_chunk(batch).squeeze(0)
+                        if args.show_flow:
+                            # Get action chunk with all intermediate denoising steps
+                            chunk_tensor, intermediates = sample_actions_with_flow(policy, batch)
+                            chunk_tensor = chunk_tensor.squeeze(0)
+
+                            # Compute FK for each intermediate step
+                            current_flow_whiskers = []  # Reset for new chunk
+                            print(f"  [Flow] Denoising steps (t=1.0 is noise, t=0.0 is final):")
+                            print(f"         {'Step':>4} | {'t':>5} | {'mean':>8} | {'std':>8} | {'min':>8} | {'max':>8}")
+                            print(f"         {'-'*4}-+-{'-'*5}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
+                            for i, (time_val, inter_actions) in enumerate(intermediates):
+                                inter_actions_squeezed = inter_actions.squeeze(0)
+
+                                # Debug: show statistics of raw (normalized) values
+                                raw_vals = inter_actions_squeezed.cpu().numpy()
+                                print(f"         {i:>4} | {time_val:>5.2f} | {raw_vals.mean():>8.2f} | {raw_vals.std():>8.2f} | {raw_vals.min():>8.2f} | {raw_vals.max():>8.2f}")
+
+                                # Denormalize intermediate
+                                if postprocessor is not None:
+                                    inter_denorm = np.array([
+                                        postprocessor(inter_actions_squeezed[j]).cpu().numpy().flatten()
+                                        for j in range(inter_actions_squeezed.shape[0])
+                                    ])
+                                else:
+                                    inter_denorm = inter_actions_squeezed.cpu().numpy()
+                                # Compute FK positions
+                                inter_fk = visualizer.fk_solver.compute_ee_positions(inter_denorm)
+                                current_flow_whiskers.append((time_val, inter_fk))
+                            print(f"  [Flow] {len(current_flow_whiskers)} trajectories computed")
+                        else:
+                            # Standard prediction
+                            chunk_tensor = policy.predict_action_chunk(batch).squeeze(0)
 
                         # Save normalized version
                         full_chunk_normalized = chunk_tensor.cpu().numpy()
@@ -375,11 +514,8 @@ def main():
                         visualizer.chunk_step = 0
 
                         # ===== CALCULATE FK (only when new chunk) =====
-                        print(f"  [CalculateFK] {len(full_chunk_denorm)} positions")
                         visualizer.update_whiskers_from_actions(full_chunk_denorm)
-
-                        # ===== DRAW WHISKER (only when new chunk) =====
-                        print(f"  [DrawWhisker] {len(visualizer.whisker_points)} pts, first={visualizer.whisker_points[0]}, last={visualizer.whisker_points[-1]}")
+                        print(f"  [DrawWhisker] {len(visualizer.whisker_points)} pts")
 
                     # Get action from stored chunk
                     action_normalized = visualizer.current_action_chunk_normalized[visualizer.chunk_step]
@@ -404,6 +540,7 @@ def main():
                     'executed_in_chunk': executed_in_chunk,
                     'actual_path': [p.copy() for p in visualizer.actual_path_tracker.points],
                     'ghost_trails': [g.copy() for g in visualizer.ghost_trails],
+                    'current_flow_whiskers': [(t, fk.copy()) for t, fk in current_flow_whiskers] if current_flow_whiskers else [],
                 })
                 if len(whisker_history) > max_history:
                     whisker_history.pop(0)
@@ -421,6 +558,31 @@ def main():
                 t0 = time.perf_counter()
                 with viewer.lock():
                     viewer.user_scn.ngeom = 0
+
+                    # Draw flow whiskers if enabled (show denoising progression)
+                    if args.show_flow and current_flow_whiskers:
+                        num_flows = len(current_flow_whiskers)
+                        for i, (time_val, fk_points) in enumerate(current_flow_whiskers):
+                            if fk_points is None or len(fk_points) < 2:
+                                continue
+                            progress = i / max(num_flows - 1, 1)  # 0 = noise, 1 = final
+                            is_final = (i == num_flows - 1)
+
+                            if is_final:
+                                # Final step: bright green, fully opaque, thick
+                                color = (0.2, 1.0, 0.2, 0.9)
+                                radius = 0.004
+                            else:
+                                # Intermediate steps: light greyscale, very faint
+                                grey = 0.6 + 0.2 * progress  # 0.6 (lighter) -> 0.8 (light grey)
+                                alpha = 0.03 + 0.15 * (progress ** 1.2)  # Very faint
+                                color = (grey, grey, grey, alpha)
+                                radius = 0.001 + 0.002 * progress
+
+                            MujocoPathRenderer.draw_path(
+                                viewer.user_scn, fk_points, color, radius, max_segments=30
+                            )
+
                     visualizer.draw_whisker(viewer.user_scn)
                     visualizer.draw_actual_path(viewer.user_scn)
                 viewer.sync()
@@ -447,6 +609,24 @@ def main():
                                 joint_plotter.update(hist['action_chunk'], executed_steps=hist.get('executed_in_chunk', 0))
                             with viewer.lock():
                                 viewer.user_scn.ngeom = 0
+                                # Draw historical flow whiskers
+                                hist_flow = hist.get('current_flow_whiskers', [])
+                                if args.show_flow and hist_flow:
+                                    num_flows = len(hist_flow)
+                                    for i, (time_val, fk_points) in enumerate(hist_flow):
+                                        if fk_points is None or len(fk_points) < 2:
+                                            continue
+                                        progress = i / max(num_flows - 1, 1)
+                                        is_final = (i == num_flows - 1)
+                                        if is_final:
+                                            color = (0.2, 1.0, 0.2, 0.9)
+                                            radius = 0.004
+                                        else:
+                                            grey = 0.6 + 0.2 * progress
+                                            alpha = 0.03 + 0.15 * (progress ** 1.2)
+                                            color = (grey, grey, grey, alpha)
+                                            radius = 0.001 + 0.002 * progress
+                                        MujocoPathRenderer.draw_path(viewer.user_scn, fk_points, color, radius, max_segments=30)
                                 saved_whiskers = visualizer.whisker_points
                                 saved_ghosts = visualizer.ghost_trails
                                 visualizer.whisker_points = hist['whiskers']
