@@ -6,12 +6,21 @@ Shows overlapping chunk predictions as whiskers converging to the ensembled acti
 
 Usage:
     python scripts/tools/visualize_temporal_ensemble_live.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
+
+    # With recording:
+    python scripts/tools/visualize_temporal_ensemble_live.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000 --record
+
+Controls:
+    1-5: Switch camera viewpoints
+    R: Toggle recording
+    ESC/Q: Quit
 """
 
 import argparse
 import sys
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 import mujoco
@@ -28,6 +37,15 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from lerobot_robot_sim import SO100Sim, SO100SimConfig
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+# Camera viewpoint presets: (azimuth, elevation, distance, lookat)
+CAMERA_PRESETS = {
+    1: {"name": "Overview", "azimuth": 135, "elevation": -25, "distance": 1.2, "lookat": [0.2, 0.0, 0.1]},
+    2: {"name": "Side View", "azimuth": 90, "elevation": -15, "distance": 0.9, "lookat": [0.25, 0.0, 0.15]},
+    3: {"name": "Front View", "azimuth": 180, "elevation": -20, "distance": 0.8, "lookat": [0.25, 0.0, 0.1]},
+    4: {"name": "Top Down", "azimuth": 90, "elevation": -89, "distance": 0.8, "lookat": [0.22, 0.0, 0.0]},
+    5: {"name": "Close Up", "azimuth": 120, "elevation": -10, "distance": 0.5, "lookat": [0.25, 0.1, 0.15]},
+}
 
 
 def load_act_policy(model_path: Path, device: torch.device):
@@ -165,6 +183,18 @@ def compute_ee_positions(mj_model, mj_data, joint_angles_sequence, ee_site_id):
     return np.array(positions)
 
 
+def set_camera(viewer, preset_num):
+    """Set camera to a preset viewpoint."""
+    if preset_num not in CAMERA_PRESETS:
+        return
+    preset = CAMERA_PRESETS[preset_num]
+    viewer.cam.azimuth = preset["azimuth"]
+    viewer.cam.elevation = preset["elevation"]
+    viewer.cam.distance = preset["distance"]
+    viewer.cam.lookat[:] = preset["lookat"]
+    print(f"  Camera: {preset['name']}")
+
+
 def run_live(
     policy,
     preprocessor,
@@ -172,6 +202,8 @@ def run_live(
     device: torch.device,
     max_steps: int = 300,
     ensemble_coeff: float = 0.01,
+    record: bool = False,
+    output_dir: Path = None,
 ):
     """Run with live MuJoCo visualization of temporal ensembling."""
 
@@ -194,6 +226,14 @@ def run_live(
     ee_site_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
     print(f"EE site ID: {ee_site_id} (gripperframe)")
 
+    # Recording setup
+    recording = record
+    if output_dir is None:
+        output_dir = REPO_ROOT / "outputs" / "recordings" / f"temporal_ensemble_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if recording:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Recording to: {output_dir}")
+
     print("\n" + "="*60)
     print("TEMPORAL ENSEMBLING LIVE VISUALIZATION")
     print("="*60)
@@ -202,14 +242,45 @@ def run_live(
     print("\nWhisker colors:")
     print("  GREEN = Ensembled trajectory (what we execute)")
     print("  GREY  = Individual chunk predictions (overlapping)")
-    print("\nPress ESC or Q to quit")
+    print("\nControls:")
+    print("  1-5: Switch camera viewpoints")
+    print("  R: Toggle recording" + (" (ON)" if recording else ""))
+    print("  ESC/Q: Quit")
     print("="*60 + "\n")
 
     step = 0
     success = False
+    current_camera = 1
+    frame_count = 0
 
-    with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data) as viewer:
+    # For keyboard callback
+    key_pressed = {"camera": None, "toggle_record": False}
+
+    def key_callback(keycode):
+        nonlocal recording
+        # Number keys 1-5 for camera presets
+        if 49 <= keycode <= 53:  # Keys 1-5
+            key_pressed["camera"] = keycode - 48
+        elif keycode == 82:  # 'R' key
+            key_pressed["toggle_record"] = True
+
+    with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
+        # Set initial camera
+        set_camera(viewer, current_camera)
+
         while viewer.is_running() and step < max_steps:
+            # Handle key presses
+            if key_pressed["camera"] is not None:
+                current_camera = key_pressed["camera"]
+                set_camera(viewer, current_camera)
+                key_pressed["camera"] = None
+
+            if key_pressed["toggle_record"]:
+                recording = not recording
+                if recording and not output_dir.exists():
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                print(f"  Recording: {'ON' if recording else 'OFF'}")
+                key_pressed["toggle_record"] = False
             # Get observation and predict
             obs = sim.get_observation()
             batch = prepare_obs(obs, device)
@@ -285,6 +356,27 @@ def run_live(
                         draw_whisker(viewer, ensembled_positions, (0.0, 0.9, 0.0), alpha=0.9, radius=0.004)
 
             viewer.sync()
+
+            # Record frame if recording
+            if recording:
+                # Capture from viewer using PIL
+                try:
+                    import PIL.Image as Image
+                    # Get pixels from viewer
+                    width, height = viewer.viewport.width, viewer.viewport.height
+                    pixels = np.zeros((height, width, 3), dtype=np.uint8)
+                    mujoco.mjr_readPixels(pixels, None, viewer.viewport, viewer.ctx)
+                    # Flip vertically (OpenGL convention)
+                    pixels = np.flipud(pixels)
+                    # Save frame
+                    frame_path = output_dir / f"frame_{frame_count:05d}.png"
+                    Image.fromarray(pixels).save(frame_path)
+                    frame_count += 1
+                except Exception as e:
+                    if frame_count == 0:
+                        print(f"  Recording error: {e}")
+                        recording = False
+
             step += 1
             time.sleep(0.02)
 
@@ -292,6 +384,9 @@ def run_live(
 
     print(f"\nEpisode ended at step {step}")
     print(f"Result: {'SUCCESS' if success else 'FAILURE'}")
+    if frame_count > 0:
+        print(f"Recorded {frame_count} frames to {output_dir}")
+        print(f"To create video: ffmpeg -framerate 30 -i {output_dir}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
 
     return success, step
 
@@ -303,6 +398,8 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--coeff", type=float, default=0.01, help="Ensemble coefficient")
+    parser.add_argument("--record", action="store_true", help="Start with recording enabled")
+    parser.add_argument("--output-dir", type=str, default=None, help="Output directory for recordings")
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -310,10 +407,14 @@ def main():
     model_path = Path(args.model_path) / args.checkpoint
     policy, preprocessor, postprocessor = load_act_policy(model_path, device)
 
+    output_dir = Path(args.output_dir) if args.output_dir else None
+
     success, steps = run_live(
         policy, preprocessor, postprocessor, device,
         max_steps=args.max_steps,
         ensemble_coeff=args.coeff,
+        record=args.record,
+        output_dir=output_dir,
     )
 
 
