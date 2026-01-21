@@ -515,6 +515,139 @@ def visualize_heatmap_from_results(results: dict):
     print("Visualization closed")
 
 
+def visualize_scatter_from_csv(csv_path: Path, sphere_radius: float = 0.008, alpha: float = 0.4):
+    """Visualize individual episodes as colored spheres in MuJoCo.
+
+    Green spheres = success, Red spheres = failure.
+    Overlapping spheres create darker regions showing density.
+    """
+    # Load episode data from CSV
+    episodes = []
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            episodes.append({
+                "x": float(row["block_x"]),
+                "y": float(row["block_y"]),
+                "success": row["success"].lower() == "true",
+            })
+
+    successes = sum(1 for ep in episodes if ep["success"])
+    total = len(episodes)
+
+    # Create simulation for visualization
+    scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+    sim_config = SO100SimConfig(
+        scene_xml=str(scene_path),
+        sim_cameras=["overhead_cam", "wrist_cam"],
+        camera_width=640,
+        camera_height=480,
+    )
+    sim = SO100Sim(sim_config)
+    sim.connect()
+    sim.reset_scene(randomize=False)
+
+    # Hide the block by moving it far away
+    sim.set_duplo_position(10.0, 10.0, 0.0)
+
+    print(f"\nVisualizing {total} episodes as scatter plot")
+    print(f"Success rate: {successes/total*100:.1f}% ({successes}/{total})")
+    print(f"\nColor legend: GREEN = success, RED = failure")
+    print(f"Overlapping spheres create darker regions")
+    print("Press Q or ESC to close\n")
+
+    # Training position marker
+    TRAINING_POS = (0.217, 0.225)
+
+    # Pre-compute distance ring points (blue circles at 5cm, 10cm, 15cm, etc.)
+    distance_rings = []
+    ring_radii = [0.05, 0.10, 0.15, 0.20]  # 5cm, 10cm, 15cm, 20cm
+    points_per_ring = 60  # Number of points to draw each ring
+    ring_marker_radius = 0.003  # Size of each marker on the ring
+
+    for radius in ring_radii:
+        for i in range(points_per_ring):
+            angle = 2 * np.pi * i / points_per_ring
+            x = TRAINING_POS[0] + radius * np.cos(angle)
+            y = TRAINING_POS[1] + radius * np.sin(angle)
+            distance_rings.append((x, y))
+
+    with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data) as viewer:
+        while viewer.is_running():
+            with viewer.lock():
+                viewer.user_scn.ngeom = 0
+
+                # Draw episode circles first (flat ellipsoids on the floor)
+                for ep in episodes:
+                    if viewer.user_scn.ngeom >= viewer.user_scn.maxgeom - 5:
+                        break
+
+                    # Color based on success
+                    if ep["success"]:
+                        color = (0.0, 0.85, 0.0, alpha)  # Green
+                    else:
+                        color = (0.85, 0.0, 0.0, alpha)  # Red
+
+                    g = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+                    # Flat ellipsoid: radius in x/y, nearly zero in z
+                    mujoco.mjv_initGeom(
+                        g,
+                        mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+                        np.array([sphere_radius, sphere_radius, 0.0001], dtype=np.float64),
+                        np.array([ep["x"], ep["y"], 0.0005], dtype=np.float64),
+                        np.eye(3, dtype=np.float64).flatten(),
+                        np.array(color, dtype=np.float64),
+                    )
+                    viewer.user_scn.ngeom += 1
+
+                # Draw distance rings on top (blue circles)
+                for (rx, ry) in distance_rings:
+                    if viewer.user_scn.ngeom >= viewer.user_scn.maxgeom - 10:
+                        break
+                    g = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+                    mujoco.mjv_initGeom(
+                        g,
+                        mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+                        np.array([ring_marker_radius, ring_marker_radius, 0.0001], dtype=np.float64),
+                        np.array([rx, ry, 0.001], dtype=np.float64),  # Higher z to be on top
+                        np.eye(3, dtype=np.float64).flatten(),
+                        np.array([0.2, 0.4, 1.0, 0.9], dtype=np.float64),  # Blue, more opaque
+                    )
+                    viewer.user_scn.ngeom += 1
+
+                # Draw training position marker (blue dot)
+                if viewer.user_scn.ngeom < viewer.user_scn.maxgeom:
+                    g = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+                    mujoco.mjv_initGeom(
+                        g,
+                        mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+                        np.array([0.012, 0.012, 0.001], dtype=np.float64),
+                        np.array([TRAINING_POS[0], TRAINING_POS[1], 0.002], dtype=np.float64),
+                        np.eye(3, dtype=np.float64).flatten(),
+                        np.array([0.0, 0.0, 1.0, 1.0], dtype=np.float64),  # Blue
+                    )
+                    viewer.user_scn.ngeom += 1
+
+                # Draw bowl position marker
+                if viewer.user_scn.ngeom < viewer.user_scn.maxgeom:
+                    g = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+                    mujoco.mjv_initGeom(
+                        g,
+                        mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+                        np.array([0.01, 0.01, 0.001], dtype=np.float64),
+                        np.array([0.217, -0.225, 0.002], dtype=np.float64),
+                        np.eye(3, dtype=np.float64).flatten(),
+                        np.array([0.5, 0.5, 0.5, 0.9], dtype=np.float64),  # Gray
+                    )
+                    viewer.user_scn.ngeom += 1
+
+            viewer.sync()
+            time.sleep(0.05)
+
+    sim.disconnect()
+    print("Visualization closed")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate spatial generalization")
     parser.add_argument("path", type=str, nargs="?",
@@ -547,6 +680,12 @@ def main():
                         help="Visualize results from JSON file instead of running eval")
     parser.add_argument("--visualize-csv", action="store_true",
                         help="Visualize results from CSV file instead of running eval")
+    parser.add_argument("--scatter", action="store_true",
+                        help="Visualize as scatter plot (spheres) from CSV file")
+    parser.add_argument("--sphere-radius", type=float, default=0.008,
+                        help="Sphere radius for scatter visualization (default: 0.008)")
+    parser.add_argument("--sphere-alpha", type=float, default=0.4,
+                        help="Sphere transparency for scatter visualization (default: 0.4)")
     args = parser.parse_args()
 
     if args.visualize:
@@ -561,6 +700,16 @@ def main():
         results = load_results_from_csv(Path(args.path))
         # Visualize using the same heatmap function but pass results directly
         visualize_heatmap_from_results(results)
+        return
+
+    if args.scatter:
+        if not args.path:
+            parser.error("--scatter requires a CSV path")
+        visualize_scatter_from_csv(
+            Path(args.path),
+            sphere_radius=args.sphere_radius,
+            alpha=args.sphere_alpha
+        )
         return
 
     if not args.path:
