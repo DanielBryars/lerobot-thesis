@@ -209,18 +209,13 @@ class FKSolver:
         saved_qvel = self.mj_data.qvel.copy()
 
         positions = []
-        n = len(joint_angles_sequence)
         # Arm joints start at qpos[7] (after duplo's free joint at qpos[0:7])
         arm_joint_start = 7
-        for i, joint_angles in enumerate(joint_angles_sequence):
+        for joint_angles in joint_angles_sequence:
             # Convert degrees to radians for MuJoCo
             self.mj_data.qpos[arm_joint_start:arm_joint_start+6] = np.radians(joint_angles[:6])
             mujoco.mj_forward(self.mj_model, self.mj_data)
-            pos = self.mj_data.site_xpos[self.ee_site_id].copy()
-            positions.append(pos)
-            # Debug first and last iteration
-            if i == 0 or i == n - 1:
-                print(f"  FK[{i}]: joints={joint_angles[:3]}... -> site={pos}")
+            positions.append(self.mj_data.site_xpos[self.ee_site_id].copy())
 
         # Restore state
         self.mj_data.qpos[:] = saved_qpos
