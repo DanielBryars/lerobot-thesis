@@ -189,6 +189,7 @@ def run_evaluation(
     visualize: bool = False,
     mujoco_viewer: bool = False,
     dataset_repo_id: str = None,
+    temporal_ensemble_coeff: float = None,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -209,6 +210,8 @@ def run_evaluation(
         visualize: Whether to show live visualization (OpenCV window showing camera feeds)
         mujoco_viewer: Whether to open the MuJoCo 3D viewer window
         dataset_repo_id: Optional dataset repo ID to show training info
+        temporal_ensemble_coeff: If set, enables temporal ensembling with this coefficient
+            (e.g., 0.01). Predicts every step and averages overlapping chunks.
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -241,6 +244,16 @@ def run_evaluation(
         except AttributeError:
             # Not a SmolVLA model, skip tokenization
             pass
+
+    # Temporal ensembling setup
+    use_ensemble = temporal_ensemble_coeff is not None
+    ensemble_weights = None
+    chunk_size = None
+    if use_ensemble:
+        chunk_size = policy.config.chunk_size
+        ensemble_weights = np.exp(-temporal_ensemble_coeff * np.arange(chunk_size))
+        if verbose:
+            print(f"  Temporal ensembling ENABLED (coeff={temporal_ensemble_coeff}, chunk_size={chunk_size})")
 
     # Determine if using EE action space based on action dimension
     if action_dim is None:
@@ -371,6 +384,12 @@ def run_evaluation(
         print(f"  Episode {ep+1}/{num_episodes}...", end=" ", flush=True)
         policy.reset()  # Reset action chunking state
         sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
+
+        # Reset temporal ensembling state for this episode
+        if use_ensemble:
+            from collections import deque
+            chunk_history = deque(maxlen=chunk_size)
+            ensemble_step = 0
         ep_start = time.time()
         trajectory = []  # Track object position for failure analysis
         task_completed = False
@@ -449,10 +468,38 @@ def run_evaluation(
             batch = preprocessor(batch)
 
             with torch.no_grad():
-                action = policy.select_action(batch)
+                if use_ensemble:
+                    # Temporal ensembling: predict full chunk and average with history
+                    chunk = policy.predict_action_chunk(batch)
+                    chunk = postprocessor(chunk)
+                    chunk_np = chunk.cpu().numpy()[0]  # (chunk_size, action_dim)
 
-            # Apply postprocessor (denormalizes action)
-            action = postprocessor(action)
+                    # Add chunk to history
+                    chunk_history.append((ensemble_step, chunk_np.copy()))
+
+                    # Compute ensembled action for current step
+                    predictions = []
+                    weights = []
+                    chunk_list = list(chunk_history)
+                    for i, (chunk_start, chunk_actions) in enumerate(chunk_list):
+                        idx_in_chunk = ensemble_step - chunk_start
+                        if 0 <= idx_in_chunk < len(chunk_actions):
+                            predictions.append(chunk_actions[idx_in_chunk])
+                            age = len(chunk_list) - 1 - i
+                            weights.append(ensemble_weights[min(age, len(ensemble_weights)-1)])
+
+                    predictions = np.array(predictions)
+                    weights = np.array(weights)
+                    weights = weights / weights.sum()
+                    action_np = (predictions * weights[:, None]).sum(axis=0)
+                    ensemble_step += 1
+
+                    # Skip postprocessor since we already applied it to the chunk
+                    action = torch.from_numpy(action_np)
+                else:
+                    action = policy.select_action(batch)
+                    # Apply postprocessor (denormalizes action)
+                    action = postprocessor(action)
 
             # Convert action to numpy
             action_np = action.cpu().numpy()

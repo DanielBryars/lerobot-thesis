@@ -10,7 +10,7 @@ Usage:
 Controls:
     SPACE / RIGHT: Next frame
     LEFT: Previous frame (rewinds and replays to that point)
-    1-5: Switch camera viewpoints
+    1-6: Switch camera viewpoints (6 = tracking camera)
     R: Toggle recording
     P: Play/Pause continuous playback
     ESC/Q: Quit
@@ -38,14 +38,33 @@ from lerobot_robot_sim import SO100Sim, SO100SimConfig
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
-# Camera viewpoint presets
+# Camera viewpoint presets (camera 6 is tracking)
 CAMERA_PRESETS = {
     1: {"name": "Overview", "azimuth": 135, "elevation": -25, "distance": 1.2, "lookat": [0.2, 0.0, 0.1]},
     2: {"name": "Side View", "azimuth": 90, "elevation": -15, "distance": 0.9, "lookat": [0.25, 0.0, 0.15]},
     3: {"name": "Front View", "azimuth": 180, "elevation": -20, "distance": 0.8, "lookat": [0.25, 0.0, 0.1]},
     4: {"name": "Top Down", "azimuth": 90, "elevation": -89, "distance": 0.8, "lookat": [0.22, 0.0, 0.0]},
     5: {"name": "Close Up", "azimuth": 120, "elevation": -10, "distance": 0.5, "lookat": [0.25, 0.1, 0.15]},
+    6: {"name": "Tracking", "azimuth": 135, "elevation": -20, "distance": 0.35, "lookat": None, "tracking": True},
 }
+
+
+class SmoothTracker:
+    """Smooth camera tracking with exponential moving average."""
+
+    def __init__(self, smoothing: float = 0.15):
+        self.smoothing = smoothing
+        self.current_lookat = None
+
+    def update(self, target_pos: np.ndarray) -> np.ndarray:
+        if self.current_lookat is None:
+            self.current_lookat = target_pos.copy()
+        else:
+            self.current_lookat = (1 - self.smoothing) * self.current_lookat + self.smoothing * target_pos
+        return self.current_lookat.copy()
+
+    def reset(self):
+        self.current_lookat = None
 
 
 def load_act_policy(model_path: Path, device: torch.device):
@@ -206,7 +225,7 @@ def draw_all_whiskers(scene, futures, ensembler, mj_model, mj_data, ee_site_id):
             draw_whisker_to_scene(scene, ensembled_positions, (0.0, 0.9, 0.0), alpha=0.9, radius=0.004)
 
 
-def set_camera(viewer, preset_num):
+def set_camera(viewer, preset_num, lookat_override=None):
     """Set camera to a preset viewpoint."""
     if preset_num not in CAMERA_PRESETS:
         return
@@ -214,8 +233,13 @@ def set_camera(viewer, preset_num):
     viewer.cam.azimuth = preset["azimuth"]
     viewer.cam.elevation = preset["elevation"]
     viewer.cam.distance = preset["distance"]
-    viewer.cam.lookat[:] = preset["lookat"]
-    print(f"  Camera: {preset['name']}")
+
+    if lookat_override is not None:
+        viewer.cam.lookat[:] = lookat_override
+    elif preset.get("lookat") is not None:
+        viewer.cam.lookat[:] = preset["lookat"]
+
+    print(f"  Camera: {preset['name']}" + (" (tracking gripper)" if preset.get("tracking") else ""))
 
 
 class FrameState:
@@ -260,6 +284,9 @@ def run_interactive(
     # Find EE site for FK
     ee_site_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
 
+    # Smooth tracker for tracking camera
+    tracker = SmoothTracker(smoothing=0.15)
+
     # Recording setup
     recording = record
     if output_dir is None:
@@ -289,7 +316,7 @@ def run_interactive(
     print("  SPACE/RIGHT : Step forward one frame")
     print("  LEFT        : Step backward (rewind)")
     print("  P           : Play/Pause continuous playback")
-    print("  1-5         : Switch camera viewpoints")
+    print("  1-6         : Switch camera viewpoints (6 = tracking)")
     print("  R           : Toggle recording" + (" (ON)" if recording else ""))
     print("  ESC/Q       : Quit")
     print("\nWhisker colors:")
@@ -323,7 +350,7 @@ def run_interactive(
             key_state["advance"] = True
         elif keycode == 263:  # LEFT
             key_state["rewind"] = True
-        elif 49 <= keycode <= 53:  # 1-5
+        elif 49 <= keycode <= 54:  # 1-6
             key_state["camera"] = keycode - 48
         elif keycode == 82:  # R
             key_state["toggle_record"] = True
@@ -393,11 +420,22 @@ def run_interactive(
         # Compute initial frame
         futures, n_chunks, frame_success = compute_frame(0)
 
+        current_camera = 1
         while viewer.is_running() and current_frame < max_steps:
+            # Get current EE position for tracking camera
+            current_ee_pos = sim.mj_data.site_xpos[ee_site_id].copy()
+            tracked_pos = tracker.update(current_ee_pos)
+
             # Handle key presses
             if key_state["camera"] is not None:
-                set_camera(viewer, key_state["camera"])
+                current_camera = key_state["camera"]
+                set_camera(viewer, current_camera, lookat_override=tracked_pos if current_camera == 6 else None)
                 key_state["camera"] = None
+
+            # Update tracking camera continuously if selected
+            if current_camera == 6:
+                preset = CAMERA_PRESETS[6]
+                viewer.cam.lookat[:] = tracked_pos
 
             if key_state["toggle_record"]:
                 recording = not recording
@@ -434,7 +472,12 @@ def run_interactive(
                                 cam.azimuth = cam_preset["azimuth"]
                                 cam.elevation = cam_preset["elevation"]
                                 cam.distance = cam_preset["distance"]
-                                cam.lookat[:] = cam_preset["lookat"]
+
+                                # Use tracked position for tracking camera
+                                if cam_preset.get("tracking"):
+                                    cam.lookat[:] = tracked_pos
+                                else:
+                                    cam.lookat[:] = cam_preset["lookat"]
 
                                 offscreen_renderer.update_scene(sim.mj_data, camera=cam)
                                 draw_all_whiskers(offscreen_renderer.scene, futures, ensembler,

@@ -106,6 +106,7 @@ def evaluate_checkpoint(
     visualize: bool,
     mujoco_viewer: bool,
     max_steps: int,
+    temporal_ensemble_coeff: float = None,
 ) -> dict:
     """Evaluate a single checkpoint and return results."""
     policy, preprocessor, postprocessor = load_policy_and_processors(
@@ -144,6 +145,7 @@ def evaluate_checkpoint(
         analyze_failures=True,
         visualize=visualize,
         mujoco_viewer=mujoco_viewer,
+        temporal_ensemble_coeff=temporal_ensemble_coeff,
     )
 
     success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = results
@@ -187,6 +189,9 @@ def main():
                         help="Open MuJoCo 3D viewer window")
     parser.add_argument("--max-steps", type=int, default=300,
                         help="Max steps per episode (default: 300)")
+    parser.add_argument("--ensemble", type=float, default=None, metavar="COEFF",
+                        help="Enable temporal ensembling with given coefficient (e.g., 0.01). "
+                             "Predicts every step and averages overlapping chunks.")
 
     args = parser.parse_args()
 
@@ -259,6 +264,7 @@ def main():
             visualize=args.visualize,
             mujoco_viewer=args.mujoco_viewer,
             max_steps=args.max_steps,
+            temporal_ensemble_coeff=args.ensemble,
         )
         all_results[checkpoint_name] = results
 

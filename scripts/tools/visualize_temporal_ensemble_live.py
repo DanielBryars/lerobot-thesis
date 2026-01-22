@@ -39,13 +39,35 @@ from lerobot_robot_sim import SO100Sim, SO100SimConfig
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
 # Camera viewpoint presets: (azimuth, elevation, distance, lookat)
+# Camera 6 is special - it tracks the gripper
 CAMERA_PRESETS = {
     1: {"name": "Overview", "azimuth": 135, "elevation": -25, "distance": 1.2, "lookat": [0.2, 0.0, 0.1]},
     2: {"name": "Side View", "azimuth": 90, "elevation": -15, "distance": 0.9, "lookat": [0.25, 0.0, 0.15]},
     3: {"name": "Front View", "azimuth": 180, "elevation": -20, "distance": 0.8, "lookat": [0.25, 0.0, 0.1]},
     4: {"name": "Top Down", "azimuth": 90, "elevation": -89, "distance": 0.8, "lookat": [0.22, 0.0, 0.0]},
     5: {"name": "Close Up", "azimuth": 120, "elevation": -10, "distance": 0.5, "lookat": [0.25, 0.1, 0.15]},
+    6: {"name": "Tracking", "azimuth": 135, "elevation": -20, "distance": 0.35, "lookat": None, "tracking": True},
 }
+
+
+class SmoothTracker:
+    """Smooth camera tracking with exponential moving average."""
+
+    def __init__(self, smoothing: float = 0.15):
+        self.smoothing = smoothing  # Lower = smoother, higher = more responsive
+        self.current_lookat = None
+
+    def update(self, target_pos: np.ndarray) -> np.ndarray:
+        """Update tracked position with smoothing."""
+        if self.current_lookat is None:
+            self.current_lookat = target_pos.copy()
+        else:
+            # Exponential moving average for smooth tracking
+            self.current_lookat = (1 - self.smoothing) * self.current_lookat + self.smoothing * target_pos
+        return self.current_lookat.copy()
+
+    def reset(self):
+        self.current_lookat = None
 
 
 def load_act_policy(model_path: Path, device: torch.device):
@@ -232,16 +254,28 @@ def compute_ee_positions(mj_model, mj_data, joint_angles_sequence, ee_site_id):
     return np.array(positions)
 
 
-def set_camera(viewer, preset_num):
-    """Set camera to a preset viewpoint."""
+def set_camera(viewer, preset_num, lookat_override=None):
+    """Set camera to a preset viewpoint.
+
+    Args:
+        viewer: MuJoCo viewer
+        preset_num: Camera preset number (1-6)
+        lookat_override: Optional lookat position for tracking camera
+    """
     if preset_num not in CAMERA_PRESETS:
         return
     preset = CAMERA_PRESETS[preset_num]
     viewer.cam.azimuth = preset["azimuth"]
     viewer.cam.elevation = preset["elevation"]
     viewer.cam.distance = preset["distance"]
-    viewer.cam.lookat[:] = preset["lookat"]
-    print(f"  Camera: {preset['name']}")
+
+    # Use override for tracking camera, or preset lookat for fixed cameras
+    if lookat_override is not None:
+        viewer.cam.lookat[:] = lookat_override
+    elif preset.get("lookat") is not None:
+        viewer.cam.lookat[:] = preset["lookat"]
+
+    print(f"  Camera: {preset['name']}" + (" (tracking gripper)" if preset.get("tracking") else ""))
 
 
 def run_live(
@@ -306,7 +340,7 @@ def run_live(
     print("  GREEN = Ensembled trajectory (what we execute)")
     print("  GREY  = Individual chunk predictions (overlapping)")
     print("\nControls:")
-    print("  1-5: Switch camera viewpoints")
+    print("  1-6: Switch camera viewpoints (6 = tracking camera)")
     print("  R: Toggle recording" + (" (ON)" if recording else ""))
     print("  ESC/Q: Quit")
     print("="*60 + "\n")
@@ -316,13 +350,16 @@ def run_live(
     current_camera = 1
     frame_count = 0
 
+    # Smooth tracker for tracking camera
+    tracker = SmoothTracker(smoothing=0.15)
+
     # For keyboard callback
     key_pressed = {"camera": None, "toggle_record": False}
 
     def key_callback(keycode):
         nonlocal recording
-        # Number keys 1-5 for camera presets
-        if 49 <= keycode <= 53:  # Keys 1-5
+        # Number keys 1-6 for camera presets
+        if 49 <= keycode <= 54:  # Keys 1-6
             key_pressed["camera"] = keycode - 48
         elif keycode == 82:  # 'R' key
             key_pressed["toggle_record"] = True
@@ -364,6 +401,18 @@ def run_live(
             action_dict = {m + ".pos": float(ensembled_action[i]) for i, m in enumerate(MOTOR_NAMES)}
             sim.send_action(action_dict)
 
+            # Get current EE position for tracking camera
+            current_ee_pos = sim.mj_data.site_xpos[ee_site_id].copy()
+            tracked_pos = tracker.update(current_ee_pos)
+
+            # Update tracking camera if selected
+            if current_camera == 6:
+                preset = CAMERA_PRESETS[6]
+                viewer.cam.azimuth = preset["azimuth"]
+                viewer.cam.elevation = preset["elevation"]
+                viewer.cam.distance = preset["distance"]
+                viewer.cam.lookat[:] = tracked_pos
+
             # Check success
             if sim.is_task_complete():
                 success = True
@@ -394,7 +443,12 @@ def run_live(
                         cam.azimuth = cam_preset["azimuth"]
                         cam.elevation = cam_preset["elevation"]
                         cam.distance = cam_preset["distance"]
-                        cam.lookat[:] = cam_preset["lookat"]
+
+                        # Use tracked position for tracking camera, preset for others
+                        if cam_preset.get("tracking"):
+                            cam.lookat[:] = tracked_pos
+                        else:
+                            cam.lookat[:] = cam_preset["lookat"]
 
                         # Update scene with this camera
                         offscreen_renderer.update_scene(sim.mj_data, camera=cam)
