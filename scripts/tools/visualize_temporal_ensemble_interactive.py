@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Live visualization of ACT temporal ensembling in MuJoCo.
+Interactive frame-by-frame viewer for ACT temporal ensembling.
 
-Shows overlapping chunk predictions as whiskers converging to the ensembled action.
+Step through the episode one frame at a time to see how predictions evolve.
 
 Usage:
-    python scripts/tools/visualize_temporal_ensemble_live.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
-
-    # With recording:
-    python scripts/tools/visualize_temporal_ensemble_live.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000 --record
+    python scripts/tools/visualize_temporal_ensemble_interactive.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
 
 Controls:
+    SPACE / RIGHT: Next frame
+    LEFT: Previous frame (rewinds and replays to that point)
     1-5: Switch camera viewpoints
     R: Toggle recording
+    P: Play/Pause continuous playback
     ESC/Q: Quit
 """
 
@@ -38,7 +38,7 @@ from lerobot_robot_sim import SO100Sim, SO100SimConfig
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
-# Camera viewpoint presets: (azimuth, elevation, distance, lookat)
+# Camera viewpoint presets
 CAMERA_PRESETS = {
     1: {"name": "Overview", "azimuth": 135, "elevation": -25, "distance": 1.2, "lookat": [0.2, 0.0, 0.1]},
     2: {"name": "Side View", "azimuth": 90, "elevation": -15, "distance": 0.9, "lookat": [0.25, 0.0, 0.15]},
@@ -121,11 +121,10 @@ class TemporalEnsembler:
 
     def get_future_predictions(self, n_future: int = 20):
         """Get all chunk predictions for the next n_future steps."""
-        futures = []  # List of (chunk_idx, future_actions)
+        futures = []
 
         chunk_list = list(self.chunk_history)
-        for i, (chunk_start, chunk_actions) in enumerate(chunk_list[-5:]):  # Last 5 chunks
-            # Get future portion of this chunk
+        for i, (chunk_start, chunk_actions) in enumerate(chunk_list[-5:]):
             current_idx = self.step - chunk_start
             if current_idx < len(chunk_actions):
                 future_actions = chunk_actions[current_idx:current_idx + n_future]
@@ -152,27 +151,33 @@ def draw_whisker_to_scene(scene, positions, color, alpha=0.8, radius=0.003):
         scene.ngeom += 1
 
 
-def draw_whisker(viewer, positions, color, alpha=0.8, radius=0.003):
-    """Draw a trajectory whisker as connected spheres to viewer's user scene."""
-    draw_whisker_to_scene(viewer.user_scn, positions, color, alpha, radius)
+def compute_ee_positions(mj_model, mj_data, joint_angles_sequence, ee_site_id):
+    """Compute EE positions using MuJoCo FK."""
+    saved_qpos = mj_data.qpos.copy()
+    saved_qvel = mj_data.qvel.copy()
+
+    positions = []
+    arm_joint_start = 7
+
+    for joint_angles in joint_angles_sequence:
+        mj_data.qpos[arm_joint_start:arm_joint_start+6] = np.radians(joint_angles[:6])
+        mujoco.mj_forward(mj_model, mj_data)
+        positions.append(mj_data.site_xpos[ee_site_id].copy())
+
+    mj_data.qpos[:] = saved_qpos
+    mj_data.qvel[:] = saved_qvel
+    mujoco.mj_forward(mj_model, mj_data)
+
+    return np.array(positions)
 
 
 def draw_all_whiskers(scene, futures, ensembler, mj_model, mj_data, ee_site_id):
-    """Draw all whiskers (grey chunks + green ensembled) to a scene.
-
-    Args:
-        scene: mjvScene to draw to
-        futures: List of (chunk_idx, future_actions) from ensembler.get_future_predictions()
-        ensembler: TemporalEnsembler instance
-        mj_model: MuJoCo model
-        mj_data: MuJoCo data
-        ee_site_id: Site ID for end-effector
-    """
+    """Draw all whiskers (grey chunks + green ensembled) to a scene."""
     # Draw individual chunk predictions (grey whiskers)
     for chunk_idx, future_actions in futures:
         if len(future_actions) > 0 and ee_site_id >= 0:
             positions = compute_ee_positions(mj_model, mj_data, future_actions, ee_site_id)
-            grey = 0.4 + 0.1 * chunk_idx  # Newer chunks slightly lighter
+            grey = 0.4 + 0.1 * chunk_idx
             draw_whisker_to_scene(scene, positions, (grey, grey, grey), alpha=0.4, radius=0.002)
 
     # Draw ensembled trajectory (green whisker)
@@ -201,37 +206,6 @@ def draw_all_whiskers(scene, futures, ensembler, mj_model, mj_data, ee_site_id):
             draw_whisker_to_scene(scene, ensembled_positions, (0.0, 0.9, 0.0), alpha=0.9, radius=0.004)
 
 
-def compute_ee_positions(mj_model, mj_data, joint_angles_sequence, ee_site_id):
-    """Compute EE positions using MuJoCo FK.
-
-    Args:
-        mj_model: MuJoCo model
-        mj_data: MuJoCo data
-        joint_angles_sequence: Joint angles in DEGREES, shape (N, 6)
-        ee_site_id: Site ID for end-effector
-
-    Returns:
-        EE positions, shape (N, 3)
-    """
-    saved_qpos = mj_data.qpos.copy()
-    saved_qvel = mj_data.qvel.copy()
-
-    positions = []
-    arm_joint_start = 7  # After duplo's free joint
-
-    for joint_angles in joint_angles_sequence:
-        mj_data.qpos[arm_joint_start:arm_joint_start+6] = np.radians(joint_angles[:6])
-        mujoco.mj_forward(mj_model, mj_data)
-        positions.append(mj_data.site_xpos[ee_site_id].copy())
-
-    # Restore state
-    mj_data.qpos[:] = saved_qpos
-    mj_data.qvel[:] = saved_qvel
-    mujoco.mj_forward(mj_model, mj_data)
-
-    return np.array(positions)
-
-
 def set_camera(viewer, preset_num):
     """Set camera to a preset viewpoint."""
     if preset_num not in CAMERA_PRESETS:
@@ -244,7 +218,19 @@ def set_camera(viewer, preset_num):
     print(f"  Camera: {preset['name']}")
 
 
-def run_live(
+class FrameState:
+    """Stores the state at each frame for rewinding."""
+    def __init__(self):
+        self.qpos = None
+        self.qvel = None
+        self.chunk_history = None
+        self.ensembler_step = 0
+        self.futures = None
+        self.n_chunks = 0
+        self.success = False
+
+
+def run_interactive(
     policy,
     preprocessor,
     postprocessor,
@@ -254,7 +240,7 @@ def run_live(
     record: bool = False,
     output_dir: Path = None,
 ):
-    """Run with live MuJoCo visualization of temporal ensembling."""
+    """Run with interactive frame-by-frame control."""
 
     # Create simulation
     scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
@@ -273,14 +259,12 @@ def run_live(
 
     # Find EE site for FK
     ee_site_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
-    print(f"EE site ID: {ee_site_id} (gripperframe)")
 
     # Recording setup
     recording = record
     if output_dir is None:
-        output_dir = REPO_ROOT / "outputs" / "recordings" / f"temporal_ensemble_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        output_dir = REPO_ROOT / "outputs" / "recordings" / f"temporal_interactive_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Create subfolders for each camera angle
     camera_dirs = {}
     if recording:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -289,61 +273,84 @@ def run_live(
             cam_dir.mkdir(parents=True, exist_ok=True)
             camera_dirs[cam_num] = cam_dir
         print(f"Recording to: {output_dir}")
-        print(f"  Camera folders: {[p['name'] for p in CAMERA_PRESETS.values()]}")
 
-    # Offscreen renderer for multi-angle recording
+    # Offscreen renderer
     render_width, render_height = 1280, 720
     offscreen_renderer = None
     if recording:
         offscreen_renderer = mujoco.Renderer(sim.mj_model, height=render_height, width=render_width)
 
     print("\n" + "="*60)
-    print("TEMPORAL ENSEMBLING LIVE VISUALIZATION")
+    print("INTERACTIVE TEMPORAL ENSEMBLING VIEWER")
     print("="*60)
     print(f"Chunk size: {chunk_size}")
     print(f"Ensemble coefficient: {ensemble_coeff}")
-    print("\nWhisker colors:")
-    print("  GREEN = Ensembled trajectory (what we execute)")
-    print("  GREY  = Individual chunk predictions (overlapping)")
     print("\nControls:")
-    print("  1-5: Switch camera viewpoints")
-    print("  R: Toggle recording" + (" (ON)" if recording else ""))
-    print("  ESC/Q: Quit")
+    print("  SPACE/RIGHT : Step forward one frame")
+    print("  LEFT        : Step backward (rewind)")
+    print("  P           : Play/Pause continuous playback")
+    print("  1-5         : Switch camera viewpoints")
+    print("  R           : Toggle recording" + (" (ON)" if recording else ""))
+    print("  ESC/Q       : Quit")
+    print("\nWhisker colors:")
+    print("  GREEN = Ensembled trajectory")
+    print("  GREY  = Individual chunk predictions")
     print("="*60 + "\n")
 
-    step = 0
+    # Frame history for rewinding
+    frame_history = []
+    current_frame = 0
+    playing = False
     success = False
-    current_camera = 1
     frame_count = 0
 
-    # For keyboard callback
-    key_pressed = {"camera": None, "toggle_record": False}
+    # Store initial state
+    initial_qpos = sim.mj_data.qpos.copy()
+    initial_qvel = sim.mj_data.qvel.copy()
+
+    # Key state
+    key_state = {
+        "advance": False,
+        "rewind": False,
+        "camera": None,
+        "toggle_record": False,
+        "toggle_play": False,
+    }
 
     def key_callback(keycode):
         nonlocal recording
-        # Number keys 1-5 for camera presets
-        if 49 <= keycode <= 53:  # Keys 1-5
-            key_pressed["camera"] = keycode - 48
-        elif keycode == 82:  # 'R' key
-            key_pressed["toggle_record"] = True
+        if keycode == 32 or keycode == 262:  # SPACE or RIGHT
+            key_state["advance"] = True
+        elif keycode == 263:  # LEFT
+            key_state["rewind"] = True
+        elif 49 <= keycode <= 53:  # 1-5
+            key_state["camera"] = keycode - 48
+        elif keycode == 82:  # R
+            key_state["toggle_record"] = True
+        elif keycode == 80:  # P
+            key_state["toggle_play"] = True
 
-    with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
-        # Set initial camera
-        set_camera(viewer, current_camera)
+    def compute_frame(frame_idx):
+        """Compute or retrieve frame state."""
+        nonlocal success
 
-        while viewer.is_running() and step < max_steps:
-            # Handle key presses
-            if key_pressed["camera"] is not None:
-                current_camera = key_pressed["camera"]
-                set_camera(viewer, current_camera)
-                key_pressed["camera"] = None
+        # If we have this frame cached, restore it
+        if frame_idx < len(frame_history):
+            state = frame_history[frame_idx]
+            sim.mj_data.qpos[:] = state.qpos
+            sim.mj_data.qvel[:] = state.qvel
+            mujoco.mj_forward(sim.mj_model, sim.mj_data)
 
-            if key_pressed["toggle_record"]:
-                recording = not recording
-                if recording and not output_dir.exists():
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                print(f"  Recording: {'ON' if recording else 'OFF'}")
-                key_pressed["toggle_record"] = False
+            # Restore ensembler state
+            ensembler.chunk_history = deque(state.chunk_history, maxlen=chunk_size)
+            ensembler.step = state.ensembler_step
+
+            return state.futures, state.n_chunks, state.success
+
+        # Need to compute new frames up to frame_idx
+        while len(frame_history) <= frame_idx:
+            step = len(frame_history)
+
             # Get observation and predict
             obs = sim.get_observation()
             batch = prepare_obs(obs, device)
@@ -356,87 +363,133 @@ def run_live(
 
             # Update ensembler
             ensembled_action, predictions, weights = ensembler.update(chunk_np)
-
-            # Get future predictions for visualization
             futures = ensembler.get_future_predictions(n_future=30)
 
-            # Execute ensembled action
+            # Store state before executing action
+            state = FrameState()
+            state.qpos = sim.mj_data.qpos.copy()
+            state.qvel = sim.mj_data.qvel.copy()
+            state.chunk_history = list(ensembler.chunk_history)
+            state.ensembler_step = ensembler.step
+            state.futures = futures
+            state.n_chunks = len(predictions)
+            state.success = sim.is_task_complete()
+
+            frame_history.append(state)
+
+            # Execute action
             action_dict = {m + ".pos": float(ensembled_action[i]) for i, m in enumerate(MOTOR_NAMES)}
             sim.send_action(action_dict)
 
-            # Check success
-            if sim.is_task_complete():
+            if state.success:
                 success = True
-                print(f"\n*** SUCCESS at step {step}! ***")
-                print(f"Chunks contributing at success: {len(predictions)}")
-                # Keep viewer open briefly
-                for _ in range(60):
-                    viewer.sync()
-                    time.sleep(0.05)
-                break
 
-            # Visualization - add whiskers to viewer
+        state = frame_history[frame_idx]
+        return state.futures, state.n_chunks, state.success
+
+    with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
+        set_camera(viewer, 1)
+
+        # Compute initial frame
+        futures, n_chunks, frame_success = compute_frame(0)
+
+        while viewer.is_running() and current_frame < max_steps:
+            # Handle key presses
+            if key_state["camera"] is not None:
+                set_camera(viewer, key_state["camera"])
+                key_state["camera"] = None
+
+            if key_state["toggle_record"]:
+                recording = not recording
+                if recording and not output_dir.exists():
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    for cam_num, cam_preset in CAMERA_PRESETS.items():
+                        cam_dir = output_dir / cam_preset["name"].lower().replace(" ", "_")
+                        cam_dir.mkdir(parents=True, exist_ok=True)
+                        camera_dirs[cam_num] = cam_dir
+                print(f"  Recording: {'ON' if recording else 'OFF'}")
+                key_state["toggle_record"] = False
+
+            if key_state["toggle_play"]:
+                playing = not playing
+                print(f"  Playback: {'PLAYING' if playing else 'PAUSED'}")
+                key_state["toggle_play"] = False
+
+            # Advance frame
+            if key_state["advance"] or playing:
+                key_state["advance"] = False
+                if current_frame < max_steps - 1 and not success:
+                    current_frame += 1
+                    futures, n_chunks, frame_success = compute_frame(current_frame)
+                    print(f"  Frame {current_frame}: {n_chunks} chunks contributing" +
+                          (" - SUCCESS!" if frame_success else ""))
+
+                    # Record if enabled
+                    if recording and offscreen_renderer is not None:
+                        try:
+                            import PIL.Image as Image
+                            for cam_num, cam_preset in CAMERA_PRESETS.items():
+                                cam = mujoco.MjvCamera()
+                                cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                                cam.azimuth = cam_preset["azimuth"]
+                                cam.elevation = cam_preset["elevation"]
+                                cam.distance = cam_preset["distance"]
+                                cam.lookat[:] = cam_preset["lookat"]
+
+                                offscreen_renderer.update_scene(sim.mj_data, camera=cam)
+                                draw_all_whiskers(offscreen_renderer.scene, futures, ensembler,
+                                                 sim.mj_model, sim.mj_data, ee_site_id)
+
+                                pixels = offscreen_renderer.render()
+                                frame_path = camera_dirs[cam_num] / f"frame_{frame_count:05d}.png"
+                                Image.fromarray(pixels).save(frame_path)
+                            frame_count += 1
+                        except Exception as e:
+                            print(f"  Recording error: {e}")
+
+                    if frame_success:
+                        playing = False
+                        print("\n*** SUCCESS! Episode complete. ***\n")
+
+            # Rewind frame
+            if key_state["rewind"]:
+                key_state["rewind"] = False
+                if current_frame > 0:
+                    current_frame -= 1
+                    futures, n_chunks, frame_success = compute_frame(current_frame)
+                    print(f"  Frame {current_frame}: {n_chunks} chunks contributing (rewound)")
+
+            # Draw whiskers
             with viewer.lock():
                 viewer.user_scn.ngeom = 0
-                draw_all_whiskers(viewer.user_scn, futures, ensembler, sim.mj_model, sim.mj_data, ee_site_id)
+                draw_all_whiskers(viewer.user_scn, futures, ensembler,
+                                 sim.mj_model, sim.mj_data, ee_site_id)
 
             viewer.sync()
 
-            # Record frames from all camera angles (with whiskers!)
-            if recording and offscreen_renderer is not None:
-                try:
-                    import PIL.Image as Image
-
-                    for cam_num, cam_preset in CAMERA_PRESETS.items():
-                        # Create camera with preset settings
-                        cam = mujoco.MjvCamera()
-                        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-                        cam.azimuth = cam_preset["azimuth"]
-                        cam.elevation = cam_preset["elevation"]
-                        cam.distance = cam_preset["distance"]
-                        cam.lookat[:] = cam_preset["lookat"]
-
-                        # Update scene with this camera
-                        offscreen_renderer.update_scene(sim.mj_data, camera=cam)
-
-                        # Add whiskers to offscreen scene (same as viewer)
-                        draw_all_whiskers(offscreen_renderer.scene, futures, ensembler,
-                                         sim.mj_model, sim.mj_data, ee_site_id)
-
-                        # Render and save
-                        pixels = offscreen_renderer.render()
-                        frame_path = camera_dirs[cam_num] / f"frame_{frame_count:05d}.png"
-                        Image.fromarray(pixels).save(frame_path)
-
-                    frame_count += 1
-                except Exception as e:
-                    if frame_count == 0:
-                        print(f"  Recording error: {e}")
-                        print("  Falling back to single-view recording...")
-                        recording = False
-
-            step += 1
-            time.sleep(0.02)
+            if playing:
+                time.sleep(0.05)  # Slower playback for visibility
+            else:
+                time.sleep(0.02)
 
     sim.disconnect()
 
-    print(f"\nEpisode ended at step {step}")
-    print(f"Result: {'SUCCESS' if success else 'FAILURE'}")
+    print(f"\nSession ended at frame {current_frame}")
+    print(f"Total frames computed: {len(frame_history)}")
     if frame_count > 0:
         print(f"Recorded {frame_count} frames to {output_dir}")
-        print(f"To create video: ffmpeg -framerate 30 -i {output_dir}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
 
-    return success, step
+    return success, current_frame
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Live temporal ensembling visualization")
+    parser = argparse.ArgumentParser(description="Interactive temporal ensembling viewer")
     parser.add_argument("model_path", type=str, help="Path to model directory")
     parser.add_argument("--checkpoint", type=str, default="checkpoint_045000")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--coeff", type=float, default=0.01, help="Ensemble coefficient")
-    parser.add_argument("--no-record", action="store_true", help="Disable recording (recording is ON by default)")
+    parser.add_argument("--record", action="store_true", help="Enable recording")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory for recordings")
     args = parser.parse_args()
 
@@ -447,11 +500,11 @@ def main():
 
     output_dir = Path(args.output_dir) if args.output_dir else None
 
-    success, steps = run_live(
+    success, steps = run_interactive(
         policy, preprocessor, postprocessor, device,
         max_steps=args.max_steps,
         ensemble_coeff=args.coeff,
-        record=not args.no_record,  # Recording ON by default
+        record=args.record,
         output_dir=output_dir,
     )
 
