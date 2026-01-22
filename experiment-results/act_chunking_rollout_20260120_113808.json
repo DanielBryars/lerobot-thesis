@@ -1,0 +1,16 @@
+{
+  "model_path": "outputs\\train\\act_20260118_155135\\checkpoint_045000",
+  "chunk_size": 100,
+  "original_n_action_steps": 100,
+  "episodes_per_setting": 10,
+  "max_steps": 300,
+  "timestamp": "2026-01-20T11:35:42.739151",
+  "settings": {
+    "1": {
+      "n_action_steps": 1,
+      "success_rate": 0.0,
+      "avg_steps": 300.0,
+      "avg_time": 5.781529664993286,
+      "failure_summary": {
+        "outcome_counts": {
+          

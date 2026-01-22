@@ -1,0 +1,320 @@
+Using device: cuda
+Loading dataset metadata: danbhf/sim_pick_place_157ep
+Total episodes: 157
+Total frames: 22534
+
+############################################################
+# EPISODE COUNT: 1
+############################################################
+
+============================================================
+Training with 1 episodes
+============================================================
+WARNING:lerobot.configs.policies:Device 'None' is not available. Switching to 'cuda'.
+WARNING:root:'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder
+  Using 163 frames from 1 episodes
+  Starting training for 45000 steps...
+C:\Users\bryar\AppData\Roaming\Python\Python313\site-packages\torchvision\io\_video_deprecation_warning.py:9: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+    Step 1000/45000, Loss: 1.2039, ETA: 216.6m
+    Step 2000/45000, Loss: 0.8470, ETA: 211.8m
+    Step 3000/45000, Loss: 0.4178, ETA: 206.6m
+    Step 4000/45000, Loss: 0.2175, ETA: 201.7m
+    Step 5000/45000, Loss: 0.2185, ETA: 196.5m
+    Step 6000/45000, Loss: 0.0954, ETA: 191.7m
+    Step 7000/45000, Loss: 0.0731, ETA: 186.8m
+    Step 8000/45000, Loss: 0.0858, ETA: 181.7m
+    Step 9000/45000, Loss: 0.0717, ETA: 176.8m
+    Step 10000/45000, Loss: 0.0596, ETA: 172.0m
+    Step 11000/45000, Loss: 0.0501, ETA: 167.4m
+    Step 12000/45000, Loss: 0.0399, ETA: 162.6m
+    Step 13000/45000, Loss: 0.0394, ETA: 157.8m
+    Step 14000/45000, Loss: 0.0363, ETA: 152.9m
+    Step 15000/45000, Loss: 0.0371, ETA: 148.0m
+    Step 16000/45000, Loss: 0.0242, ETA: 143.1m
+    Step 17000/45000, Loss: 0.0315, ETA: 138.2m
+    Step 18000/45000, Loss: 0.0283, ETA: 133.4m
+    Step 19000/45000, Loss: 0.0290, ETA: 128.5m
+    Step 20000/45000, Loss: 0.0281, ETA: 123.6m
+    Step 21000/45000, Loss: 0.0267, ETA: 118.8m
+    Step 22000/45000, Loss: 0.0250, ETA: 113.8m
+    Step 23000/45000, Loss: 0.0292, ETA: 108.9m
+    Step 24000/45000, Loss: 0.0259, ETA: 103.9m
+    Step 25000/45000, Loss: 0.0211, ETA: 99.0m
+    Step 26000/45000, Loss: 0.0193, ETA: 94.2m
+    Step 27000/45000, Loss: 0.0267, ETA: 89.2m
+    Step 28000/45000, Loss: 0.0196, ETA: 84.4m
+    Step 29000/45000, Loss: 0.0179, ETA: 79.4m
+    Step 30000/45000, Loss: 0.0168, ETA: 74.5m
+    Step 31000/45000, Loss: 0.0204, ETA: 69.6m
+    Step 32000/45000, Loss: 0.0140, ETA: 64.7m
+    Step 33000/45000, Loss: 0.0182, ETA: 59.8m
+    Step 34000/45000, Loss: 0.0143, ETA: 54.9m
+    Step 35000/45000, Loss: 0.0186, ETA: 49.9m
+    Step 36000/45000, Loss: 0.0176, ETA: 45.0m
+    Step 37000/45000, Loss: 0.0153, ETA: 40.0m
+    Step 38000/45000, Loss: 0.0129, ETA: 35.0m
+    Step 39000/45000, Loss: 0.0151, ETA: 30.1m
+    Step 40000/45000, Loss: 0.0179, ETA: 25.1m
+    Step 41000/45000, Loss: 0.0126, ETA: 20.1m
+    Step 42000/45000, Loss: 0.0158, ETA: 15.1m
+    Step 43000/45000, Loss: 0.0163, ETA: 10.0m
+    Step 44000/45000, Loss: 0.0149, ETA: 5.0m
+    Step 45000/45000, Loss: 0.0174, ETA: 0.0m
+  Training complete in 226.2 minutes
+
+  Evaluating 10 checkpoints...
+    Evaluating checkpoint_005000...
+Loading weights from local directory
+Registered: so100_sim, so101_sim
+  Episode 1/20... OK (0.7s)
+  Episode 2/20... FAIL (1.3s)
+  Episode 3/20... FAIL (1.3s)
+  Episode 4/20... OK (0.5s)
+  Episode 5/20... FAIL (1.4s)
+  Episode 6/20... OK (0.6s)
+  Episode 7/20... OK (0.6s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... FAIL (1.3s)
+  Episode 10/20... OK (0.5s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... FAIL (1.3s)
+  Episode 13/20... FAIL (1.3s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... OK (0.5s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.3s)
+  Episode 20/20... FAIL (1.4s)
+      Success: 30.0%
+    Evaluating checkpoint_010000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.4s)
+  Episode 2/20... FAIL (1.4s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... OK (0.4s)
+  Episode 5/20... FAIL (1.4s)
+  Episode 6/20... OK (0.6s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... OK (0.5s)
+  Episode 10/20... FAIL (1.4s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... FAIL (1.3s)
+  Episode 13/20... FAIL (1.4s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... OK (0.5s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... OK (0.6s)
+  Episode 19/20... OK (0.5s)
+  Episode 20/20... FAIL (1.3s)
+      Success: 35.0%
+    Evaluating checkpoint_015000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.4s)
+  Episode 2/20... FAIL (1.3s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... FAIL (1.4s)
+  Episode 5/20... FAIL (1.3s)
+  Episode 6/20... OK (0.5s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... FAIL (1.4s)
+  Episode 9/20... FAIL (1.3s)
+  Episode 10/20... OK (0.5s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... FAIL (1.3s)
+  Episode 13/20... FAIL (1.4s)
+  Episode 14/20... FAIL (1.4s)
+  Episode 15/20... OK (0.5s)
+  Episode 16/20... OK (0.6s)
+  Episode 17/20... OK (0.5s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... OK (0.5s)
+  Episode 20/20... FAIL (1.4s)
+      Success: 35.0%
+    Evaluating checkpoint_020000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.4s)
+  Episode 2/20... OK (0.4s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... OK (0.5s)
+  Episode 5/20... OK (0.5s)
+  Episode 6/20... FAIL (1.3s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... OK (0.6s)
+  Episode 9/20... OK (0.5s)
+  Episode 10/20... OK (0.5s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... OK (0.5s)
+  Episode 13/20... OK (0.5s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... FAIL (1.4s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... OK (0.5s)
+  Episode 20/20... FAIL (1.4s)
+      Success: 50.0%
+    Evaluating checkpoint_025000...
+Loading weights from local directory
+  Episode 1/20... OK (0.6s)
+  Episode 2/20... OK (0.5s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... FAIL (1.4s)
+  Episode 5/20... FAIL (1.4s)
+  Episode 6/20... FAIL (1.4s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... FAIL (1.3s)
+  Episode 10/20... FAIL (1.3s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... OK (0.5s)
+  Episode 13/20... FAIL (1.3s)
+  Episode 14/20... OK (0.5s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... OK (0.5s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.3s)
+  Episode 20/20... FAIL (1.3s)
+      Success: 30.0%
+    Evaluating checkpoint_030000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.3s)
+  Episode 2/20... OK (0.5s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... OK (0.5s)
+  Episode 5/20... FAIL (1.3s)
+  Episode 6/20... OK (0.5s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... FAIL (1.3s)
+  Episode 10/20... FAIL (1.3s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... OK (0.5s)
+  Episode 13/20... FAIL (1.3s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.4s)
+  Episode 20/20... FAIL (1.3s)
+      Success: 25.0%
+    Evaluating checkpoint_035000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.3s)
+  Episode 2/20... OK (0.5s)
+  Episode 3/20... FAIL (1.3s)
+  Episode 4/20... FAIL (1.3s)
+  Episode 5/20... FAIL (1.3s)
+  Episode 6/20... OK (0.5s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... OK (0.4s)
+  Episode 10/20... OK (0.5s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... OK (0.5s)
+  Episode 13/20... OK (0.5s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... FAIL (1.4s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.4s)
+  Episode 20/20... FAIL (1.4s)
+      Success: 30.0%
+    Evaluating checkpoint_040000...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.4s)
+  Episode 2/20... FAIL (1.4s)
+  Episode 3/20... FAIL (1.3s)
+  Episode 4/20... FAIL (1.4s)
+  Episode 5/20... OK (0.5s)
+  Episode 6/20... OK (0.5s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... OK (0.5s)
+  Episode 9/20... FAIL (1.3s)
+  Episode 10/20... FAIL (1.4s)
+  Episode 11/20... FAIL (1.4s)
+  Episode 12/20... FAIL (1.4s)
+  Episode 13/20... FAIL (1.3s)
+  Episode 14/20... FAIL (1.4s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... FAIL (1.4s)
+  Episode 18/20... OK (0.6s)
+  Episode 19/20... FAIL (1.4s)
+  Episode 20/20... FAIL (1.3s)
+      Success: 20.0%
+    Evaluating checkpoint_045000...
+Loading weights from local directory
+  Episode 1/20... OK (0.5s)
+  Episode 2/20... FAIL (1.3s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... FAIL (1.3s)
+  Episode 5/20... OK (0.6s)
+  Episode 6/20... OK (0.4s)
+  Episode 7/20... FAIL (1.3s)
+  Episode 8/20... OK (0.5s)
+  Episode 9/20... OK (0.5s)
+  Episode 10/20... FAIL (1.3s)
+  Episode 11/20... FAIL (1.3s)
+  Episode 12/20... FAIL (1.3s)
+  Episode 13/20... OK (0.5s)
+  Episode 14/20... FAIL (1.3s)
+  Episode 15/20... FAIL (1.3s)
+  Episode 16/20... FAIL (1.3s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.3s)
+  Episode 20/20... OK (0.5s)
+      Success: 40.0%
+    Evaluating final...
+Loading weights from local directory
+  Episode 1/20... FAIL (1.4s)
+  Episode 2/20... FAIL (1.3s)
+  Episode 3/20... OK (0.5s)
+  Episode 4/20... FAIL (1.3s)
+  Episode 5/20... OK (0.5s)
+  Episode 6/20... OK (0.5s)
+  Episode 7/20... OK (0.5s)
+  Episode 8/20... FAIL (1.3s)
+  Episode 9/20... OK (0.5s)
+  Episode 10/20... OK (0.5s)
+  Episode 11/20... OK (0.5s)
+  Episode 12/20... FAIL (1.3s)
+  Episode 13/20... OK (0.5s)
+  Episode 14/20... OK (0.5s)
+  Episode 15/20... OK (0.5s)
+  Episode 16/20... FAIL (1.4s)
+  Episode 17/20... FAIL (1.3s)
+  Episode 18/20... FAIL (1.4s)
+  Episode 19/20... FAIL (1.3s)
+  Episode 20/20... FAIL (1.4s)
+      Success: 50.0%
+Traceback (most recent call last):
+  File "E:\git\ai\lerobot-thesis\scripts\experiments\data_scaling_experiment.py", line 427, in <module>
+    main()
+    ~~~~^^
+  File "E:\git\ai\lerobot-thesis\scripts\experiments\data_scaling_experiment.py", line 365, in main
+    json.dump(all_results, f, indent=2, default=str)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\json\__init__.py", line 179, in dump
+    for chunk in iterable:
+                 ^^^^^^^^
+  File "C:\Python313\Lib\json\encoder.py", line 432, in _iterencode
+    yield from _iterencode_dict(o, _current_indent_level)
+  File "C:\Python313\Lib\json\encoder.py", line 406, in _iterencode_dict
+    yield from chunks
+  File "C:\Python313\Lib\json\encoder.py", line 406, in _iterencode_dict
+    yield from chunks
+  File "C:\Python313\Lib\json\encoder.py", line 406, in _iterencode_dict
+    yield from chunks
+  [Previous line repeated 2 more times]
+  File "C:\Python313\Lib\json\encoder.py", line 377, in _iterencode_dict
+    raise TypeError(f'keys must be str, int, float, bool or None, '
+                    f'not {key.__class__.__name__}')
+TypeError: keys must be str, int, float, bool or None, not Outcome

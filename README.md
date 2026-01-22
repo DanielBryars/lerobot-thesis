@@ -378,6 +378,9 @@ python training/train_act.py dataset --cameras wrist_cam,overhead_cam,overhead_c
 python training/train_act.py dataset --cameras wrist_cam,overhead_cam
 ```
 
+
+python scripts/tools/visualize_temporal_ensemble_interactive.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
+
 ## Calibration
 
 See [docs/CALIBRATION.md](docs/CALIBRATION.md) for detailed calibration information.
@@ -401,6 +404,46 @@ Calibration files for both arms are included in `calibration/` and must be copie
 - Ensure you're logged into HuggingFace: `huggingface-cli login`
 - Check your internet connection
 - Verify the repository name format: `username/dataset_name`
+
+Here are the key command lines from your experiments:
+                                                                                                                                       Spatial Visualization (with circles/spheres)                                                                                       
+  # Scatter visualization from CSV (spheres in MuJoCo)
+  python scripts/experiments/eval_spatial_generalization.py outputs/experiments/spatial_eval_combined.csv --scatter
+
+  # With custom sphere size and transparency
+  python scripts/experiments/eval_spatial_generalization.py outputs/experiments/spatial_eval_combined.csv --scatter --sphere-radius
+  0.008 --sphere-alpha 0.4
+
+  # Visualize from JSON heatmap
+  python scripts/experiments/eval_spatial_generalization.py outputs/experiments/spatial_eval_20260121_160613.json --visualize
+
+  Other Recently Used Commands
+
+  # Temporal ensemble visualization (live with whiskers)
+  python scripts/tools/visualize_temporal_ensemble_live.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
+
+  # Interactive frame-by-frame viewer
+  python scripts/tools/visualize_temporal_ensemble_interactive.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000
+
+  # Evaluation with temporal ensembling
+  python scripts/inference/eval.py outputs/train/act_20260118_155135 --local --checkpoint checkpoint_045000 --episodes 50 --ensemble
+  0.01
+
+  # Standard evaluation
+  python scripts/inference/eval.py outputs/train/act_20260118_155135 --local --checkpoint checkpoint_045000 --episodes 50
+
+  # Data scaling experiment (currently running)
+  python scripts/experiments/data_scaling_experiment.py --resume-from 2
+
+  # Brady Bunch tiled video (ffmpeg)
+  c:/ffmpeg/bin/ffmpeg -framerate 30 -i overview/frame_%05d.png -i side_view/frame_%05d.png ... -filter_complex
+  "[0:v]scale=640:360..." temporal_ensemble_6angles.mp4
+
+  Available CSV Files for Visualization
+
+  outputs/experiments/spatial_eval_combined.csv  # 2630 episodes, all grids combined
+  outputs/experiments/spatial_eval_fine_grid.csv # Fine 7x7 grid
+
 
 ## License
 

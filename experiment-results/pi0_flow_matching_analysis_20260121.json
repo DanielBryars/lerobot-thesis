@@ -1,0 +1,50 @@
+{
+  "experiment": "pi0_flow_matching_visualization",
+  "timestamp": "2026-01-21T12:30:00",
+  "model": "danbhf/pi0_so101_lerobot",
+  "instruction": "Pick up the block and place it in the bowl",
+  "image": "/d/git/leeds-msc-ai-fp/LeedsMsc/CameraShapshots/Pi0 Whisker Convergence.png",
+  "notes": "Visualized Pi0 flow matching denoising process - 10 steps from noise (t=1.0) to final actions (t=0.0)",
+
+  "key_observations": [
+    "Flow matching DOES converge gradually in normalized space",
+    "std decreases: 1.0 (noise) -> 0.5-0.7 (final)",
+    "min/max range tightens progressively",
+    "mean stays relatively stable throughout",
+    "Visual chaos comes from FK amplifying small normalized differences into large 3D positions",
+    "The 'crystallization' is happening - just hard to see because early noise maps to wild FK positions"
+  ],
+
+  "sample_convergence_data": {
+    "chunk_1_step_0": {
+      "description": "First chunk at episode start",
+      "steps": [
+        {"step": 0, "t": 1.00, "mean": -0.09, "std": 1.00, "min": -3.13, "max": 3.18},
+        {"step": 5, "t": 0.50, "mean": -0.07, "std": 0.59, "min": -1.78, "max": 1.47},
+        {"step": 10, "t": 0.00, "mean": -0.06, "std": 0.58, "min": -1.10, "max": 0.75}
+      ]
+    },
+    "chunk_4_step_150": {
+      "description": "Fourth chunk - shows mean shifting as robot moves",
+      "steps": [
+        {"step": 0, "t": 1.00, "mean": 0.05, "std": 0.99, "min": -2.99, "max": 2.85},
+        {"step": 5, "t": 0.50, "mean": 0.26, "std": 0.60, "min": -1.21, "max": 2.14},
+        {"step": 10, "t": 0.00, "mean": 0.49, "std": 0.61, "min": -0.98, "max": 1.50}
+      ],
+      "note": "Mean shifts from 0.05 to 0.49 - model is 'steering' toward target actions"
+    }
+  },
+
+  "interpretation": {
+    "how_flow_matching_works": "Each step: x_{t-dt} = x_t + dt * v_t where v_t is predicted velocity",
+    "convergence_pattern": "std drops ~50% (1.0 -> 0.5-0.7), range tightens from [-3,3] to [-1,1.5]",
+    "why_visually_chaotic": "Normalized values near 0 with std=1 map to wildly different joint angles after denormalization, which FK converts to scattered 3D positions",
+    "the_model_is_working": "Gradual convergence in normalized space proves the velocity field is learned correctly"
+  },
+
+  "result": {
+    "outcome": "SUCCESS",
+    "steps": 155,
+    "note": "Task completed successfully while visualizing flow convergence"
+  }
+}
