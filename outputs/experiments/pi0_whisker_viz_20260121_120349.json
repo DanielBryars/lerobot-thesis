@@ -1,0 +1,27 @@
+{
+  "experiment": "pi0_whisker_visualization",
+  "timestamp": "2026-01-21T12:03:49",
+  "model": "danbhf/pi0_so101_lerobot",
+  "instruction": "Pick up the block and place it in the bowl",
+  "notes": "First successful Pi0 run with whisker visualization using FK-based trajectory prediction",
+  "results": {
+    "episode_1": {
+      "outcome": "SUCCESS",
+      "steps": 145,
+      "chunks_predicted": 3,
+      "notes": "Success at step 145. Whisker visualization working correctly with FK."
+    }
+  },
+  "config": {
+    "chunk_size": 50,
+    "n_action_steps": 50,
+    "image_size": "224x224",
+    "cameras": ["overhead_cam", "wrist_cam"]
+  },
+  "observations": [
+    "Pi0 predicts full 50-action chunks and executes all before re-predicting",
+    "Similar to ACT open-loop behavior (n_action_steps == chunk_size)",
+    "First chunk took ~1116ms (model loading/warmup), subsequent ~315ms",
+    "Per-step execution ~5-7ms after chunk prediction"
+  ]
+}

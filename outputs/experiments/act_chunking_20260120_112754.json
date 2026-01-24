@@ -1,0 +1,569 @@
+{
+  "checkpoint": "outputs/train/act_20260118_155135/checkpoint_045000",
+  "chunk_size": 100,
+  "episodes_per_setting": 10,
+  "max_steps": 300,
+  "timestamp": "2026-01-20T11:25:14.547544",
+  "settings": {
+    "1": {
+      "n_action_steps": 1,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 300.0,
+      "avg_step_time_ms": 19.313152466585358,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 20.870741333589347,
+          "total_time_s": 6.261222400076804
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.587750333109092,
+          "total_time_s": 5.876325099932728
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.077073332785705,
+          "total_time_s": 5.723121999835712
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.469943000537263,
+          "total_time_s": 5.84098290016118
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.427774333162233,
+          "total_time_s": 5.82833229994867
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 18.81797933310736,
+          "total_time_s": 5.645393799932208
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 18.796313333101956,
+          "total_time_s": 5.638893999930588
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.45167933299672,
+          "total_time_s": 5.835503799899016
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 18.62259300018195,
+          "total_time_s": 5.586777900054585
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 300,
+          "avg_step_time_ms": 19.009677333281918,
+          "total_time_s": 5.702903199984576
+        }
+      ]
+    },
+    "2": {
+      "n_action_steps": 2,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 150.0,
+      "avg_step_time_ms": 11.151760799926706,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.485364332717534,
+          "total_time_s": 3.44560929981526
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.477075332853323,
+          "total_time_s": 3.4431225998559967
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 10.966350666761475,
+          "total_time_s": 3.2899052000284428
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 10.895942666150708,
+          "total_time_s": 3.268782799845212
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.392917667205136,
+          "total_time_s": 3.4178753001615405
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 10.905822333831262,
+          "total_time_s": 3.2717467001493787
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.056243666486504,
+          "total_time_s": 3.3168730999459513
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.363791666566007,
+          "total_time_s": 3.409137499969802
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 11.137946666082522,
+          "total_time_s": 3.3413839998247568
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 150,
+          "avg_step_time_ms": 10.836153000612587,
+          "total_time_s": 3.2508459001837764
+        }
+      ]
+    },
+    "5": {
+      "n_action_steps": 5,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 60.0,
+      "avg_step_time_ms": 6.617229933370254,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.512507666581465,
+          "total_time_s": 1.9537522999744397
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.688013000530191,
+          "total_time_s": 2.0064039001590572
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.493962666233226,
+          "total_time_s": 1.9481887998699676
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.632341333315708,
+          "total_time_s": 1.9897023999947123
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.4730560000559,
+          "total_time_s": 1.9419168000167701
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.613151333294809,
+          "total_time_s": 1.9839453999884427
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.614595999950931,
+          "total_time_s": 1.9843787999852793
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.859608999802731,
+          "total_time_s": 2.0578826999408193
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.597312999850449,
+          "total_time_s": 1.9791938999551348
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 60,
+          "avg_step_time_ms": 6.68774933408713,
+          "total_time_s": 2.006324800226139
+        }
+      ]
+    },
+    "10": {
+      "n_action_steps": 10,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 30.0,
+      "avg_step_time_ms": 4.945613833217067,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.896781999996165,
+          "total_time_s": 1.4690345999988494
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 5.110377999420356,
+          "total_time_s": 1.5331133998261066
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.844614000321599,
+          "total_time_s": 1.4533842000964796
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.815005999359225,
+          "total_time_s": 1.4445017998077674
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 5.113048666729203,
+          "total_time_s": 1.5339146000187611
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.933855666555853,
+          "total_time_s": 1.4801566999667557
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.934251333324937,
+          "total_time_s": 1.4802753999974811
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 5.018515332970614,
+          "total_time_s": 1.505554599891184
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.922124333631169,
+          "total_time_s": 1.476637300089351
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 30,
+          "avg_step_time_ms": 4.867562999861548,
+          "total_time_s": 1.4602688999584643
+        }
+      ]
+    },
+    "20": {
+      "n_action_steps": 20,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 15.0,
+      "avg_step_time_ms": 4.030659100055345,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 4.057148666809857,
+          "total_time_s": 1.2171446000429569
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 4.084814333521838,
+          "total_time_s": 1.2254443000565516
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 3.9393219999328717,
+          "total_time_s": 1.1817965999798616
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 4.0422339997409535,
+          "total_time_s": 1.212670199922286
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 3.9648896666282476,
+          "total_time_s": 1.1894668999884743
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 3.9532233336649374,
+          "total_time_s": 1.185967000099481
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 3.997516333329259,
+          "total_time_s": 1.1992548999987775
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 4.099053999234457,
+          "total_time_s": 1.229716199770337
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 4.24617900023198,
+          "total_time_s": 1.2738537000695942
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 15,
+          "avg_step_time_ms": 3.9222096674590525,
+          "total_time_s": 1.1766629002377158
+        }
+      ]
+    },
+    "50": {
+      "n_action_steps": 50,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 6.0,
+      "avg_step_time_ms": 3.583491333226751,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.5039729998485805,
+          "total_time_s": 1.0511918999545742
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.5639073328638915,
+          "total_time_s": 1.0691721998591674
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.5758306669595186,
+          "total_time_s": 1.0727492000878556
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.4861889999592677,
+          "total_time_s": 1.0458566999877803
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.6543733337020967,
+          "total_time_s": 1.096312000110629
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.631948666734388,
+          "total_time_s": 1.0895846000203164
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.552663998901456,
+          "total_time_s": 1.0657991996704368
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.5844686669588555,
+          "total_time_s": 1.0753406000876566
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.5539966664509848,
+          "total_time_s": 1.0661989999352954
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 6,
+          "avg_step_time_ms": 3.7275619998884695,
+          "total_time_s": 1.118268599966541
+        }
+      ]
+    },
+    "100": {
+      "n_action_steps": 100,
+      "success_rate": 0.0,
+      "successes": 0,
+      "avg_steps_success": 0,
+      "avg_repredicts": 3.0,
+      "avg_step_time_ms": 3.4098780665711574,
+      "episodes": [
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.3558593326597475,
+          "total_time_s": 1.0067577997979242
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.4857930001938557,
+          "total_time_s": 1.0457379000581568
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.3498963333840948,
+          "total_time_s": 1.0049689000152284
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.2985376665601507,
+          "total_time_s": 0.9895612999680452
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.3667273334867787,
+          "total_time_s": 1.0100182000460336
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.4679283331206534,
+          "total_time_s": 1.040378499936196
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.4581723328543985,
+          "total_time_s": 1.0374516998563195
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.389133666981555,
+          "total_time_s": 1.0167401000944665
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.442172332773528,
+          "total_time_s": 1.0326516998320585
+        },
+        {
+          "success": false,
+          "steps": 300,
+          "repredict_count": 3,
+          "avg_step_time_ms": 3.4845603336968147,
+          "total_time_s": 1.0453681001090445
+        }
+      ]
+    }
+  }
+}

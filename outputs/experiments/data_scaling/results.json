@@ -1,0 +1,2414 @@
+{
+  "1": {
+    "num_episodes": 1,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.3
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.35
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.35
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.5
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.3
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.25
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.3
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.2
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.4
+      },
+      "final": {
+        "success_rate": 0.5
+      }
+    },
+    "timestamp": "2026-01-22T05:40:00"
+  },
+  "2": {
+    "num_episodes": 2,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.45,
+        "avg_steps": 203.9,
+        "avg_time": 0.9522685527801513,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 7,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.65,
+          "drop_rate": 0.23076923076923078,
+          "avg_steps_success": 86.44444444444444,
+          "avg_time_success": 0.4066268073187934,
+          "avg_max_height": 0.0765860965568693,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.3,
+        "avg_steps": 237.15,
+        "avg_time": 1.100006651878357,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 6,
+            "Outcome.NEVER_PICKED_UP": 11,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.3,
+          "pick_rate": 0.45,
+          "drop_rate": 0.3333333333333333,
+          "avg_steps_success": 90.5,
+          "avg_time_success": 0.42615509033203125,
+          "avg_max_height": 0.06256695442901664,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.4,
+        "avg_steps": 217.75,
+        "avg_time": 1.020595943927765,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 8,
+            "Outcome.NEVER_PICKED_UP": 10,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.4,
+          "pick_rate": 0.5,
+          "drop_rate": 0.0,
+          "avg_steps_success": 94.375,
+          "avg_time_success": 0.4581776559352875,
+          "avg_max_height": 0.07139686199527642,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.25,
+        "avg_steps": 249.65,
+        "avg_time": 1.1766640186309814,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 5,
+            "Outcome.NEVER_PICKED_UP": 13,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.25,
+          "pick_rate": 0.35,
+          "drop_rate": 0.14285714285714285,
+          "avg_steps_success": 98.6,
+          "avg_time_success": 0.4781323432922363,
+          "avg_max_height": 0.05301032834416014,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.4,
+        "avg_steps": 218.9,
+        "avg_time": 1.0433777689933776,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 8,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.4,
+          "pick_rate": 0.6,
+          "drop_rate": 0.25,
+          "avg_steps_success": 97.25,
+          "avg_time_success": 0.4740368127822876,
+          "avg_max_height": 0.08264162866563265,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.15,
+        "avg_steps": 269.55,
+        "avg_time": 1.290711522102356,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 3,
+            "Outcome.NEVER_PICKED_UP": 13,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.15,
+          "pick_rate": 0.35,
+          "drop_rate": 0.2857142857142857,
+          "avg_steps_success": 97.0,
+          "avg_time_success": 0.4707724253336589,
+          "avg_max_height": 0.055215829807291436,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.25,
+        "avg_steps": 249.2,
+        "avg_time": 1.165300154685974,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 5,
+            "Outcome.NEVER_PICKED_UP": 15,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.25,
+          "pick_rate": 0.25,
+          "drop_rate": 0.0,
+          "avg_steps_success": 96.8,
+          "avg_time_success": 0.4503756046295166,
+          "avg_max_height": 0.04436038197577092,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.35,
+        "avg_steps": 228.3,
+        "avg_time": 1.0526173830032348,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 7,
+            "Outcome.NEVER_PICKED_UP": 11,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.35,
+          "pick_rate": 0.45,
+          "drop_rate": 0.1111111111111111,
+          "avg_steps_success": 95.14285714285714,
+          "avg_time_success": 0.4561823436192104,
+          "avg_max_height": 0.06342219174339797,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.35,
+        "avg_steps": 228.1,
+        "avg_time": 1.1181561350822449,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 7,
+            "Outcome.NEVER_PICKED_UP": 10,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.35,
+          "pick_rate": 0.5,
+          "drop_rate": 0.3,
+          "avg_steps_success": 94.57142857142857,
+          "avg_time_success": 0.4758682591574533,
+          "avg_max_height": 0.06276225159546708,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.45,
+        "avg_steps": 207.35,
+        "avg_time": 1.0102280974388123,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.6,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 94.11111111111111,
+          "avg_time_success": 0.4887576897939046,
+          "avg_max_height": 0.08332488105076287,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-22T09:48:29.181441"
+  },
+  "5": {
+    "num_episodes": 5,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.25,
+        "avg_steps": 245.55,
+        "avg_time": 1.0726577401161195,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 5,
+            "Outcome.NEVER_PICKED_UP": 14,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.25,
+          "pick_rate": 0.3,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 82.2,
+          "avg_time_success": 0.37560505867004396,
+          "avg_max_height": 0.03873440503403792,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.45,
+        "avg_steps": 204.0,
+        "avg_time": 0.8820524454116822,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.55,
+          "drop_rate": 0.18181818181818182,
+          "avg_steps_success": 86.66666666666667,
+          "avg_time_success": 0.3901222546895345,
+          "avg_max_height": 0.06608954507331175,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.6,
+        "avg_steps": 170.65,
+        "avg_time": 0.7442790389060974,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 12,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.6,
+          "pick_rate": 0.75,
+          "drop_rate": 0.2,
+          "avg_steps_success": 84.41666666666667,
+          "avg_time_success": 0.37105685472488403,
+          "avg_max_height": 0.08037052444302402,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.45,
+        "avg_steps": 204.1,
+        "avg_time": 0.8865283966064453,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.6,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 86.88888888888889,
+          "avg_time_success": 0.38236798180474174,
+          "avg_max_height": 0.06997383723502325,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.35,
+        "avg_steps": 227.05,
+        "avg_time": 1.0030696749687196,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 7,
+            "Outcome.NEVER_PICKED_UP": 11,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.35,
+          "pick_rate": 0.45,
+          "drop_rate": 0.2222222222222222,
+          "avg_steps_success": 91.57142857142857,
+          "avg_time_success": 0.42306041717529297,
+          "avg_max_height": 0.056336449666188095,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.4,
+        "avg_steps": 215.15,
+        "avg_time": 0.9370782256126404,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 8,
+            "Outcome.NEVER_PICKED_UP": 10,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.4,
+          "pick_rate": 0.5,
+          "drop_rate": 0.2,
+          "avg_steps_success": 87.875,
+          "avg_time_success": 0.38464245200157166,
+          "avg_max_height": 0.08082260519312234,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.45,
+        "avg_steps": 202.6,
+        "avg_time": 0.8890258312225342,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.55,
+          "drop_rate": 0.18181818181818182,
+          "avg_steps_success": 83.55555555555556,
+          "avg_time_success": 0.3737800121307373,
+          "avg_max_height": 0.05918966037739776,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.3,
+        "avg_steps": 234.8,
+        "avg_time": 1.0314045071601867,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 6,
+            "Outcome.NEVER_PICKED_UP": 13,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.3,
+          "pick_rate": 0.35,
+          "drop_rate": 0.14285714285714285,
+          "avg_steps_success": 82.66666666666667,
+          "avg_time_success": 0.3680097262064616,
+          "avg_max_height": 0.044682871726627556,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.7,
+        "avg_steps": 153.1,
+        "avg_time": 0.6703786373138427,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 6,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.7,
+          "drop_rate": 0.0,
+          "avg_steps_success": 90.14285714285714,
+          "avg_time_success": 0.4039392811911447,
+          "avg_max_height": 0.0757364651107336,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.5,
+        "avg_steps": 193.6,
+        "avg_time": 1.0533605337142944,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.55,
+          "drop_rate": 0.09090909090909091,
+          "avg_steps_success": 87.2,
+          "avg_time_success": 0.4491084575653076,
+          "avg_max_height": 0.06226005632710428,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-22T13:53:49.652433"
+  },
+  "10": {
+    "num_episodes": 10,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.15,
+        "avg_steps": 268.85,
+        "avg_time": 1.1343114495277404,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 3,
+            "Outcome.NEVER_PICKED_UP": 14,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.15,
+          "pick_rate": 0.3,
+          "drop_rate": 0.5,
+          "avg_steps_success": 92.33333333333333,
+          "avg_time_success": 0.411022424697876,
+          "avg_max_height": 0.04709100715567453,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.45,
+        "avg_steps": 208.55,
+        "avg_time": 0.8819407224655151,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 11,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.45,
+          "drop_rate": 0.0,
+          "avg_steps_success": 96.77777777777777,
+          "avg_time_success": 0.41674256324768066,
+          "avg_max_height": 0.06865120654408416,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.55,
+        "avg_steps": 187.45,
+        "avg_time": 0.7955137133598328,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.75,
+          "drop_rate": 0.26666666666666666,
+          "avg_steps_success": 95.36363636363636,
+          "avg_time_success": 0.4154265360398726,
+          "avg_max_height": 0.0923685280418904,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.5,
+        "avg_steps": 203.25,
+        "avg_time": 0.846000325679779,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.6,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 106.5,
+          "avg_time_success": 0.4416893720626831,
+          "avg_max_height": 0.08243716276942156,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.5,
+        "avg_steps": 195.25,
+        "avg_time": 0.8097462773323059,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 7,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.65,
+          "drop_rate": 0.15384615384615385,
+          "avg_steps_success": 90.5,
+          "avg_time_success": 0.3808260440826416,
+          "avg_max_height": 0.11766519514442661,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.65,
+        "avg_steps": 171.85,
+        "avg_time": 0.7185415387153625,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 13,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.65,
+          "pick_rate": 0.75,
+          "drop_rate": 0.13333333333333333,
+          "avg_steps_success": 102.84615384615384,
+          "avg_time_success": 0.4372276709629939,
+          "avg_max_height": 0.10130986487473133,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.55,
+        "avg_steps": 186.55,
+        "avg_time": 0.7866687178611755,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 6,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.7,
+          "drop_rate": 0.14285714285714285,
+          "avg_steps_success": 93.72727272727273,
+          "avg_time_success": 0.39648864486000757,
+          "avg_max_height": 0.09552715474824461,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.65,
+        "avg_steps": 168.2,
+        "avg_time": 0.7203047156333924,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 13,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 2,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.65,
+          "pick_rate": 0.8,
+          "drop_rate": 0.1875,
+          "avg_steps_success": 97.23076923076923,
+          "avg_time_success": 0.42229335124676043,
+          "avg_max_height": 0.1000237122157012,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.5,
+        "avg_steps": 196.0,
+        "avg_time": 0.8205975532531739,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 6,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.7,
+          "drop_rate": 0.2857142857142857,
+          "avg_steps_success": 92.0,
+          "avg_time_success": 0.39033339023590086,
+          "avg_max_height": 0.07976091033858693,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.6,
+        "avg_steps": 181.15,
+        "avg_time": 0.7727120161056519,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 12,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.6,
+          "pick_rate": 0.6,
+          "drop_rate": 0.0,
+          "avg_steps_success": 101.91666666666667,
+          "avg_time_success": 0.4375627835591634,
+          "avg_max_height": 0.08235613076919188,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-22T18:07:16.379967"
+  },
+  "20": {
+    "num_episodes": 20,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.55,
+        "avg_steps": 199.4,
+        "avg_time": 0.84972642660141,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.6,
+          "drop_rate": 0.0,
+          "avg_steps_success": 117.0909090909091,
+          "avg_time_success": 0.5064154971729625,
+          "avg_max_height": 0.1019402867161943,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.7,
+        "avg_steps": 168.9,
+        "avg_time": 0.6988240838050842,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.85,
+          "drop_rate": 0.11764705882352941,
+          "avg_steps_success": 112.71428571428571,
+          "avg_time_success": 0.47298780509403776,
+          "avg_max_height": 0.13444661175992986,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.5,
+        "avg_steps": 203.6,
+        "avg_time": 0.8427869319915772,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.55,
+          "drop_rate": 0.09090909090909091,
+          "avg_steps_success": 107.2,
+          "avg_time_success": 0.45358355045318605,
+          "avg_max_height": 0.09023787344136706,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.7,
+        "avg_steps": 165.85,
+        "avg_time": 0.6894879460334777,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.9,
+          "drop_rate": 0.2222222222222222,
+          "avg_steps_success": 108.35714285714286,
+          "avg_time_success": 0.4671987635748727,
+          "avg_max_height": 0.14410815643792924,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.6,
+        "avg_steps": 187.85,
+        "avg_time": 0.791809344291687,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 12,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.6,
+          "pick_rate": 0.75,
+          "drop_rate": 0.13333333333333333,
+          "avg_steps_success": 113.08333333333333,
+          "avg_time_success": 0.4878909190495809,
+          "avg_max_height": 0.11976043019023912,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.6,
+        "avg_steps": 184.85,
+        "avg_time": 0.7984501004219056,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 12,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.6,
+          "pick_rate": 0.8,
+          "drop_rate": 0.25,
+          "avg_steps_success": 108.08333333333333,
+          "avg_time_success": 0.46771059433619183,
+          "avg_max_height": 0.12327063565629803,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.7,
+        "avg_steps": 161.4,
+        "avg_time": 0.6781577944755555,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.8,
+          "drop_rate": 0.125,
+          "avg_steps_success": 102.0,
+          "avg_time_success": 0.44109390463147846,
+          "avg_max_height": 0.12132528613696462,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.8,
+        "avg_steps": 142.0,
+        "avg_time": 0.6076073408126831,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.95,
+          "drop_rate": 0.10526315789473684,
+          "avg_steps_success": 102.5,
+          "avg_time_success": 0.4420090764760971,
+          "avg_max_height": 0.1404642626775,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.65,
+        "avg_steps": 180.35,
+        "avg_time": 0.7646919846534729,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 13,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.65,
+          "pick_rate": 0.75,
+          "drop_rate": 0.06666666666666667,
+          "avg_steps_success": 115.92307692307692,
+          "avg_time_success": 0.5038920549245981,
+          "avg_max_height": 0.1158515783274319,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.8,
+        "avg_steps": 144.8,
+        "avg_time": 0.6121366858482361,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.8,
+          "drop_rate": 0.0,
+          "avg_steps_success": 106.0,
+          "avg_time_success": 0.45693156123161316,
+          "avg_max_height": 0.12590627996233278,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-22T22:22:40.513017"
+  },
+  "40": {
+    "num_episodes": 40,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.3,
+        "avg_steps": 256.75,
+        "avg_time": 0.9383004307746887,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 6,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 2,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.3,
+          "pick_rate": 0.55,
+          "drop_rate": 0.2727272727272727,
+          "avg_steps_success": 155.83333333333334,
+          "avg_time_success": 0.5814986626307169,
+          "avg_max_height": 0.11103396871041948,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.3,
+        "avg_steps": 248.6,
+        "avg_time": 0.9045242547988892,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 6,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 5,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.3,
+          "pick_rate": 0.6,
+          "drop_rate": 0.5,
+          "avg_steps_success": 128.66666666666666,
+          "avg_time_success": 0.480301300684611,
+          "avg_max_height": 0.14199605851034902,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.45,
+        "avg_steps": 227.65,
+        "avg_time": 0.8425793051719666,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 3
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.6,
+          "drop_rate": 0.0,
+          "avg_steps_success": 139.22222222222223,
+          "avg_time_success": 0.529753737979465,
+          "avg_max_height": 0.1564982307781079,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.55,
+        "avg_steps": 212.65,
+        "avg_time": 0.7838989973068238,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 6,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.7,
+          "drop_rate": 0.21428571428571427,
+          "avg_steps_success": 141.1818181818182,
+          "avg_time_success": 0.5389886552637274,
+          "avg_max_height": 0.1729566152518614,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.3,
+        "avg_steps": 250.4,
+        "avg_time": 0.895689070224762,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 6,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.3,
+          "pick_rate": 0.55,
+          "drop_rate": 0.36363636363636365,
+          "avg_steps_success": 134.66666666666666,
+          "avg_time_success": 0.5089138746261597,
+          "avg_max_height": 0.12375299558143345,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.45,
+        "avg_steps": 223.3,
+        "avg_time": 0.8057654142379761,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 7,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.65,
+          "drop_rate": 0.23076923076923078,
+          "avg_steps_success": 129.55555555555554,
+          "avg_time_success": 0.4793301953209771,
+          "avg_max_height": 0.14372943887034367,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.15,
+        "avg_steps": 273.75,
+        "avg_time": 1.0041604518890381,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 3,
+            "Outcome.NEVER_PICKED_UP": 11,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 2,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.15,
+          "pick_rate": 0.45,
+          "drop_rate": 0.6666666666666666,
+          "avg_steps_success": 125.0,
+          "avg_time_success": 0.4723219076792399,
+          "avg_max_height": 0.10334659695606888,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.5,
+        "avg_steps": 219.05,
+        "avg_time": 0.7884452939033508,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.6,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 138.1,
+          "avg_time_success": 0.5197524309158326,
+          "avg_max_height": 0.15437286630080155,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.4,
+        "avg_steps": 234.55,
+        "avg_time": 0.8617410302162171,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 8,
+            "Outcome.NEVER_PICKED_UP": 10,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.4,
+          "pick_rate": 0.5,
+          "drop_rate": 0.2,
+          "avg_steps_success": 136.375,
+          "avg_time_success": 0.5199404656887054,
+          "avg_max_height": 0.12866846400803902,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.4,
+        "avg_steps": 242.05,
+        "avg_time": 0.890523099899292,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 8,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.4,
+          "pick_rate": 0.55,
+          "drop_rate": 0.2727272727272727,
+          "avg_steps_success": 155.125,
+          "avg_time_success": 0.5838627517223358,
+          "avg_max_height": 0.13211151397839452,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-23T02:34:45.923282"
+  },
+  "60": {
+    "num_episodes": 60,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.45,
+        "avg_steps": 240.9,
+        "avg_time": 1.0140584707260132,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.55,
+          "drop_rate": 0.18181818181818182,
+          "avg_steps_success": 168.66666666666666,
+          "avg_time_success": 0.6886338657803006,
+          "avg_max_height": 0.1046002109989436,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.55,
+        "avg_steps": 212.6,
+        "avg_time": 0.7865363121032715,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.55,
+          "drop_rate": 0.0,
+          "avg_steps_success": 141.0909090909091,
+          "avg_time_success": 0.5423615195534446,
+          "avg_max_height": 0.13336813940566244,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.35,
+        "avg_steps": 244.3,
+        "avg_time": 0.8773815631866455,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 7,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.35,
+          "pick_rate": 0.55,
+          "drop_rate": 0.36363636363636365,
+          "avg_steps_success": 140.85714285714286,
+          "avg_time_success": 0.5223045689719064,
+          "avg_max_height": 0.11815267234736138,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.25,
+        "avg_steps": 257.95,
+        "avg_time": 0.9108639359474182,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 5,
+            "Outcome.NEVER_PICKED_UP": 10,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.25,
+          "pick_rate": 0.5,
+          "drop_rate": 0.4,
+          "avg_steps_success": 131.8,
+          "avg_time_success": 0.48235306739807127,
+          "avg_max_height": 0.08408926149394444,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.55,
+        "avg_steps": 211.4,
+        "avg_time": 1.2335628390312194,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.6,
+          "drop_rate": 0.08333333333333333,
+          "avg_steps_success": 138.9090909090909,
+          "avg_time_success": 1.0474606860767712,
+          "avg_max_height": 0.10657615798901461,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.6,
+        "avg_steps": 200.55,
+        "avg_time": 0.7817421197891236,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 12,
+            "Outcome.NEVER_PICKED_UP": 7,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.6,
+          "pick_rate": 0.65,
+          "drop_rate": 0.07692307692307693,
+          "avg_steps_success": 134.25,
+          "avg_time_success": 0.536598821481069,
+          "avg_max_height": 0.13017433670329498,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.45,
+        "avg_steps": 215.0,
+        "avg_time": 0.7925955176353454,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.6,
+          "drop_rate": 0.25,
+          "avg_steps_success": 111.11111111111111,
+          "avg_time_success": 0.4244640138414171,
+          "avg_max_height": 0.10960271305941396,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.45,
+        "avg_steps": 232.55,
+        "avg_time": 0.8609804153442383,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 8,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.6,
+          "drop_rate": 0.25,
+          "avg_steps_success": 150.11111111111111,
+          "avg_time_success": 0.5652403831481934,
+          "avg_max_height": 0.10493952616156028,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.55,
+        "avg_steps": 203.6,
+        "avg_time": 0.7843073964118957,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 11,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.55,
+          "pick_rate": 0.55,
+          "drop_rate": 0.0,
+          "avg_steps_success": 124.72727272727273,
+          "avg_time_success": 0.48699463497508655,
+          "avg_max_height": 0.1350775215083893,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.5,
+        "avg_steps": 217.9,
+        "avg_time": 0.7628974556922913,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 10,
+            "Outcome.NEVER_PICKED_UP": 9,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.5,
+          "pick_rate": 0.55,
+          "drop_rate": 0.09090909090909091,
+          "avg_steps_success": 135.8,
+          "avg_time_success": 0.48733296394348147,
+          "avg_max_height": 0.13002681030412194,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-23T14:01:42.543372"
+  },
+  "80": {
+    "num_episodes": 80,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.7,
+        "avg_steps": 191.85,
+        "avg_time": 0.6663893580436706,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 6,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.7,
+          "drop_rate": 0.0,
+          "avg_steps_success": 145.5,
+          "avg_time_success": 0.5147031034742083,
+          "avg_max_height": 0.14162426046740728,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.85,
+        "avg_steps": 160.35,
+        "avg_time": 0.5519776344299316,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.9,
+          "drop_rate": 0.05555555555555555,
+          "avg_steps_success": 135.7058823529412,
+          "avg_time_success": 0.46984467786901135,
+          "avg_max_height": 0.1946529265756285,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.7,
+        "avg_steps": 178.3,
+        "avg_time": 0.6141321420669555,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.85,
+          "drop_rate": 0.17647058823529413,
+          "avg_steps_success": 126.14285714285714,
+          "avg_time_success": 0.4451643739427839,
+          "avg_max_height": 0.17647039431486689,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.7,
+        "avg_steps": 175.5,
+        "avg_time": 0.591172969341278,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.75,
+          "drop_rate": 0.06666666666666667,
+          "avg_steps_success": 122.14285714285714,
+          "avg_time_success": 0.4197582687650408,
+          "avg_max_height": 0.15920990089314077,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.8,
+        "avg_steps": 159.85,
+        "avg_time": 0.5439208507537842,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.85,
+          "drop_rate": 0.058823529411764705,
+          "avg_steps_success": 124.8125,
+          "avg_time_success": 0.430011048913002,
+          "avg_max_height": 0.18288594761192217,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.75,
+        "avg_steps": 175.0,
+        "avg_time": 0.6033991813659668,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 15,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.75,
+          "pick_rate": 0.85,
+          "drop_rate": 0.11764705882352941,
+          "avg_steps_success": 133.33333333333334,
+          "avg_time_success": 0.46557606061299645,
+          "avg_max_height": 0.18292247242513204,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.7,
+        "avg_steps": 179.75,
+        "avg_time": 0.6255074501037597,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.8,
+          "drop_rate": 0.125,
+          "avg_steps_success": 128.21428571428572,
+          "avg_time_success": 0.4540032829557146,
+          "avg_max_height": 0.17064681257471162,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.8,
+        "avg_steps": 161.55,
+        "avg_time": 0.5517535209655762,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.05555555555555555,
+          "avg_steps_success": 126.9375,
+          "avg_time_success": 0.4386751055717468,
+          "avg_max_height": 0.17919295091649773,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.7,
+        "avg_steps": 178.7,
+        "avg_time": 0.60927894115448,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 4,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.8,
+          "drop_rate": 0.125,
+          "avg_steps_success": 126.71428571428571,
+          "avg_time_success": 0.4389892646244594,
+          "avg_max_height": 0.1694945259912455,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.7,
+        "avg_steps": 192.85,
+        "avg_time": 0.6514832377433777,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.75,
+          "drop_rate": 0.06666666666666667,
+          "avg_steps_success": 146.92857142857142,
+          "avg_time_success": 0.5046604190553937,
+          "avg_max_height": 0.15422267642152873,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-23T17:32:41.233594"
+  },
+  "100": {
+    "num_episodes": 100,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.85,
+        "avg_steps": 155.5,
+        "avg_time": 0.5420010805130004,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.85,
+          "drop_rate": 0.0,
+          "avg_steps_success": 130.0,
+          "avg_time_success": 0.4538423033321605,
+          "avg_max_height": 0.15459967695135793,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.7,
+        "avg_steps": 172.2,
+        "avg_time": 0.6039267659187317,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.95,
+          "drop_rate": 0.2631578947368421,
+          "avg_steps_success": 117.42857142857143,
+          "avg_time_success": 0.41349014214106966,
+          "avg_max_height": 0.147235612962629,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.85,
+        "avg_steps": 167.25,
+        "avg_time": 0.5882607936859131,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.95,
+          "drop_rate": 0.10526315789473684,
+          "avg_steps_success": 143.8235294117647,
+          "avg_time_success": 0.5129804330713609,
+          "avg_max_height": 0.1852000939069223,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.85,
+        "avg_steps": 151.5,
+        "avg_time": 0.5431655526161194,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 1.0,
+          "drop_rate": 0.15,
+          "avg_steps_success": 125.29411764705883,
+          "avg_time_success": 0.45660829544067383,
+          "avg_max_height": 0.33989356410297955,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.7,
+        "avg_steps": 170.6,
+        "avg_time": 0.5975407719612121,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 14,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.7,
+          "pick_rate": 0.9,
+          "drop_rate": 0.1111111111111111,
+          "avg_steps_success": 115.14285714285714,
+          "avg_time_success": 0.41282149723597933,
+          "avg_max_height": 0.17189736236402992,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.9,
+        "avg_steps": 143.0,
+        "avg_time": 0.49584212303161623,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 18,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.9,
+          "pick_rate": 0.9,
+          "drop_rate": 0.0,
+          "avg_steps_success": 125.55555555555556,
+          "avg_time_success": 0.43785888618893093,
+          "avg_max_height": 0.19360251499654446,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.85,
+        "avg_steps": 146.0,
+        "avg_time": 0.5085548877716064,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.95,
+          "drop_rate": 0.05263157894736842,
+          "avg_steps_success": 118.82352941176471,
+          "avg_time_success": 0.41645362797905416,
+          "avg_max_height": 0.20015283367173264,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.95,
+        "avg_steps": 121.1,
+        "avg_time": 0.42700092792510985,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 19,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.95,
+          "pick_rate": 0.95,
+          "drop_rate": 0.0,
+          "avg_steps_success": 111.6842105263158,
+          "avg_time_success": 0.39633374465139287,
+          "avg_max_height": 0.19751481190223846,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.85,
+        "avg_steps": 146.95,
+        "avg_time": 0.515632712841034,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 1.0,
+          "drop_rate": 0.15,
+          "avg_steps_success": 119.94117647058823,
+          "avg_time_success": 0.4266059679143569,
+          "avg_max_height": 0.20319399193998994,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.8,
+        "avg_steps": 153.6,
+        "avg_time": 0.5453160762786865,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.05555555555555555,
+          "avg_steps_success": 117.0,
+          "avg_time_success": 0.4181232452392578,
+          "avg_max_height": 0.17806910437324236,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-23T21:03:06.058335"
+  },
+  "120": {
+    "num_episodes": 120,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.8,
+        "avg_steps": 175.25,
+        "avg_time": 0.6013936877250672,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.8,
+          "pick_rate": 1.0,
+          "drop_rate": 0.15,
+          "avg_steps_success": 144.0625,
+          "avg_time_success": 0.498568519949913,
+          "avg_max_height": 0.1906669288394764,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.8,
+        "avg_steps": 165.3,
+        "avg_time": 0.5762235164642334,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.1111111111111111,
+          "avg_steps_success": 131.625,
+          "avg_time_success": 0.4650835543870926,
+          "avg_max_height": 0.19279585045991393,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.8,
+        "avg_steps": 165.25,
+        "avg_time": 0.5726590991020203,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.95,
+          "drop_rate": 0.15789473684210525,
+          "avg_steps_success": 131.5625,
+          "avg_time_success": 0.46031685173511505,
+          "avg_max_height": 0.1789693110563761,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.9,
+        "avg_steps": 152.15,
+        "avg_time": 0.5269926905632019,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 18,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.9,
+          "pick_rate": 0.95,
+          "drop_rate": 0.05263157894736842,
+          "avg_steps_success": 135.72222222222223,
+          "avg_time_success": 0.4747709168328179,
+          "avg_max_height": 0.20919818853058975,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 1.0,
+        "avg_steps": 137.05,
+        "avg_time": 0.47378791570663453,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 20,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 1.0,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 137.05,
+          "avg_time_success": 0.4738391160964966,
+          "avg_max_height": 0.21359497921272053,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 1.0,
+        "avg_steps": 129.6,
+        "avg_time": 0.45218127965927124,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 20,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 1.0,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 129.6,
+          "avg_time_success": 0.4522306203842163,
+          "avg_max_height": 0.20394269804637116,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.95,
+        "avg_steps": 145.2,
+        "avg_time": 0.5095178365707398,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 19,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.95,
+          "pick_rate": 1.0,
+          "drop_rate": 0.05,
+          "avg_steps_success": 137.05263157894737,
+          "avg_time_success": 0.4840391937055086,
+          "avg_max_height": 0.2097569701599876,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.75,
+        "avg_steps": 172.45,
+        "avg_time": 0.5990238428115845,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 15,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 4,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.75,
+          "pick_rate": 1.0,
+          "drop_rate": 0.2,
+          "avg_steps_success": 129.93333333333334,
+          "avg_time_success": 0.4592854976654053,
+          "avg_max_height": 0.18373095548339874,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.8,
+        "avg_steps": 163.9,
+        "avg_time": 0.5639246940612793,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.1111111111111111,
+          "avg_steps_success": 129.875,
+          "avg_time_success": 0.4532594382762909,
+          "avg_max_height": 0.18126976848064036,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.8,
+        "avg_steps": 170.65,
+        "avg_time": 0.5887420415878296,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.95,
+          "drop_rate": 0.15789473684210525,
+          "avg_steps_success": 138.3125,
+          "avg_time_success": 0.48090121150016785,
+          "avg_max_height": 0.20386004610356942,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-24T02:09:14.884789"
+  },
+  "140": {
+    "num_episodes": 140,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.45,
+        "avg_steps": 239.45,
+        "avg_time": 0.808702540397644,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 9,
+            "Outcome.NEVER_PICKED_UP": 5,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 3
+          },
+          "success_rate": 0.45,
+          "pick_rate": 0.75,
+          "drop_rate": 0.2,
+          "avg_steps_success": 165.44444444444446,
+          "avg_time_success": 0.5703002876705594,
+          "avg_max_height": 0.1243009822819758,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.85,
+        "avg_steps": 166.4,
+        "avg_time": 0.5678426146507263,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.85,
+          "pick_rate": 1.0,
+          "drop_rate": 0.1,
+          "avg_steps_success": 142.8235294117647,
+          "avg_time_success": 0.4908138864180621,
+          "avg_max_height": 0.19753228075295556,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.75,
+        "avg_steps": 173.2,
+        "avg_time": 0.5925769686698914,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 15,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.75,
+          "pick_rate": 0.95,
+          "drop_rate": 0.21052631578947367,
+          "avg_steps_success": 130.93333333333334,
+          "avg_time_success": 0.454327646891276,
+          "avg_max_height": 0.17940191161381266,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.65,
+        "avg_steps": 198.65,
+        "avg_time": 0.6913180351257324,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 13,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 5,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.65,
+          "pick_rate": 1.0,
+          "drop_rate": 0.3,
+          "avg_steps_success": 144.07692307692307,
+          "avg_time_success": 0.5060343008774978,
+          "avg_max_height": 0.187589074875319,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.8,
+        "avg_steps": 160.25,
+        "avg_time": 0.5525609135627747,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.95,
+          "drop_rate": 0.05263157894736842,
+          "avg_steps_success": 125.3125,
+          "avg_time_success": 0.43538933992385864,
+          "avg_max_height": 0.17373281354330516,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.95,
+        "avg_steps": 140.75,
+        "avg_time": 0.48899226188659667,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 19,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.95,
+          "pick_rate": 1.0,
+          "drop_rate": 0.05,
+          "avg_steps_success": 132.3684210526316,
+          "avg_time_success": 0.460246437474301,
+          "avg_max_height": 0.2066826881940163,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.9,
+        "avg_steps": 152.7,
+        "avg_time": 0.5250131487846375,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 18,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.9,
+          "pick_rate": 0.95,
+          "drop_rate": 0.05263157894736842,
+          "avg_steps_success": 136.33333333333334,
+          "avg_time_success": 0.4720548523796929,
+          "avg_max_height": 0.2053693581412777,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 1.0,
+        "avg_steps": 132.35,
+        "avg_time": 0.4582623720169067,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 20,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 1.0,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 132.35,
+          "avg_time_success": 0.4583139538764954,
+          "avg_max_height": 0.2051820899705905,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 0.95,
+        "avg_steps": 144.45,
+        "avg_time": 0.49768657684326173,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 19,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.95,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 136.26315789473685,
+          "avg_time_success": 0.471061530866121,
+          "avg_max_height": 0.21246134743765413,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.8,
+        "avg_steps": 160.35,
+        "avg_time": 0.5578854203224182,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.1111111111111111,
+          "avg_steps_success": 125.4375,
+          "avg_time_success": 0.4404827058315277,
+          "avg_max_height": 0.1793234927774207,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-24T07:09:08.853783"
+  },
+  "157": {
+    "num_episodes": 157,
+    "checkpoints": {
+      "checkpoint_005000": {
+        "success_rate": 0.65,
+        "avg_steps": 203.7,
+        "avg_time": 0.669026231765747,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 13,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 3,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.65,
+          "pick_rate": 0.9,
+          "drop_rate": 0.16666666666666666,
+          "avg_steps_success": 151.84615384615384,
+          "avg_time_success": 0.5049300010387714,
+          "avg_max_height": 0.1576667952337148,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_010000": {
+        "success_rate": 0.8,
+        "avg_steps": 171.85,
+        "avg_time": 0.5666287541389465,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 16,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 2
+          },
+          "success_rate": 0.8,
+          "pick_rate": 0.9,
+          "drop_rate": 0.0,
+          "avg_steps_success": 139.8125,
+          "avg_time_success": 0.46300390362739563,
+          "avg_max_height": 0.1600344650388082,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_015000": {
+        "success_rate": 0.85,
+        "avg_steps": 160.0,
+        "avg_time": 0.5241574764251709,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 3,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.85,
+          "drop_rate": 0.0,
+          "avg_steps_success": 135.2941176470588,
+          "avg_time_success": 0.44626648285809684,
+          "avg_max_height": 0.18003439502683677,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_020000": {
+        "success_rate": 0.85,
+        "avg_steps": 157.1,
+        "avg_time": 0.5230363488197327,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 1,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.95,
+          "drop_rate": 0.10526315789473684,
+          "avg_steps_success": 131.88235294117646,
+          "avg_time_success": 0.4418691046097699,
+          "avg_max_height": 0.20890452690551625,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_025000": {
+        "success_rate": 0.95,
+        "avg_steps": 135.75,
+        "avg_time": 0.46926308870315553,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 19,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.95,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 127.10526315789474,
+          "avg_time_success": 0.44044392987301473,
+          "avg_max_height": 0.2097552375105427,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_030000": {
+        "success_rate": 0.9,
+        "avg_steps": 142.4,
+        "avg_time": 0.46884348392486574,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 18,
+            "Outcome.NEVER_PICKED_UP": 1,
+            "Outcome.DROPPED_DURING_TRANSPORT": 1,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.9,
+          "pick_rate": 0.95,
+          "drop_rate": 0.05263157894736842,
+          "avg_steps_success": 124.88888888888889,
+          "avg_time_success": 0.4131159782409668,
+          "avg_max_height": 0.1959860661438104,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_035000": {
+        "success_rate": 0.85,
+        "avg_steps": 157.35,
+        "avg_time": 0.5234887599945068,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.85,
+          "pick_rate": 1.0,
+          "drop_rate": 0.1,
+          "avg_steps_success": 132.1764705882353,
+          "avg_time_success": 0.4405846175025491,
+          "avg_max_height": 0.21518839074980342,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_040000": {
+        "success_rate": 0.9,
+        "avg_steps": 146.95,
+        "avg_time": 0.48341759443283083,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 18,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 2,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 0.9,
+          "pick_rate": 1.0,
+          "drop_rate": 0.1,
+          "avg_steps_success": 129.94444444444446,
+          "avg_time_success": 0.432043645117018,
+          "avg_max_height": 0.17855642148543888,
+          "total_episodes": 20
+        }
+      },
+      "checkpoint_045000": {
+        "success_rate": 1.0,
+        "avg_steps": 120.2,
+        "avg_time": 0.40338786840438845,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 20,
+            "Outcome.NEVER_PICKED_UP": 0,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 0
+          },
+          "success_rate": 1.0,
+          "pick_rate": 1.0,
+          "drop_rate": 0.0,
+          "avg_steps_success": 120.2,
+          "avg_time_success": 0.40343977212905885,
+          "avg_max_height": 0.19285896510814218,
+          "total_episodes": 20
+        }
+      },
+      "final": {
+        "success_rate": 0.85,
+        "avg_steps": 148.3,
+        "avg_time": 0.4926753878593445,
+        "failure_summary": {
+          "outcome_counts": {
+            "Outcome.SUCCESS": 17,
+            "Outcome.NEVER_PICKED_UP": 2,
+            "Outcome.DROPPED_DURING_TRANSPORT": 0,
+            "Outcome.MISSED_GOAL": 0,
+            "Outcome.TIMEOUT": 1
+          },
+          "success_rate": 0.85,
+          "pick_rate": 0.9,
+          "drop_rate": 0.0,
+          "avg_steps_success": 121.52941176470588,
+          "avg_time_success": 0.409061263589298,
+          "avg_max_height": 0.19086018204541805,
+          "total_episodes": 20
+        }
+      }
+    },
+    "timestamp": "2026-01-24T12:49:53.882449"
+  }
+}
