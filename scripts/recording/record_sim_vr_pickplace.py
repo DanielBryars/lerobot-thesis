@@ -30,8 +30,14 @@ from pathlib import Path
 import numpy as np
 import msvcrt
 
+# Add editable lerobot install if available (fixes circular import in some venv installs)
+_editable_lerobot = Path(__file__).parent.parent.parent.parent / "lerobot" / "src"
+if _editable_lerobot.exists():
+    sys.path.insert(0, str(_editable_lerobot))
 # Add src to path for lerobot_robot_sim
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+# Add recording dir to path for local imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -223,6 +229,11 @@ def get_recording_metadata(
                 "pos_range_cm": args.pos_range,
                 "rot_range_deg": args.rot_range,
             },
+            "block_center": {
+                "x": args.block_x if args.block_x is not None else 0.217,
+                "y": args.block_y if args.block_y is not None else 0.225,
+                "custom": args.block_x is not None or args.block_y is not None,
+            },
         },
         "git": get_git_info(),
         "leader_arm": get_leader_metadata(leader),
@@ -293,6 +304,8 @@ def main():
     parser.add_argument("--pos_range", type=float, default=4.0, help="Position randomization range in cm")
     parser.add_argument("--rot_range", type=float, default=180.0, help="Rotation randomization range in degrees")
     parser.add_argument("--no-randomize", action="store_true", help="Disable position/rotation randomization")
+    parser.add_argument("--block-x", type=float, default=None, help="Block center X position in meters (default: 0.217)")
+    parser.add_argument("--block-y", type=float, default=None, help="Block center Y position in meters (default: 0.225)")
     parser.add_argument("--depth", action="store_true", help="Enable depth rendering for overhead camera")
 
     args = parser.parse_args()
@@ -399,6 +412,12 @@ def main():
     print(f"FPS: {args.fps}")
     if not args.no_randomize:
         print(f"Randomization: ±{args.pos_range}cm position, ±{args.rot_range}° rotation")
+    if args.block_x is not None or args.block_y is not None:
+        bx = args.block_x if args.block_x is not None else 0.217
+        by = args.block_y if args.block_y is not None else 0.225
+        print(f"Block center: ({bx:.3f}, {by:.3f})")
+    else:
+        print(f"Block center: (0.217, 0.225) [default]")
     print("=" * 60)
     print("\nControls:")
     print("  ENTER - Start recording / Save episode")
@@ -480,7 +499,9 @@ def main():
                     sim_robot.reset_scene(
                         randomize=not args.no_randomize,
                         pos_range=args.pos_range / 100.0,
-                        rot_range=np.radians(args.rot_range)
+                        rot_range=np.radians(args.rot_range),
+                        pos_center_x=args.block_x,
+                        pos_center_y=args.block_y
                     )
                     current_episode_scene = sim_robot.get_scene_info()
                     duplo_pos = current_episode_scene['objects']['duplo']['position']
@@ -505,7 +526,9 @@ def main():
                     sim_robot.reset_scene(
                         randomize=not args.no_randomize,
                         pos_range=args.pos_range / 100.0,
-                        rot_range=np.radians(args.rot_range)
+                        rot_range=np.radians(args.rot_range),
+                        pos_center_x=args.block_x,
+                        pos_center_y=args.block_y
                     )
                     current_episode_scene = sim_robot.get_scene_info()
                     duplo_pos = current_episode_scene['objects']['duplo']['position']
@@ -558,7 +581,9 @@ def main():
                             sim_robot.reset_scene(
                                 randomize=not args.no_randomize,
                                 pos_range=args.pos_range / 100.0,
-                                rot_range=np.radians(args.rot_range)
+                                rot_range=np.radians(args.rot_range),
+                                pos_center_x=args.block_x,
+                                pos_center_y=args.block_y
                             )
                             current_episode_scene = sim_robot.get_scene_info()
                             duplo_pos = current_episode_scene['objects']['duplo']['position']
@@ -584,7 +609,9 @@ def main():
                         sim_robot.reset_scene(
                             randomize=not args.no_randomize,
                             pos_range=args.pos_range / 100.0,
-                            rot_range=np.radians(args.rot_range)
+                            rot_range=np.radians(args.rot_range),
+                            pos_center_x=args.block_x,
+                            pos_center_y=args.block_y
                         )
                         current_episode_scene = sim_robot.get_scene_info()
                         speak(f"Episode {successful_episodes + 1}. Press ENTER to record.")
@@ -605,7 +632,9 @@ def main():
                         sim_robot.reset_scene(
                             randomize=not args.no_randomize,
                             pos_range=args.pos_range / 100.0,
-                            rot_range=np.radians(args.rot_range)
+                            rot_range=np.radians(args.rot_range),
+                            pos_center_x=args.block_x,
+                            pos_center_y=args.block_y
                         )
                         current_episode_scene = sim_robot.get_scene_info()
                         duplo_pos = current_episode_scene['objects']['duplo']['position']
@@ -621,7 +650,9 @@ def main():
                     sim_robot.reset_scene(
                         randomize=not args.no_randomize,
                         pos_range=args.pos_range / 100.0,
-                        rot_range=np.radians(args.rot_range)
+                        rot_range=np.radians(args.rot_range),
+                        pos_center_x=args.block_x,
+                        pos_center_y=args.block_y
                     )
                     current_episode_scene = sim_robot.get_scene_info()
                     speak(f"Press ENTER to record episode {successful_episodes + 1}.")

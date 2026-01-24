@@ -10,7 +10,11 @@ from dataclasses import dataclass
 
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
-from lerobot.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
+# Try both module paths (renamed in newer lerobot versions)
+try:
+    from lerobot.teleoperators.so_leader import SO100LeaderConfig, SO100Leader
+except ImportError:
+    from lerobot.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError
 
@@ -115,3 +119,4 @@ class SO100LeaderSTS3250(SO100Leader):
         self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+

@@ -27,7 +27,7 @@ lerobot-thesis/
 ├── scenes/
 │   ├── so101_with_wrist_cam.xml  # Standard scene (52° overhead FOV)
 │   └── so101_rgbd.xml            # RGBD scene with D435 specs (58° FOV)
-├── recording/
+├── scripts/recording/
 │   ├── record_sim_vr_pickplace.py  # Record demos in VR
 │   ├── rerecord_dataset.py         # Re-record dataset with new scene/cameras
 │   ├── sim_teleop_viewer.py        # Interactive sim viewer with depth
@@ -115,7 +115,7 @@ lerobot-thesis/
 Record pick-and-place demonstrations for training:
 
 ```bash
-python recording/record_sim_vr_pickplace.py --task "Pick up the Duplo block and place it in the bowl" --num_episodes 20
+python scripts/recording/record_sim_vr_pickplace.py --task "Pick up the Duplo block and place it in the bowl" --num_episodes 20
 ```
 
 **Options**:
@@ -146,7 +146,7 @@ Episode auto-completes when the Duplo block lands in the bowl.
 Play back recorded episodes on the physical follower arm:
 
 ```bash
-python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_144730
+python scripts/recording/playback_real_robot.py danbhf/sim_pick_place_20251229_144730
 ```
 
 **Options**:
@@ -165,7 +165,7 @@ python recording/playback_real_robot.py danbhf/sim_pick_place_20251229_144730
 Preview recorded episodes in VR simulation:
 
 ```bash
-python recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_144730
+python scripts/recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_144730
 ```
 
 ### Leader-Follower Teleoperation
@@ -173,7 +173,7 @@ python recording/playback_sim_vr.py danbhf/sim_pick_place_20251229_144730
 Direct teleoperation without simulation (leader controls follower):
 
 ```bash
-python recording/teleoperate_so100.py
+python scripts/recording/teleoperate_so100.py
 ```
 
 ### VR Teleoperation (Test Mode)
@@ -181,8 +181,8 @@ python recording/teleoperate_so100.py
 Test VR setup without recording:
 
 ```bash
-python recording/teleop_sim_vr.py          # With leader arm
-python recording/teleop_sim_vr.py --test   # VR only, no arm
+python scripts/recording/teleop_sim_vr.py          # With leader arm
+python scripts/recording/teleop_sim_vr.py --test   # VR only, no arm
 ```
 
 ### Simulation Viewer
@@ -190,8 +190,8 @@ python recording/teleop_sim_vr.py --test   # VR only, no arm
 Interactive viewer for testing scenes and visualizing depth:
 
 ```bash
-python recording/sim_teleop_viewer.py                              # Default RGBD scene
-python recording/sim_teleop_viewer.py --scene scenes/so101_with_wrist_cam.xml  # Custom scene
+python scripts/recording/sim_teleop_viewer.py                              # Default RGBD scene
+python scripts/recording/sim_teleop_viewer.py --scene scenes/so101_with_wrist_cam.xml  # Custom scene
 ```
 
 **Controls:**
@@ -204,19 +204,46 @@ python recording/sim_teleop_viewer.py --scene scenes/so101_with_wrist_cam.xml  #
 
 The viewer displays external camera, wrist camera, overhead camera, and optionally depth visualization.
 
+### Object Positioning Tool
+
+Find coordinates for custom block positions before recording:
+
+```bash
+python scripts/tools/position_objects.py
+```
+
+**Controls:**
+- `W/S` - Move block forward/backward (X axis, 1cm steps)
+- `A/D` - Move block left/right (Y axis, 1cm steps)
+- `SHIFT + WASD` - Fine movement (2mm steps)
+- `P` - Print block position with copy-paste command
+- `R` - Reset scene
+- `ESC` - Quit
+
+**Output example:**
+```
+>>> BLOCK POSITION: x=0.2500, y=0.1500
+    Height: z=0.0200, Rotation: 45.0 deg
+    Command: --block-x 0.250 --block-y 0.150
+```
+
+Use the printed `--block-x` and `--block-y` values with `record_sim_vr_pickplace.py`.
+
+**Note:** Moving the block far from its initial position may cause rendering artifacts (disappearing floor, visual glitches). These are cosmetic only - the coordinates are still accurate.
+
 ### Re-recording Datasets
 
 Re-record an existing dataset with a new scene or camera setup while preserving the exact same movements:
 
 ```bash
 # Re-record with depth enabled
-python recording/rerecord_dataset.py danbhf/source_dataset --depth
+python scripts/recording/rerecord_dataset.py danbhf/source_dataset --depth
 
 # Specify output name
-python recording/rerecord_dataset.py danbhf/source_dataset --depth --output my_rgbd_dataset
+python scripts/recording/rerecord_dataset.py danbhf/source_dataset --depth --output my_rgbd_dataset
 
 # Use custom scene
-python recording/rerecord_dataset.py danbhf/source_dataset --scene scenes/custom.xml
+python scripts/recording/rerecord_dataset.py danbhf/source_dataset --scene scenes/custom.xml
 ```
 
 **Options:**
@@ -240,7 +267,7 @@ This is useful for:
 Manually upload a recorded dataset:
 
 ```bash
-python recording/upload_dataset.py datasets/20251229_101340 danbhf/my_dataset_name
+python scripts/recording/upload_dataset.py datasets/20251229_101340 danbhf/my_dataset_name
 ```
 
 ### Training a Policy
@@ -319,7 +346,7 @@ This repository supports training in two action spaces:
 
 **Converting a Dataset:**
 ```bash
-python recording/convert_to_ee_actions.py danbhf/source_dataset danbhf/output_dataset_ee
+python scripts/recording/convert_to_ee_actions.py danbhf/source_dataset danbhf/output_dataset_ee
 ```
 
 **Training with EE Actions:**
@@ -359,14 +386,14 @@ renderer.disable_depth_rendering()
 
 **Testing depth with the teleop viewer:**
 ```bash
-python recording/sim_teleop_viewer.py                          # Default scene
-python recording/sim_teleop_viewer.py --scene scenes/so101_rgbd.xml  # D435 FOV
+python scripts/recording/sim_teleop_viewer.py                          # Default scene
+python scripts/recording/sim_teleop_viewer.py --scene scenes/so101_rgbd.xml  # D435 FOV
 # Press Z to toggle depth view
 ```
 
 **Recording with depth:**
 ```bash
-python recording/record_sim_vr_pickplace.py --depth --num_episodes 40
+python scripts/recording/record_sim_vr_pickplace.py --depth --num_episodes 40
 ```
 
 **Training with depth:**

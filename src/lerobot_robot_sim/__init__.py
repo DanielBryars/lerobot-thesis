@@ -214,8 +214,9 @@ class SO100Sim(Robot):
         try:
             # Import VR renderer from recording directory
             import sys
-            recording_path = REPO_ROOT / "recording"
+            recording_path = REPO_ROOT / "scripts" / "recording"
             sys.path.insert(0, str(recording_path))
+            sys.path.insert(0, str(REPO_ROOT))  # For utils.constants
             from teleop_sim_vr import VRRenderer
 
             self.vr_renderer = VRRenderer(self.mj_model, self.mj_data)
@@ -231,18 +232,27 @@ class SO100Sim(Robot):
     def configure(self) -> None:
         pass  # No configuration needed
 
-    def reset_scene(self, randomize: bool = True, pos_range: float = 0.02, rot_range: float = np.pi) -> None:
+    def reset_scene(self, randomize: bool = True, pos_range: float = 0.02, rot_range: float = np.pi,
+                    pos_center_x: float = None, pos_center_y: float = None) -> None:
         """Reset the simulation to initial state with optional randomization.
 
         Args:
             randomize: If True, randomize duplo position and orientation
             pos_range: Max random offset in meters (default ±2cm)
             rot_range: Max random rotation in radians (default ±180°)
+            pos_center_x: Optional X center position for block (default: use XML default)
+            pos_center_y: Optional Y center position for block (default: use XML default)
         """
         if not self.is_connected:
             return
 
         mujoco.mj_resetData(self.mj_model, self.mj_data)
+
+        # Set custom center position if provided
+        if pos_center_x is not None:
+            self.mj_data.qpos[0] = pos_center_x
+        if pos_center_y is not None:
+            self.mj_data.qpos[1] = pos_center_y
 
         if randomize:
             # Duplo free joint is at qpos[0:7]: pos(3) + quat(4)

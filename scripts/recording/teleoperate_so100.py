@@ -17,6 +17,10 @@ import time
 import sys
 import json
 from pathlib import Path
+
+# Add recording dir to path for local imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from SO100FollowerSTS3250 import SO100FollowerSTS3250, SO100FollowerSTS3250Config
 from SO100LeaderSTS3250 import SO100LeaderSTS3250, SO100LeaderSTS3250Config
