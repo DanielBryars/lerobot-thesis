@@ -1800,6 +1800,50 @@ Episodes  005K   010K   015K   020K   025K   030K   035K   040K   045K   Final
 - **Checkpoint selection matters**: Early stopping not recommended with limited data
 - **The 40-episode anomaly** suggests data diversity can temporarily hurt performance
 
+### The 40-60 Episode Dip: A Grokking Hypothesis
+
+The non-monotonic performance dip at 40-60 episodes is intriguing. More data temporarily *hurt* performance:
+
+| Episodes | Best Success |
+|----------|--------------|
+| 20 | 80% |
+| 40 | 55% (↓) |
+| 60 | 60% (↓) |
+| 80 | 85% (↑) |
+
+**Hypothesis: Memorization → Generalization Transition**
+
+This pattern may be related to **grokking** - the phenomenon where neural networks suddenly generalize after a period of memorization, often well after achieving low training loss.
+
+- **1-20 episodes**: Limited diversity. The model can **memorize** the trajectories and achieve decent performance through pattern matching.
+- **40-60 episodes**: Increased trajectory diversity. Pure memorization no longer works - the model must **generalize**. But 45k training steps may not be enough for this transition to complete.
+- **80+ episodes**: Enough data AND enough training for generalization to emerge within the 45k step budget.
+
+**Supporting evidence:**
+1. Checkpoint sensitivity decreases with more data - consistent with generalization replacing memorization
+2. The dip recovers sharply at 80 episodes - suggests a phase transition, not gradual improvement
+3. With 120+ episodes, almost ANY checkpoint achieves high performance - the model generalizes robustly
+
+**Testable prediction:** Training 40-60 episode models for longer (e.g., 100k steps) should recover performance as the model has time to "grok" the generalization.
+
+### Practical Implications
+
+**How much teleoperation time is needed?**
+
+| Episodes | Recording Time* | Best Success |
+|----------|----------------|--------------|
+| 20 | ~10 min | 80% |
+| 100 | ~50 min | 95% |
+| 120 | ~60 min | 100% |
+
+*Assuming ~30 seconds per episode
+
+For a deployment scenario, ~1 hour of demonstration collection achieves perfect performance on this task. This is reasonable for most practical applications.
+
+**Checkpoint sensitivity as a proxy for generalization:**
+- High checkpoint sensitivity → model is memorizing, fragile
+- Low checkpoint sensitivity → model is generalizing, robust
+
 ---
 
 ## 2026-01-23: Multi-Position Recording Setup
@@ -1847,9 +1891,15 @@ This appears to be a rendering buffer issue from direct qpos manipulation. The c
 
 ### Recordings Made
 
-| Dataset | Position (X, Y) | Episodes | HuggingFace URL |
-|---------|-----------------|----------|-----------------|
-| `danbhf/sim_pick_place_20260124_142023` | (0.337, -0.015) | 20 | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_142023 |
+| Dataset | Position (X, Y) | Episodes | Frames | HuggingFace URL |
+|---------|-----------------|----------|--------|-----------------|
+| `danbhf/sim_pick_place_20260124_142023` | (0.337, -0.015) | 20 | - | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_142023 |
+| `danbhf/sim_pick_place_20260124_181337` | (0.337, -0.015) | 20 | 2828 | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_181337 |
+| `danbhf/sim_pick_place_20260124_183145` | (0.337, -0.015) | 20 | 2769 | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_183145 |
+| `danbhf/sim_pick_place_20260124_191458` | (0.337, -0.015) | 20 | 2747 | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_191458 |
+| `danbhf/sim_pick_place_20260124_192424` | (0.337, -0.015) | 20 | 2193 | https://huggingface.co/datasets/danbhf/sim_pick_place_20260124_192424 |
+
+**Running total at position (0.337, -0.015): 100 episodes**
 
 **Recording Command:**
 ```bash
@@ -1858,9 +1908,95 @@ python scripts/recording/record_sim_vr_pickplace.py -n 20 --block-x 0.337 --bloc
 
 **Purpose:** Extend training data to include episodes from a different starting position to test if spatial generalization improves with multi-position training data.
 
+### Merged Dataset
+
+- **Merged dataset**: `danbhf/sim_pick_place_pos2_100ep`
+- **Total episodes**: 100
+- **Total frames**: 13,700
+- **Position**: (0.337, -0.015)
+
+### Training Run
+
+```bash
+python scripts/training/train_act.py \
+  danbhf/sim_pick_place_pos2_100ep \
+  --steps 45000 \
+  --batch_size 8 \
+  --save_freq 5000 \
+  --output_dir outputs/train/act_pos2_100ep \
+  --cache_dataset \
+  --run_name "act_pos2_100ep"
+```
+
+### Evaluation
+
+Run with block position matching training data:
+```bash
+python scripts/inference/eval.py outputs/train/act_pos2_100ep --local --all-checkpoints --episodes 20 --block-x 0.337 --block-y -0.015
+```
+
+### Results
+
+| Checkpoint | Success Rate | Avg Steps | Notes |
+|------------|--------------|-----------|-------|
+| checkpoint_005000 | 80.0% | 208.9 | |
+| checkpoint_010000 | 80.0% | 195.8 | |
+| checkpoint_015000 | 85.0% | 218.4 | |
+| **checkpoint_020000** | **90.0%** | 196.3 | **Best** |
+| checkpoint_025000 | 85.0% | 188.6 | |
+| checkpoint_030000 | 55.0% | 210.2 | Anomalous dip |
+| checkpoint_035000 | 80.0% | 203.9 | |
+| checkpoint_040000 | 85.0% | 215.7 | |
+| checkpoint_045000 | 70.0% | 219.1 | |
+| final | 85.0% | 182.6 | |
+
+**Key Observations:**
+- Best checkpoint at 20k steps (90%) - earlier than typical
+- Significant dip at 30k steps (55%) - similar pattern to data scaling 40-60 episode dip
+- Performance degrades after 20k, suggesting possible overfitting
+- Peak of 90% is lower than the 100% achieved with original position (157 episodes)
+- Most common failure mode: `dropped_during_transport`
+
+### Spatial Generalization Test
+
+Tested best checkpoint (020000) across a 7x7 grid centered around training position.
+
+```bash
+python scripts/experiments/eval_spatial_generalization.py outputs/train/act_pos2_100ep \
+  --checkpoint checkpoint_020000 --episodes 10 --grid-size 7 \
+  --x-min 0.18 --x-max 0.48 --y-min -0.15 --y-max 0.15
+```
+
+**Results:**
+
+| Distance from Training | Success Rate | Positions |
+|------------------------|--------------|-----------|
+| Within 5cm | 66.7% | 3 |
+| Within 10cm | 33.1% | 13 |
+| Within 15cm | 14.8% | 29 |
+| Within 20cm | 9.6% | 46 |
+| **Overall** | **9.4%** | 49 |
+
+**Key Finding:** Spatial generalization is extremely limited. Performance drops rapidly beyond 5cm from the training position - consistent with previous experiments at the original position.
+
+![Spatial Generalization Plot](outputs/experiments/spatial_eval_pos2_plot.png)
+
 ---
 
 ## Future Experiments
+
+### Disk-Caching DataLoader
+
+**TODO**: Implement a general-purpose disk-caching DataLoader wrapper.
+
+**Problem**: Video decoding is slow and causes GPU idle time between batches. RAM caching works but requires ~30GB for 100 episodes.
+
+**Solution**: Cache decoded frames to disk on first access:
+- First epoch: decode + write to disk cache
+- Subsequent epochs: fast reads from disk
+- No RAM pressure, ~10-50x disk space vs compressed video
+
+Could be a reusable utility for any LeRobot training.
 
 ### ACT Training Horizon Experiment
 

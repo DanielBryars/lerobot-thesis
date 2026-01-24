@@ -190,6 +190,8 @@ def run_evaluation(
     mujoco_viewer: bool = False,
     dataset_repo_id: str = None,
     temporal_ensemble_coeff: float = None,
+    block_x: float = None,
+    block_y: float = None,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -212,6 +214,8 @@ def run_evaluation(
         dataset_repo_id: Optional dataset repo ID to show training info
         temporal_ensemble_coeff: If set, enables temporal ensembling with this coefficient
             (e.g., 0.01). Predicts every step and averages overlapping chunks.
+        block_x: Optional X position for block center (default: scene XML default)
+        block_y: Optional Y position for block center (default: scene XML default)
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -383,7 +387,8 @@ def run_evaluation(
     for ep in range(num_episodes):
         print(f"  Episode {ep+1}/{num_episodes}...", end=" ", flush=True)
         policy.reset()  # Reset action chunking state
-        sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
+        sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi,
+                              pos_center_x=block_x, pos_center_y=block_y)
 
         # Reset temporal ensembling state for this episode
         if use_ensemble:
