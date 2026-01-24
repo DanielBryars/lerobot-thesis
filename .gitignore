@@ -213,8 +213,17 @@ wandb/
 .vr_stereo_settings.json
 .wrist_camera_settings.json
 
-# Trained Models
+# Trained Models and large outputs
 outputs/
+
+# But keep experiments folder (just exclude large files)
+!outputs/experiments/
+outputs/experiments/**/*.safetensors
+outputs/experiments/**/*.pt
+outputs/experiments/**/*.pth
+outputs/experiments/**/*.parquet
+outputs/experiments/**/checkpoint_*/
+outputs/experiments/**/ep_*/
 
 # Downloaded model cache for evaluation
 eval_cache/

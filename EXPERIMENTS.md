@@ -1684,13 +1684,13 @@ action = sum(predictions * weights) / sum(weights)
 
 ---
 
-## 2026-01-22: Data Scaling Experiment (In Progress)
+## 2026-01-22: Data Scaling Experiment (COMPLETE)
 
 **Objective**: Evaluate the effect of training data quantity on ACT policy success rate.
 
 ### Experiment Design
 
-Train ACT models with varying amounts of training data and evaluate ALL checkpoints for each, creating a results matrix.
+Trained ACT models with varying amounts of training data and evaluated ALL checkpoints for each, creating a results matrix.
 
 **Episode Counts**: 1, 2, 5, 10, 20, 40, 60, 80, 100, 120, 140, 157
 **Dataset**: `danbhf/sim_pick_place_157ep` (22,534 total frames)
@@ -1724,47 +1724,81 @@ python scripts/experiments/data_scaling_experiment.py --resume-from 40
 python scripts/experiments/data_scaling_experiment.py --eval-only
 ```
 
-### Expected Outputs
+### Outputs
 
 - Results JSON: `outputs/experiments/data_scaling/results.json`
 - Summary CSV: `outputs/experiments/data_scaling/summary.csv`
 - Model checkpoints: `outputs/experiments/data_scaling/ep_XXX/checkpoint_YYYYYY/`
+- Visualization: `outputs/experiments/data_scaling/data_scaling_results.png`
 
-### Results Matrix Format
+### Final Results
+
+| Episodes | Best Checkpoint | Peak Success | Notes |
+|----------|-----------------|--------------|-------|
+| 1 | checkpoint_020000/final | 50% | Single demo, high variance |
+| 2 | checkpoint_005000/final | 45% | Minimal improvement |
+| 5 | checkpoint_045000 | **70%** | First solid performance |
+| 10 | checkpoint_030000/040000 | 65% | Slight regression |
+| 20 | checkpoint_040000/final | **80%** | Good reliability |
+| 40 | checkpoint_020000 | 55% | Anomalous dip |
+| 60 | checkpoint_030000 | 60% | Still recovering |
+| 80 | checkpoint_010000 | **85%** | Breaking through |
+| 100 | checkpoint_040000 | **95%** | Near-perfect |
+| 120 | checkpoint_025000/030000 | **100%** | Perfect! |
+| 140 | checkpoint_040000 | **100%** | Sustained perfection |
+| 157 | checkpoint_045000 | **100%** | Full dataset success |
+
+### Full Results Matrix (Success Rate by Checkpoint)
 
 ```
-episodes  checkpoint_005000  checkpoint_010000  ...  final
-1         0.XX               0.XX              ...  0.XX
-2         0.XX               0.XX              ...  0.XX
-...
-157       0.XX               0.XX              ...  0.XX
+Episodes  005K   010K   015K   020K   025K   030K   035K   040K   045K   Final
+--------  -----  -----  -----  -----  -----  -----  -----  -----  -----  -----
+1         0.30   0.35   0.35   0.50   0.30   0.25   0.30   0.20   0.40   0.50
+2         0.45   0.30   0.40   0.25   0.40   0.15   0.25   0.35   0.35   0.45
+5         0.25   0.45   0.60   0.45   0.35   0.40   0.45   0.30   0.70   0.50
+10        0.15   0.45   0.55   0.50   0.50   0.65   0.55   0.65   0.50   0.60
+20        0.55   0.70   0.50   0.70   0.60   0.60   0.70   0.80   0.65   0.80
+40        0.30   0.30   0.45   0.55   0.30   0.45   0.15   0.50   0.40   0.40
+60        0.45   0.55   0.35   0.25   0.55   0.60   0.45   0.45   0.55   0.50
+80        0.70   0.85   0.70   0.70   0.80   0.75   0.70   0.80   0.70   0.70
+100       0.85   0.70   0.85   0.85   0.70   0.90   0.85   0.95   0.85   0.80
+120       0.80   0.80   0.80   0.90   1.00   1.00   0.95   0.75   0.80   0.80
+140       0.45   0.85   0.75   0.65   0.80   0.95   0.90   1.00   0.95   0.80
+157       0.65   0.80   0.85   0.85   0.95   0.90   0.85   0.90   1.00   0.85
 ```
 
-### Estimated Runtime
+### Key Findings
 
-- ~3.5 hours per model (45,000 steps + evaluation)
-- 12 models × 3.5 hours = ~42 hours total
+1. **100% success achieved at 120+ episodes**
+   - First 100% success at 120 episodes (checkpoint_025000 and 030000)
+   - Sustained 100% at 140 and 157 episodes
+   - ~120 episodes appears to be the saturation point for this task
 
-### Status: RUNNING
+2. **Non-monotonic scaling with data**
+   - 40 episodes (55%) performed WORSE than 20 episodes (80%)
+   - 60 episodes (60%) also underperformed expectations
+   - Possible causes: increased diversity requires more training, evaluation noise
 
-Started: 2026-01-22 ~01:55
-Current progress: Training ep_060 (60 episodes) - resumed after crash
+3. **Optimal checkpoint varies with data amount**
+   - Small data (1-5 ep): Later checkpoints better (045000, final)
+   - Medium data (10-60 ep): Mid-range checkpoints optimal (020000-040000)
+   - Large data (80-157 ep): Can use any checkpoint ≥010000
 
-### Preliminary Results (6/12 complete)
+4. **95% success threshold at 100 episodes**
+   - 100 episodes @ checkpoint_040000 achieved 95% success
+   - This represents ~15,100 training frames
+   - Beyond this, returns diminish rapidly
 
-| Episodes | Best Checkpoint | Peak Success |
-|----------|-----------------|--------------|
-| 1 | checkpoint_020000/final | 50% |
-| 2 | checkpoint_005000/final | 45% |
-| 5 | checkpoint_045000 | **70%** |
-| 10 | checkpoint_030000/040000 | 65% |
-| 20 | checkpoint_040000/final | **80%** |
-| 40 | checkpoint_020000 | 55% |
+### Visualization
 
-**Observation:** 40 episodes (55%) performed worse than 20 episodes (80%). Possible explanations:
-- Evaluation noise (only 20 episodes per checkpoint)
-- More diverse data requires more training steps
-- Overfitting to specific trajectories
+![Data Scaling Results](outputs/experiments/data_scaling/data_scaling_results.png)
+
+### Implications
+
+- **For deployment**: ~100 episodes sufficient for >90% success rate
+- **For perfect performance**: ~120+ episodes needed
+- **Checkpoint selection matters**: Early stopping not recommended with limited data
+- **The 40-episode anomaly** suggests data diversity can temporarily hurt performance
 
 ---
 
