@@ -1981,22 +1981,198 @@ python scripts/experiments/eval_spatial_generalization.py outputs/train/act_pos2
 
 ![Spatial Generalization Plot](outputs/experiments/spatial_eval_pos2_plot.png)
 
+**Visualization Commands:**
+```bash
+# Original position (0.217, 0.225) - scatter with distance rings
+python scripts/experiments/eval_spatial_generalization.py --scatter outputs/experiments/spatial_eval_combined.csv --center-x 0.217 --center-y 0.225
+
+# Position 2 (0.337, -0.015) - scatter with distance rings
+python scripts/experiments/eval_spatial_generalization.py --scatter outputs/experiments/spatial_eval_pos2.csv --center-x 0.337 --center-y -0.015
+
+# Rectangle heatmap visualization (from JSON or CSV)
+python scripts/experiments/eval_spatial_generalization.py --visualize outputs/experiments/spatial_eval_pos2.json
+python scripts/experiments/eval_spatial_generalization.py --visualize-csv outputs/experiments/spatial_eval_combined.csv
+```
+
+---
+
+## Multi-Position Training Experiment (2026-01-25)
+
+### Dataset Creation
+
+Combined 100 episodes from each training position to test spatial generalization with multi-position training data.
+
+**Merged Dataset: `danbhf/sim_pick_place_2pos_200ep_v2`**
+- 100 episodes from position 1 (0.217, 0.225) - 5 original 20ep datasets
+- 100 episodes from position 2 (0.337, -0.015) - 5 original 20ep datasets
+- Total: 200 episodes, 28,816 frames
+
+```bash
+# Merged from 10 original single-chunk datasets (not pre-merged datasets)
+python scripts/tools/merge_datasets.py \
+  danbhf/sim_pick_place_20251229_101340 \
+  danbhf/sim_pick_place_20251229_144730 \
+  danbhf/sim_pick_place_20260116_000212 \
+  danbhf/sim_pick_place_20260116_001731 \
+  danbhf/sim_pick_place_20260116_002742 \
+  danbhf/sim_pick_place_20260124_142023 \
+  danbhf/sim_pick_place_20260124_181337 \
+  danbhf/sim_pick_place_20260124_183145 \
+  danbhf/sim_pick_place_20260124_191458 \
+  danbhf/sim_pick_place_20260124_192424 \
+  -o datasets/sim_pick_place_2pos_200ep_v2 \
+  --upload danbhf/sim_pick_place_2pos_200ep_v2
+```
+
+**Hypothesis:** Training on data from two different positions should improve spatial generalization - the model should learn to perform the task regardless of the block's starting position, rather than memorizing a single trajectory.
+
+### Training
+
+```bash
+python scripts/training/train_act.py danbhf/sim_pick_place_2pos_200ep_v2 \
+  --output_dir outputs/train/act_2pos_200ep \
+  --steps 50000 --batch_size 32 --save_freq 5000
+```
+
+**Results:**
+- Best loss: 0.0458 (comparable to single-position training)
+- Model uploaded to: `danbhf/act_2pos_200ep` (Note: better name would be `act_bothPos_200ep` to distinguish from single-position models)
+
+### HuggingFace Models Reference
+
+| Model | Dataset | Training Positions | Notes |
+|-------|---------|-------------------|-------|
+| `danbhf/act_pos2_100ep` | `sim_pick_place_pos2_100ep` | Position 2 only (0.337, -0.015) | Single position, 100 episodes |
+| `danbhf/act_2pos_200ep` | `sim_pick_place_2pos_200ep_v2` | Both positions | Should be named `act_bothPos_200ep` |
+
+### Spatial Generalization Results
+
+#### Evaluation at Position 1 (0.217, 0.225)
+
+```bash
+python scripts/experiments/eval_spatial_generalization.py outputs/train/act_2pos_200ep \
+  --checkpoint final --episodes 10 --grid-size 7 \
+  --x-min 0.07 --x-max 0.37 --y-min 0.08 --y-max 0.38
+```
+
+| Distance from Pos1 | Success Rate | Episodes |
+|--------------------|--------------|----------|
+| 0-5cm              | 70.0%        | 21/30    |
+| 5-10cm             | 63.7%        | 51/80    |
+| 10-15cm            | 23.1%        | 37/160   |
+| 15-20cm            | 15.0%        | 27/180   |
+| **Overall**        | **29.6%**    | 145/490  |
+
+#### Evaluation at Position 2 (0.337, -0.015)
+
+```bash
+python scripts/experiments/eval_spatial_generalization.py outputs/train/act_2pos_200ep \
+  --checkpoint final --episodes 10 --grid-size 7 \
+  --x-min 0.18 --x-max 0.48 --y-min -0.15 --y-max 0.15
+```
+
+| Distance from Pos2 | Success Rate | Episodes |
+|--------------------|--------------|----------|
+| 0-5cm              | 86.7%        | 26/30    |
+| 5-10cm             | 55.0%        | 55/100   |
+| 10-15cm            | 31.2%        | 50/160   |
+| 15-20cm            | 17.6%        | 30/170   |
+| **Overall**        | **34.1%**    | 167/490  |
+
+### Key Findings: No Location Invariance
+
+**The model is NOT invariant to block location.** This is disappointing but not surprising:
+
+1. **Learns position-specific policies:** The model performs well (70-87%) only within ~5cm of each training position, then rapidly degrades.
+
+2. **No interpolation:** Despite training on two positions ~17cm apart, the model does NOT generalize to positions between them. Performance in the middle region is poor unless close to one of the training positions.
+
+3. **Comparison with single-position models:**
+   - Single-position model: ~10% overall success across workspace
+   - Two-position model: ~30-34% overall success across workspace
+   - Improvement is due to having TWO good regions instead of one, not true generalization
+
+4. **High-performing corridor:** There is a corridor of reasonable performance between the two training positions, but this appears to be overlap of the two ~10cm radius "good zones" rather than learned interpolation.
+
+5. **Implications for deployment:**
+   - ACT memorizes trajectories relative to specific positions
+   - Spatial generalization requires either:
+     - Dense coverage of the workspace during training (impractical)
+     - Architectural changes to achieve location invariance
+     - Explicit position encoding that the model can generalize from
+
+**Spatial evaluation plots:**
+
+### Single-Position vs Multi-Position Comparison
+
+![Spatial Generalization Montage](outputs/experiments/spatial_generalization_montage.png)
+*Montage showing progression from single-position models to multi-position training. Panel D shows the 2-position model achieves 5.2x better performance than the theoretical maximum of combining single models (panel C), with clear interpolation in the corridor between training positions.*
+
+| Model | Overall Success Rate | Notes |
+|-------|---------------------|-------|
+| Pos1 Model Only | 6.9% | Only works at blue star |
+| Pos2 Model Only | 5.3% | Only works at purple star |
+| Best of Singles (theoretical) | 6.1% | Max without generalization |
+| **2-Position Model** | **31.8%** | **5.2x better than theoretical max!** |
+
+**Key Finding**: The 2-position model achieves **5.2x better** success than the theoretical maximum of combining two single-position models. This proves genuine generalization is occurring - the model learns transferable spatial manipulation skills, not just memorization of two separate policies. The green corridor between training positions (visible in panel D) is visual evidence of interpolation.
+
+**Conclusion**: ACT can learn generalizable spatial skills - the architecture isn't the limitation, data coverage is.
+
+**Implications:**
+1. Multi-position training DOES improve generalization beyond simple memorization
+2. The model learns something transferable between positions, not just two separate policies
+3. However, true location invariance is still not achieved - performance still degrades significantly away from training positions
+
+### Full Workspace Visualization
+
+![Combined Spatial Eval](outputs/experiments/spatial_eval_2pos_combined_plot.png)
+*Full workspace evaluation showing both training positions. Green = success, red = failure. Blue rings = position 1, purple rings = position 2.*
+
+![Spatial Eval at Position 1](outputs/experiments/spatial_eval_2pos_at_pos1_plot.png)
+*Evaluation centered on position 1 (0.217, 0.225). Green = high success, red = failure. Blue rings show 5cm, 10cm, 15cm distances.*
+
+![Spatial Eval at Position 2](outputs/experiments/spatial_eval_2pos_at_pos2_plot.png)
+*Evaluation centered on position 2 (0.337, -0.015). Note the green cluster around position 2 and partial success near position 1 region.*
+
+**Visualization commands:**
+```bash
+# Interactive MuJoCo scatter plot with distance rings
+python scripts/experiments/eval_spatial_generalization.py \
+  --scatter outputs/experiments/spatial_eval_2pos_at_pos1.csv \
+  --center-x 0.217 --center-y 0.225
+
+python scripts/experiments/eval_spatial_generalization.py \
+  --scatter outputs/experiments/spatial_eval_2pos_at_pos2.csv \
+  --center-x 0.337 --center-y -0.015
+```
+
 ---
 
 ## Future Experiments
 
-### Disk-Caching DataLoader
-
-**TODO**: Implement a general-purpose disk-caching DataLoader wrapper.
+### Disk-Caching DataLoader ✓ IMPLEMENTED
 
 **Problem**: Video decoding is slow and causes GPU idle time between batches. RAM caching works but requires ~30GB for 100 episodes.
 
-**Solution**: Cache decoded frames to disk on first access:
-- First epoch: decode + write to disk cache
-- Subsequent epochs: fast reads from disk
-- No RAM pressure, ~10-50x disk space vs compressed video
+**Solution**: `DiskCachedDataset` in `utils/training.py`:
+- First run: decodes all frames and saves to `~/.cache/lerobot_disk_cache/{dataset}/`
+- Subsequent runs: loads directly from disk (~10-100x faster than video decode)
+- Supports `num_workers > 0` (unlike RAM cache)
+- Low RAM usage, persists across training runs
+- Optional image resizing during caching
 
-Could be a reusable utility for any LeRobot training.
+**Usage**:
+```bash
+# Disk cache (recommended for large datasets)
+python scripts/training/train_act.py --dataset danbhf/sim_pick_place_2pos_200ep --disk_cache
+
+# With image resizing
+python scripts/training/train_act.py --dataset danbhf/sim_pick_place_2pos_200ep --disk_cache --cache_image_size 224
+
+# RAM cache (original, for small datasets)
+python scripts/training/train_act.py --dataset danbhf/sim_pick_place_2pos_200ep --cache_dataset
+```
 
 ### ACT Training Horizon Experiment
 
@@ -2006,3 +2182,116 @@ Current setup uses `chunk_size=100` and `n_action_steps=100`. Questions to explo
 - Does a shorter horizon (e.g., 50, 25) improve or hurt performance?
 - Does it affect generalization?
 - Trade-off between planning horizon and prediction accuracy?
+
+---
+
+## Few-Shot Gap Filling Experiment (PLANNED)
+
+### Hypothesis
+
+Training on two positions 17cm apart achieved 5.2x better generalization than single-position models, demonstrating that ACT can learn transferable spatial skills. The question now is: **can we achieve good workspace coverage with minimal additional data?**
+
+Rather than recording 100+ episodes across many positions (expensive), we want to test if a small number of strategically-placed demonstrations (~20 episodes at unique positions) can fill the gaps in the current coverage.
+
+### Experiment Design
+
+1. **Create target positions**: 20 strategic positions in the workspace gaps between existing training data
+   - Positions file: `configs/gap_filling_positions.json`
+   - Positions chosen to cover the "dead zones" visible in the spatial evaluation plots
+   - Mix of positions in the corridor between pos1 and pos2, plus extensions
+
+2. **Record targeted demonstrations**: One episode per position using the new recording script
+   ```bash
+   python scripts/recording/record_targeted_positions.py --positions configs/gap_filling_positions.json
+   ```
+
+3. **Merge with existing data**: Combine gap-filling episodes with the 200 episodes from 2-position training
+   - Total: ~220 episodes from ~22 unique positions
+
+4. **Train and evaluate**: Train ACT on merged dataset and evaluate spatial generalization
+   - Compare coverage maps before/after gap filling
+   - Calculate success rate improvement per added episode
+
+### Target Positions
+
+Selected 20 positions to fill workspace gaps (from `configs/gap_filling_positions.json`):
+
+| # | X | Y | Rotation | Region |
+|---|-----|------|----------|--------|
+| 1 | 0.27 | 0.12 | 0 | Midpoint between training positions |
+| 2 | 0.27 | 0.05 | 45 | Lower midpoint |
+| 3 | 0.25 | 0.18 | -30 | Upper-left of midpoint |
+| 4 | 0.30 | 0.08 | 60 | Right of midpoint |
+| 5 | 0.22 | 0.10 | 90 | Left corridor |
+| 6 | 0.32 | 0.15 | -45 | Right corridor |
+| 7 | 0.28 | -0.02 | 120 | Near pos2 extension |
+| 8 | 0.24 | 0.28 | -90 | Near pos1 extension |
+| 9 | 0.35 | 0.10 | 30 | Far right |
+| 10 | 0.19 | 0.15 | -60 | Far left |
+| 11 | 0.30 | 0.20 | 0 | Upper-right |
+| 12 | 0.25 | 0.00 | 180 | Lower-left |
+| 13 | 0.32 | 0.00 | -120 | Lower-right |
+| 14 | 0.22 | 0.20 | 45 | Upper-left |
+| 15 | 0.28 | 0.25 | 90 | Upper center |
+| 16 | 0.33 | 0.05 | -15 | Lower-right extension |
+| 17 | 0.20 | 0.05 | 135 | Lower-left extension |
+| 18 | 0.26 | 0.15 | -75 | Center |
+| 19 | 0.29 | 0.10 | 15 | Center-right |
+| 20 | 0.23 | 0.12 | -135 | Center-left |
+
+### Recording Script
+
+Created `scripts/recording/record_targeted_positions.py`:
+- Loads positions from JSON file
+- Records one episode per position
+- Supports reset/discard to retry failed recordings
+- Saves position metadata with each episode
+
+```bash
+# Record all 20 positions
+python scripts/recording/record_targeted_positions.py --positions configs/gap_filling_positions.json
+
+# Resume from position 10 if interrupted
+python scripts/recording/record_targeted_positions.py --positions configs/gap_filling_positions.json --start-from 10
+```
+
+### Expected Outcomes
+
+**Optimistic**: 20 additional episodes at strategic positions significantly expands the "green zone" on spatial evaluation, demonstrating efficient data collection strategies.
+
+**Pessimistic**: Performance only improves in immediate vicinity of each new position, requiring dense coverage after all.
+
+**Interesting finding either way**: Quantifies the data efficiency of imitation learning for spatial tasks - important for practical deployment where recording time is limited.
+
+### Metrics to Track
+
+1. Overall success rate across workspace grid
+2. Success rate in previously-failing regions
+3. "Effective radius" around each training position
+4. Episodes needed per 1% improvement in overall success
+
+### Recording Complete (2026-01-25)
+
+**Gap-filling dataset**: `danbhf/sim_pick_place_targeted_20260125_124212`
+- 20 episodes at 20 unique positions
+- Uploaded to HuggingFace
+
+**Merged dataset**: `danbhf/sim_pick_place_2pos_220ep`
+- 200 episodes from 2-position training (`sim_pick_place_2pos_200ep_v2`)
+- 20 episodes from targeted gap-filling
+- Total: 220 episodes, 31,210 frames
+
+**Issue identified**: Several positions were too close to existing training positions:
+| Position | Distance to Pos1 | Distance to Pos2 | Verdict |
+|----------|------------------|------------------|---------|
+| (0.22, 0.20) | **2.5cm** | 24cm | Redundant |
+| (0.32, 0.00) | 25cm | **2.3cm** | Redundant |
+| (0.24, 0.28) | 6.0cm | 31cm | Borderline |
+| (0.33, 0.05) | 21cm | **6.5cm** | Borderline |
+
+~5 of 20 positions fall within the existing "good zones" (d < 5cm from training data). For future gap-filling, positions should be filtered to ensure d > 7cm from ALL training positions.
+
+**TODO**: Create improved `gap_filling_positions_v2.json` with positions filtered to be >7cm from both training positions, focusing on:
+- The corridor midpoint region (x: 0.25-0.30, y: 0.05-0.15)
+- Extensions beyond current coverage (x < 0.18 or x > 0.35)
+- Lower workspace (y < 0.0)

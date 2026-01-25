@@ -48,6 +48,7 @@ from utils.constants import MOTOR_NAMES
 from utils.ik_solver import IKSolver
 from utils.training import (
     CachedDataset,
+    DiskCachedDataset,
     cycle,
     prepare_obs_for_policy,
     run_evaluation,
@@ -73,7 +74,8 @@ def main():
     parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--eval_episodes", type=int, default=0, help="Evaluation episodes per checkpoint (0=disabled)")
     parser.add_argument("--eval_randomize", action="store_true", help="Randomize object position during eval")
-    parser.add_argument("--cache_dataset", action="store_true", help="Pre-cache dataset in memory (eliminates GPU idle time)")
+    parser.add_argument("--cache_dataset", action="store_true", help="Pre-cache dataset in memory (eliminates GPU idle time, high RAM usage)")
+    parser.add_argument("--disk_cache", action="store_true", help="Cache decoded frames to disk (fast training, low RAM, persists across runs)")
     parser.add_argument("--cache_image_size", type=int, default=None, help="Resize images during caching (e.g., 224)")
     parser.add_argument("--use_joint_actions", action="store_true", help="Use action_joints instead of action (for EE datasets with preserved joint actions)")
     parser.add_argument("--cameras", type=str, default=None,
@@ -183,10 +185,19 @@ def main():
     raw_dataset = LeRobotDataset(args.dataset, delta_timestamps=delta_timestamps)
     print(f"Dataset size: {len(raw_dataset)} frames")
 
-    # Optionally cache dataset in memory to eliminate video decoding bottleneck
-    if args.cache_dataset:
+    # Optionally cache dataset to eliminate video decoding bottleneck
+    if args.cache_dataset and args.disk_cache:
+        print("Warning: Both --cache_dataset and --disk_cache specified, using disk cache")
+        args.cache_dataset = False
+
+    if args.disk_cache:
+        # Disk cache: persists across runs, supports num_workers > 0
+        dataset = DiskCachedDataset(raw_dataset, resize_images_to=args.cache_image_size)
+        num_workers = args.num_workers
+        pin_memory = device.type != "cpu"
+    elif args.cache_dataset:
+        # RAM cache: fast but high memory usage, no workers
         dataset = CachedDataset(raw_dataset, resize_images_to=args.cache_image_size)
-        # With cached dataset, no workers needed and no pin_memory
         num_workers = 0
         pin_memory = False
     else:
@@ -275,6 +286,7 @@ def main():
                 "dataset_fps": dataset_metadata.fps,
                 "device": str(device),
                 "cache_dataset": args.cache_dataset,
+                "disk_cache": args.disk_cache,
                 "cache_image_size": args.cache_image_size,
                 "cameras": camera_names,
                 "action_space": action_space,
@@ -293,7 +305,8 @@ def main():
     print(f"Learning rate: {args.lr}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Device: {device}")
-    print(f"Dataset caching: {'enabled' if args.cache_dataset else 'disabled'}")
+    cache_mode = "disk" if args.disk_cache else ("memory" if args.cache_dataset else "disabled")
+    print(f"Dataset caching: {cache_mode}")
     print(f"Cameras: {', '.join(camera_names)}")
     print(f"Action space: {action_space}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")

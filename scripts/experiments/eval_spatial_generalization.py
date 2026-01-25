@@ -515,11 +515,16 @@ def visualize_heatmap_from_results(results: dict):
     print("Visualization closed")
 
 
-def visualize_scatter_from_csv(csv_path: Path, sphere_radius: float = 0.008, alpha: float = 0.4):
+def visualize_scatter_from_csv(csv_path: Path, sphere_radius: float = 0.008, alpha: float = 0.4,
+                                center_x: float = None, center_y: float = None):
     """Visualize individual episodes as colored spheres in MuJoCo.
 
     Green spheres = success, Red spheres = failure.
     Overlapping spheres create darker regions showing density.
+
+    Args:
+        center_x: X coordinate for distance rings center (default: auto-detect from data)
+        center_y: Y coordinate for distance rings center (default: auto-detect from data)
     """
     # Load episode data from CSV
     episodes = []
@@ -556,8 +561,21 @@ def visualize_scatter_from_csv(csv_path: Path, sphere_radius: float = 0.008, alp
     print(f"Overlapping spheres create darker regions")
     print("Press Q or ESC to close\n")
 
-    # Training position marker
-    TRAINING_POS = (0.217, 0.225)
+    # Training position marker - use provided center or auto-detect from data centroid
+    if center_x is not None and center_y is not None:
+        TRAINING_POS = (center_x, center_y)
+    else:
+        # Auto-detect: find position with highest success rate
+        from collections import defaultdict
+        pos_stats = defaultdict(lambda: {"success": 0, "total": 0})
+        for ep in episodes:
+            key = (round(ep["x"], 3), round(ep["y"], 3))
+            pos_stats[key]["total"] += 1
+            if ep["success"]:
+                pos_stats[key]["success"] += 1
+        best_pos = max(pos_stats.keys(), key=lambda k: pos_stats[k]["success"] / pos_stats[k]["total"] if pos_stats[k]["total"] > 0 else 0)
+        TRAINING_POS = best_pos
+        print(f"Auto-detected center (best success): ({TRAINING_POS[0]:.3f}, {TRAINING_POS[1]:.3f})")
 
     # Pre-compute distance ring points (blue circles at 5cm, 10cm, 15cm, etc.)
     distance_rings = []
@@ -686,6 +704,10 @@ def main():
                         help="Sphere radius for scatter visualization (default: 0.008)")
     parser.add_argument("--sphere-alpha", type=float, default=0.4,
                         help="Sphere transparency for scatter visualization (default: 0.4)")
+    parser.add_argument("--center-x", type=float, default=None,
+                        help="X coordinate for distance rings center (default: auto-detect)")
+    parser.add_argument("--center-y", type=float, default=None,
+                        help="Y coordinate for distance rings center (default: auto-detect)")
     args = parser.parse_args()
 
     if args.visualize:
@@ -708,7 +730,9 @@ def main():
         visualize_scatter_from_csv(
             Path(args.path),
             sphere_radius=args.sphere_radius,
-            alpha=args.sphere_alpha
+            alpha=args.sphere_alpha,
+            center_x=args.center_x,
+            center_y=args.center_y
         )
         return
 

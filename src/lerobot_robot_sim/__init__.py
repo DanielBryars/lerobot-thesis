@@ -233,7 +233,8 @@ class SO100Sim(Robot):
         pass  # No configuration needed
 
     def reset_scene(self, randomize: bool = True, pos_range: float = 0.02, rot_range: float = np.pi,
-                    pos_center_x: float = None, pos_center_y: float = None) -> None:
+                    pos_center_x: float = None, pos_center_y: float = None,
+                    rot_offset: float = None) -> None:
         """Reset the simulation to initial state with optional randomization.
 
         Args:
@@ -242,6 +243,7 @@ class SO100Sim(Robot):
             rot_range: Max random rotation in radians (default ±180°)
             pos_center_x: Optional X center position for block (default: use XML default)
             pos_center_y: Optional Y center position for block (default: use XML default)
+            rot_offset: Optional base rotation in radians (random noise added if randomize=True)
         """
         if not self.is_connected:
             return
@@ -254,19 +256,34 @@ class SO100Sim(Robot):
         if pos_center_y is not None:
             self.mj_data.qpos[1] = pos_center_y
 
+        # Handle rotation
+        if rot_offset is not None:
+            # Use specified rotation as base
+            angle = rot_offset
+            if randomize:
+                # Add small random noise around the specified rotation
+                angle += np.random.uniform(-rot_range, rot_range)
+            # Quaternion for Z rotation: [cos(θ/2), 0, 0, sin(θ/2)]
+            self.mj_data.qpos[3] = np.cos(angle / 2)  # w
+            self.mj_data.qpos[4] = 0  # x
+            self.mj_data.qpos[5] = 0  # y
+            self.mj_data.qpos[6] = np.sin(angle / 2)  # z
+            logger.info(f"Duplo rotation set: {np.degrees(angle):.1f}°")
+
         if randomize:
             # Duplo free joint is at qpos[0:7]: pos(3) + quat(4)
             # Add random XY offset (keep Z the same)
             self.mj_data.qpos[0] += np.random.uniform(-pos_range, pos_range)  # X
             self.mj_data.qpos[1] += np.random.uniform(-pos_range, pos_range)  # Y
 
-            # Random Z rotation (yaw)
-            angle = np.random.uniform(-rot_range, rot_range)
-            # Quaternion for Z rotation: [cos(θ/2), 0, 0, sin(θ/2)]
-            self.mj_data.qpos[3] = np.cos(angle / 2)  # w
-            self.mj_data.qpos[4] = 0  # x
-            self.mj_data.qpos[5] = 0  # y
-            self.mj_data.qpos[6] = np.sin(angle / 2)  # z
+            # Random Z rotation (yaw) - only if no rot_offset specified
+            if rot_offset is None:
+                angle = np.random.uniform(-rot_range, rot_range)
+                # Quaternion for Z rotation: [cos(θ/2), 0, 0, sin(θ/2)]
+                self.mj_data.qpos[3] = np.cos(angle / 2)  # w
+                self.mj_data.qpos[4] = 0  # x
+                self.mj_data.qpos[5] = 0  # y
+                self.mj_data.qpos[6] = np.sin(angle / 2)  # z
 
             logger.info(f"Duplo randomized: pos=({self.mj_data.qpos[0]:.3f}, {self.mj_data.qpos[1]:.3f}), "
                        f"rot={np.degrees(angle):.1f}°")

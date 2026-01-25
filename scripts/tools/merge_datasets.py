@@ -60,8 +60,14 @@ def get_video_keys(dataset_path: Path) -> list[str]:
     return [d.name for d in videos_dir.iterdir() if d.is_dir()]
 
 
-def merge_datasets(dataset_paths: list[Path], output_path: Path):
-    """Merge multiple datasets into one."""
+def merge_datasets(dataset_paths: list[Path], output_path: Path, max_episodes_list: list[int] = None):
+    """Merge multiple datasets into one.
+
+    Args:
+        dataset_paths: List of paths to datasets to merge
+        output_path: Output path for merged dataset
+        max_episodes_list: Optional list of max episodes to take from each dataset
+    """
 
     if output_path.exists():
         print(f"Removing existing {output_path}")
@@ -71,10 +77,12 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
 
     # Load all metadata
     infos = []
-    for ds_path in dataset_paths:
+    for i, ds_path in enumerate(dataset_paths):
         with open(ds_path / "meta" / "info.json") as f:
             infos.append(json.load(f))
-        print(f"  {ds_path.name}: {infos[-1]['total_episodes']} episodes, {infos[-1]['total_frames']} frames")
+        max_ep = max_episodes_list[i] if max_episodes_list else infos[-1]['total_episodes']
+        actual_ep = min(max_ep, infos[-1]['total_episodes'])
+        print(f"  {ds_path.name}: {infos[-1]['total_episodes']} episodes, {infos[-1]['total_frames']} frames (using {actual_ep})")
 
     # Get video keys from first dataset
     video_keys = get_video_keys(dataset_paths[0])
@@ -111,6 +119,18 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
         episodes_df = load_parquet_as_df(ds_path / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
         tasks_df = load_parquet_as_df(ds_path / "meta" / "tasks.parquet")
 
+        # Apply episode limit if specified
+        max_ep = max_episodes_list[ds_idx] if max_episodes_list else None
+        if max_ep is not None and max_ep < len(episodes_df):
+            print(f"  Limiting to first {max_ep} episodes (of {len(episodes_df)})")
+            # Filter episodes
+            episodes_df = episodes_df[episodes_df['episode_index'] < max_ep].copy()
+            # Filter data to only include frames from those episodes
+            data_df = data_df[data_df['episode_index'] < max_ep].copy()
+            # Update info for this dataset
+            infos[ds_idx]['total_episodes'] = max_ep
+            infos[ds_idx]['total_frames'] = len(data_df)
+
         print(f"  Data shape: {data_df.shape}, Episodes: {len(episodes_df)}")
 
         # Load per-episode scene data if available
@@ -118,21 +138,38 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path):
         if episode_scenes_path.exists():
             with open(episode_scenes_path) as f:
                 episode_scenes = json.load(f)
-            # Remap episode indices and add to merged dict
+            # Remap episode indices and add to merged dict (respecting max_ep limit)
+            scenes_added = 0
             for old_ep_idx, scene_data in episode_scenes.items():
-                new_ep_idx = str(int(old_ep_idx) + episode_offset)
+                old_idx = int(old_ep_idx)
+                if max_ep is not None and old_idx >= max_ep:
+                    continue
+                new_ep_idx = str(old_idx + episode_offset)
                 merged_episode_scenes[new_ep_idx] = scene_data
-            print(f"  Loaded {len(episode_scenes)} episode scenes")
+                scenes_added += 1
+            print(f"  Loaded {scenes_added} episode scenes")
 
         # Load recording metadata if available
         recording_meta_path = ds_path / "meta" / "recording_metadata.json"
         if recording_meta_path.exists():
             with open(recording_meta_path) as f:
                 recording_meta = json.load(f)
-            recording_meta['_source_dataset'] = ds_path.name
-            recording_meta['_episode_range'] = [episode_offset, episode_offset + infos[ds_idx]['total_episodes']]
-            merged_recording_metadata.append(recording_meta)
-            print(f"  Loaded recording metadata")
+            # Handle both dict (original) and list (previously merged) formats
+            if isinstance(recording_meta, list):
+                # Previously merged dataset - extend with existing entries
+                for entry in recording_meta:
+                    # Update episode ranges based on current offset
+                    if '_episode_range' in entry:
+                        old_start, old_end = entry['_episode_range']
+                        entry['_episode_range'] = [old_start + episode_offset, old_end + episode_offset]
+                    merged_recording_metadata.extend(recording_meta)
+                print(f"  Loaded {len(recording_meta)} recording metadata entries")
+            else:
+                # Original dataset - single dict
+                recording_meta['_source_dataset'] = ds_path.name
+                recording_meta['_episode_range'] = [episode_offset, episode_offset + infos[ds_idx]['total_episodes']]
+                merged_recording_metadata.append(recording_meta)
+                print(f"  Loaded recording metadata")
 
         # Build task mapping
         task_mapping = {}
@@ -280,15 +317,29 @@ def main():
     parser.add_argument("datasets", nargs="+", help="Dataset IDs or local paths to merge")
     parser.add_argument("-o", "--output", required=True, help="Output directory for merged dataset")
     parser.add_argument("--upload", type=str, help="HuggingFace repo ID to upload merged dataset")
+    parser.add_argument("--max-episodes", type=str, default=None,
+                        help="Max episodes per dataset (comma-separated, e.g., '100,100' or single value for all)")
 
     args = parser.parse_args()
+
+    # Parse max episodes
+    max_episodes_list = None
+    if args.max_episodes:
+        parts = args.max_episodes.split(",")
+        if len(parts) == 1:
+            # Single value applies to all datasets
+            max_episodes_list = [int(parts[0])] * len(args.datasets)
+        else:
+            max_episodes_list = [int(p) for p in parts]
+            if len(max_episodes_list) != len(args.datasets):
+                parser.error(f"--max-episodes has {len(max_episodes_list)} values but {len(args.datasets)} datasets provided")
 
     # Get dataset paths
     dataset_paths = [get_dataset_path(ds) for ds in args.datasets]
     output_path = Path(args.output)
 
     # Merge
-    merge_datasets(dataset_paths, output_path)
+    merge_datasets(dataset_paths, output_path, max_episodes_list=max_episodes_list)
 
     # Upload if requested
     if args.upload:

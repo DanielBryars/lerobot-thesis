@@ -123,6 +123,146 @@ class CachedDataset(torch.utils.data.Dataset):
         return self.samples[idx]
 
 
+class DiskCachedDataset(torch.utils.data.Dataset):
+    """Disk-cached dataset wrapper for fast training without high RAM usage.
+
+    On first run, decodes all video frames and saves to disk as torch tensors.
+    On subsequent runs, loads directly from disk (~10-100x faster than video decode).
+
+    Unlike CachedDataset, this:
+    - Uses disk instead of RAM (works with large datasets)
+    - Supports num_workers > 0 for parallel loading
+    - Persists across training runs (no re-decoding)
+
+    Args:
+        dataset: The underlying LeRobotDataset to cache
+        cache_dir: Directory to store cache (default: ~/.cache/lerobot_disk_cache/{dataset_name})
+        resize_images_to: Optional size to resize images during caching (e.g., 224)
+        force_rebuild: If True, rebuild cache even if it exists
+    """
+
+    def __init__(
+        self,
+        dataset,
+        cache_dir: Path = None,
+        resize_images_to: Optional[int] = None,
+        force_rebuild: bool = False,
+    ):
+        self.dataset = dataset
+        self.resize_to = resize_images_to
+        self._length = len(dataset)
+
+        # Determine cache directory
+        if cache_dir is None:
+            dataset_name = getattr(dataset, 'repo_id', None)
+            if dataset_name is None:
+                dataset_name = getattr(dataset, 'root', Path('unknown')).name
+            dataset_name = str(dataset_name).replace('/', '_').replace('\\', '_')
+
+            # Include size suffix for uniqueness
+            size_suffix = f"_{self._length}samples"
+            if resize_images_to:
+                size_suffix += f"_{resize_images_to}px"
+
+            cache_dir = Path.home() / '.cache' / 'lerobot_disk_cache' / (dataset_name + size_suffix)
+
+        self.cache_dir = Path(cache_dir)
+        self.samples_dir = self.cache_dir / 'samples'
+
+        # Check if cache is complete
+        complete_marker = self.cache_dir / '.complete'
+        cache_complete = complete_marker.exists() and not force_rebuild
+
+        if not cache_complete:
+            self._build_cache()
+            complete_marker.touch()
+        else:
+            print(f"Using existing disk cache: {self.cache_dir}")
+            # Load valid indices mapping
+            indices_file = self.cache_dir / 'valid_indices.pt'
+            if indices_file.exists():
+                self.valid_indices = torch.load(indices_file, weights_only=True)
+            else:
+                # Legacy cache without indices file - assume all valid
+                self.valid_indices = list(range(self._length))
+            print(f"  {len(self.valid_indices)} cached samples")
+
+    def _build_cache(self):
+        """Build the disk cache by decoding all frames."""
+        import shutil
+
+        # Clear existing incomplete cache
+        if self.cache_dir.exists():
+            print(f"Removing incomplete cache at {self.cache_dir}")
+            shutil.rmtree(self.cache_dir)
+
+        self.samples_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\nBuilding disk cache at {self.cache_dir}")
+        if self.resize_to:
+            print(f"  Resizing images to {self.resize_to}x{self.resize_to}")
+
+        total_bytes = 0
+        skipped = 0
+        valid_indices = []
+
+        for i in tqdm(range(self._length), desc="Caching to disk"):
+            cache_file = self.samples_dir / f'{i:07d}.pt'
+
+            try:
+                sample = self.dataset[i]
+            except (AssertionError, Exception) as e:
+                # Skip samples with timestamp/decoding issues (common in merged datasets)
+                skipped += 1
+                if skipped <= 3:
+                    tqdm.write(f"  Skipping sample {i}: {type(e).__name__}")
+                elif skipped == 4:
+                    tqdm.write(f"  (suppressing further skip messages...)")
+                continue
+
+            cached_sample = {}
+
+            for k, v in sample.items():
+                if isinstance(v, torch.Tensor):
+                    # Resize images if requested
+                    if self.resize_to and "images" in k and v.dim() >= 3:
+                        if v.dim() == 4:  # [n_obs_steps, C, H, W]
+                            v = F.interpolate(v, size=(self.resize_to, self.resize_to),
+                                            mode='bilinear', align_corners=False)
+                        elif v.dim() == 3:  # [C, H, W]
+                            v = F.interpolate(v.unsqueeze(0), size=(self.resize_to, self.resize_to),
+                                            mode='bilinear', align_corners=False).squeeze(0)
+                    cached_sample[k] = v
+                    if len(valid_indices) == 0:
+                        total_bytes += v.element_size() * v.numel()
+                else:
+                    cached_sample[k] = v
+
+            # Save as torch file (pickle-based, fast to load)
+            torch.save(cached_sample, cache_file)
+            valid_indices.append(i)
+
+        # Save valid indices mapping
+        self.valid_indices = valid_indices
+        torch.save(valid_indices, self.cache_dir / 'valid_indices.pt')
+
+        if skipped > 0:
+            print(f"Skipped {skipped} samples with decoding errors")
+
+        # Estimate disk usage
+        total_gb = (total_bytes * self._length) / (1024**3)
+        print(f"Disk cache complete. Estimated size: {total_gb:.2f} GB")
+
+    def __len__(self):
+        return len(self.valid_indices)
+
+    def __getitem__(self, idx):
+        # Map to valid index (handles skipped samples)
+        actual_idx = self.valid_indices[idx]
+        cache_file = self.samples_dir / f'{actual_idx:07d}.pt'
+        return torch.load(cache_file, weights_only=False)
+
+
 def cycle(dataloader):
     """Infinite dataloader iterator."""
     while True:
