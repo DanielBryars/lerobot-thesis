@@ -6,8 +6,10 @@ Use keyboard to move the block around and see coordinates.
 
 Usage:
     python scripts/tools/position_objects.py
+    python scripts/tools/position_objects.py --scene scenes/so101_with_confuser.xml
 """
 
+import argparse
 import time
 import numpy as np
 import mujoco
@@ -15,7 +17,7 @@ import mujoco.viewer
 from pathlib import Path
 
 
-SCENE_PATH = Path(__file__).parent.parent.parent / "scenes" / "so101_with_wrist_cam.xml"
+DEFAULT_SCENE = Path(__file__).parent.parent.parent / "scenes" / "so101_with_wrist_cam.xml"
 
 # Movement step size in meters
 MOVE_STEP = 0.01  # 1cm per keypress
@@ -23,19 +25,32 @@ MOVE_STEP_FINE = 0.002  # 2mm for fine adjustment
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Interactive object positioning tool")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Scene XML path (default: so101_with_wrist_cam.xml)")
+    args = parser.parse_args()
+
+    # Determine scene path
+    if args.scene:
+        scene_path = Path(args.scene)
+        if not scene_path.is_absolute():
+            scene_path = Path(__file__).parent.parent.parent / args.scene
+    else:
+        scene_path = DEFAULT_SCENE
+
     print("=" * 60)
     print("OBJECT POSITIONING TOOL")
     print("=" * 60)
     print("\nLoading scene...")
 
     # Load model
-    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    model = mujoco.MjModel.from_xml_path(str(scene_path))
     data = mujoco.MjData(model)
 
     # Reset
     mujoco.mj_resetData(model, data)
 
-    print(f"\nScene loaded: {SCENE_PATH.name}")
+    print(f"\nScene loaded: {scene_path.name}")
     print("\n" + "-" * 60)
     print("CONTROLS:")
     print("  W/S     - Move block forward/backward (X axis)")

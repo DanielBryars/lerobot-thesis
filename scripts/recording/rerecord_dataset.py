@@ -10,7 +10,7 @@ Usage:
     python recording/rerecord_dataset.py danbhf/sim_pick_place_merged_40ep_ee_2 --depth
     python recording/rerecord_dataset.py danbhf/dataset --depth --output my_rgbd_dataset
 
-The source dataset must have 'action_joints' field (preserved joint actions).
+The source dataset must have 'action_joints' or 'action' field (joint actions).
 """
 
 import argparse
@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 # Add project paths
-repo_root = Path(__file__).parent.parent
+repo_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "src"))
 
@@ -75,12 +75,17 @@ def main():
     source_fps = source_dataset.fps
     fps = args.fps or source_fps
 
-    # Check for action_joints
+    # Check for action field (prefer action_joints, fall back to action)
     sample = source_dataset[0]
-    if 'action_joints' not in sample:
-        print("ERROR: Source dataset must have 'action_joints' field")
+    if 'action_joints' in sample:
+        action_key = 'action_joints'
+    elif 'action' in sample:
+        action_key = 'action'
+    else:
+        print("ERROR: Source dataset must have 'action_joints' or 'action' field")
         print("Available keys:", list(sample.keys()))
         sys.exit(1)
+    print(f"  Using action field: {action_key}")
 
     print(f"  Episodes: {source_dataset.meta.total_episodes}")
     print(f"  Frames: {len(source_dataset)}")
@@ -196,7 +201,7 @@ def main():
             source_frame = source_dataset[frame_idx]
 
             # Get joint action from source
-            joint_action = source_frame['action_joints'].numpy()
+            joint_action = source_frame[action_key].numpy()
             if joint_action.ndim > 1:
                 joint_action = joint_action[0]  # Take first timestep if chunked
 

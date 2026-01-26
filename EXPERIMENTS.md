@@ -2185,7 +2185,7 @@ Current setup uses `chunk_size=100` and `n_action_steps=100`. Questions to explo
 
 ---
 
-## Few-Shot Gap Filling Experiment (PLANNED)
+## Few-Shot Gap Filling Experiment (COMPLETE)
 
 ### Hypothesis
 
@@ -2295,3 +2295,182 @@ python scripts/recording/record_targeted_positions.py --positions configs/gap_fi
 - The corridor midpoint region (x: 0.25-0.30, y: 0.05-0.15)
 - Extensions beyond current coverage (x < 0.18 or x > 0.35)
 - Lower workspace (y < 0.0)
+
+### Training Results (2026-01-25)
+
+**Fixed merged dataset**: `danbhf/sim_pick_place_2pos_220ep_v2`
+- Re-merged from 11 original single-chunk source datasets to fix video chunk indexing
+- 220 episodes total (200 from 2-position + 20 gap-filling)
+
+**Model**: `danbhf/act_2pos_220ep_100k`
+- Trained for 100K steps
+- Best checkpoint: 060000 (95% standard eval, fastest execution)
+- Final checkpoint showed signs of overfitting (80% standard eval)
+
+**Checkpoint Evaluation (20 episodes each, randomized positions):**
+
+| Checkpoint | Success | Avg Steps |
+|------------|---------|-----------|
+| 010000 | 95% | 136.3 |
+| 020000 | 75% | 169.0 |
+| 030000 | 85% | 149.5 |
+| 040000 | 95% | 132.8 |
+| 050000 | 90% | 139.1 |
+| **060000** | **95%** | **125.3** |
+| 070000 | 95% | 130.6 |
+| 080000 | 80% | 170.3 |
+| 090000 | 95% | 136.9 |
+| 100000 | 90% | 136.2 |
+| final | 80% | 155.4 |
+
+### Spatial Generalization Results
+
+**Full checkpoint spatial evaluation (7x7 grid, 10 episodes per position):**
+
+| Checkpoint | Standard Eval | Spatial Eval | Notes |
+|------------|---------------|--------------|-------|
+| 010000 | 95% | 29.2% | Early training |
+| 030000 | 85% | **36.1%** | Peak spatial generalization |
+| 050000 | 90% | **36.1%** | Plateau |
+| 060000 | 95% | 33.3% | Best standard eval |
+| final (100K) | 80% | 35.3% | Overfitting to training positions |
+
+**Key finding**: Spatial generalization peaks early (~30K steps) at 36.1%, then slightly declines as the model overfits to training positions. The best standard eval checkpoint (060000, 95%) has worse spatial generalization (33.3%) than earlier checkpoints.
+
+**Comparison with previous 2-position model:**
+
+| Model | Standard Eval | Spatial Eval (7x7 grid) |
+|-------|--------------|-------------------------|
+| act_2pos_200ep | ~95% | 31.8% |
+| act_2pos_220ep ckpt030000 | 85% | **36.1%** |
+| act_2pos_220ep ckpt060000 | 95% | 33.3% |
+| act_2pos_220ep final | 80% | 35.3% |
+
+**Improvement: +4.3 percentage points** (31.8% → 36.1%) from 20 gap-filling episodes at optimal checkpoint.
+
+**Notable position improvements (final checkpoint vs previous):**
+
+| Position | Previous | 220ep Final | Change |
+|----------|----------|-------------|--------|
+| (0.32, -0.03) | 100% | 100% | = |
+| (0.37, -0.03) | 90% | **100%** | +10% |
+| (0.27, -0.10) | 20% | **50%** | +30% |
+| (0.32, -0.10) | 40% | **70%** | +30% |
+
+**Positions still failing (0%):**
+- Far left edge (x=0.12): All y values
+- Far top (y=0.35): Most x values
+- Far bottom (y=-0.10): x < 0.27
+
+### Conclusions
+
+1. **Good improvement at optimal checkpoint**: 20 gap-filling episodes improved spatial coverage by 4.3 percentage points (31.8% → 36.1%) when using the optimal checkpoint for generalization (030000).
+
+2. **Spatial generalization peaks early**: Best spatial performance occurs at ~30K steps, not at training convergence. The model learns general spatial skills early, then specializes to training positions.
+
+3. **Overfitting vs generalization trade-off**:
+   - Checkpoint 030000: 85% standard / **36.1% spatial** (best generalization)
+   - Checkpoint 060000: **95% standard** / 33.3% spatial (best at training positions)
+   - This suggests early stopping for deployment in novel positions.
+
+4. **Data efficiency**: 20 episodes = +4.3% improvement → ~0.215% per episode. Reasonable efficiency, but better position selection (avoiding redundant positions near training data) could improve this.
+
+5. **Redundancy issue confirmed**: ~5 of 20 positions were too close to training data, providing minimal benefit. For future gap-filling, filter positions to be >7cm from ALL existing training positions.
+
+6. **Practical recommendation**: For deployment requiring spatial generalization, use an earlier checkpoint (~30K steps) rather than the fully trained model.
+
+### Two-Block Evaluation (2026-01-26)
+
+Tested model behavior when TWO blocks are present simultaneously. Created three scene variants:
+- `so101_two_blocks.xml` - White at pos1, Red at pos2
+- `so101_two_white_blocks.xml` - White at both positions
+- `so101_two_red_blocks.xml` - Red at both positions
+
+**Block positions:**
+- Position 1: x=0.22, y=0.23 (trained as primary position)
+- Position 2: x=0.32, y=-0.03 (trained as secondary position)
+
+**Results (checkpoint_030000, 20 episodes each):**
+
+| Scene | Success | Pos1 Picked | Pos2 Picked | Dominant Behavior |
+|-------|---------|-------------|-------------|-------------------|
+| White@pos1 + Red@pos2 | **100%** | 100% | 0% | picked_white_only |
+| White@pos1 + White@pos2 | **20%** | 0% | 20% | confused_touched_both (75%) |
+| Red@pos1 + Red@pos2 | **100%** | 100% | 0% | picked_white_only* |
+
+*Note: "picked_white_only" label refers to pos1, which in this case has a red block.
+
+**Key Findings:**
+
+1. **Position bias, NOT color bias**: The model always goes to position 1 regardless of block color. With two red blocks, it picks the red block at pos1 with 100% success.
+
+2. **White block at pos1 causes confusion**: When there's a white block at pos1 AND another white block at pos2, the model gets confused and only achieves 20% success. It touches both blocks and struggles to complete the task.
+
+3. **Color difference helps disambiguation**: When blocks are different colors (white vs red), the model successfully identifies and picks the white one at pos1 (100% success). The color contrast may help the visual system focus.
+
+**Hypothesis**: The model has learned:
+- Position 1 is the "pickup zone"
+- White blocks are the "target object"
+- When both conditions are met (white block at pos1), it succeeds
+- When a white block is also at pos2, visual confusion occurs
+- When no white block is at pos1 (both red), position wins and it picks pos1
+
+**Implications:**
+1. Without explicit conditioning (task tokens, geo tokens), the model defaults to a single learned behavior
+2. Training on multiple positions creates a position hierarchy, not flexible selection
+3. Color plays a role in target identification but position dominates
+4. To enable controlled multi-location pickup, we need to add:
+   - **Task tokens**: Indicate WHICH block to pick (by color, position, etc.)
+   - **Geo tokens**: Indicate WHERE to pick from (region/position encoding)
+
+### Arm Starting Position Experiment (2026-01-26)
+
+Tested whether the arm's starting position affects block selection. Used two white blocks scene with arm starting near each block.
+
+**Results (checkpoint_030000, 20 episodes each):**
+
+| Arm Start Position | Success | Pos1 Picked | Pos2 Picked | Behavior |
+|--------------------|---------|-------------|-------------|----------|
+| Near block 1 | **100%** | 100% | 0% | picked_white_only |
+| Near block 2 | **0%** | 0% | 0% | no_pickup_attempted |
+
+**Key Finding**: The arm's starting position has an **extreme effect** on model behavior:
+- Starting near block 1 → 100% success, confidently picks block 1
+- Starting near block 2 → 0% success, doesn't even attempt pickup!
+
+**Interpretation**: The model has learned a specific trajectory from the default arm position to position 1. When the arm starts in an unusual position (near block 2), the learned trajectory doesn't match the visual observations, and the model fails to generalize.
+
+This suggests:
+1. The model is highly dependent on proprioceptive state (arm position) matching training distribution
+2. Training data likely always started from the same neutral arm position
+3. The model hasn't learned "go to block" but rather "execute this specific motion sequence"
+
+**Implication for deployment**: Starting position must match training distribution, or the model needs to be trained with varied starting positions to learn more robust behaviors.
+
+### Evaluation Reliability Concern (2026-01-26)
+
+**Important caveat discovered during visualization**: The quantitative results above may be misleading. When watching the model in the MuJoCo viewer, observed behavior includes:
+
+- Model picks up block A, gets confused, **drops it**
+- Then picks up block B and places it in the bowl
+- Evaluation reports this as "success" with "picked_B_only"
+
+This means the success metrics don't capture the actual decision-making quality. A "100% success" could include episodes with significant confusion and fumbling that happened to end well.
+
+**More accurate behavior categories needed:**
+- `clean_pickup` - Went straight to one block, placed it confidently
+- `fumbled_success` - Touched/lifted multiple blocks or dropped, but eventually succeeded
+- `confused_failure` - Touched both, failed to place either
+
+**Implication**: The position bias findings are still valid (model clearly prefers pos1), but the success rates may overstate the model's actual competence. Visual inspection is essential for understanding true behavior.
+
+### Next Experiment: Confuser Block Training (PLANNED)
+
+**Hypothesis**: Training with a "confuser" block always present in the scene might teach the model to focus on the correct target and ignore distractors.
+
+**Plan**:
+1. Re-record the 220 episode dataset with same actions but a second (confuser) block visible in the scene
+2. Train on this augmented dataset
+3. Test whether the model learns better block disambiguation
+
+**Next Step**: Retrain with task tokens and geo tokens to enable conditional pickup based on specified location.

@@ -330,6 +330,42 @@ python inference/run_act_sim.py outputs/train/act_20251229_111846/checkpoint_025
 
 **Output:** Reports success rate, average steps, and average time per episode. Logs to WandB for historical comparison.
 
+### Two-Block Evaluation
+
+Test model behavior with two blocks in the scene to study position bias and disambiguation:
+
+```bash
+# Basic two-block test (white at pos1, red at pos2)
+python scripts/inference/eval_two_blocks.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000 --episodes 20
+
+# With MuJoCo viewer (interactive, press Enter to advance)
+python scripts/inference/eval_two_blocks.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000 --episodes 5 --viewer
+
+# Test with arm starting near block 1
+python scripts/inference/eval_two_blocks.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000 --episodes 20 --scene so101_two_white_blocks.xml --start-near 1 --viewer
+
+# Test with arm starting near block 2
+python scripts/inference/eval_two_blocks.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000 --episodes 20 --scene so101_two_white_blocks.xml --start-near 2 --viewer
+```
+
+**Available Scenes:**
+- `so101_two_blocks.xml` - White block at pos1, red block at pos2
+- `so101_two_white_blocks.xml` - White blocks at both positions
+- `so101_two_red_blocks.xml` - Red blocks at both positions
+
+**Options:**
+- `--checkpoint PATH`: Path to model checkpoint
+- `--episodes N`: Number of episodes to run (default: 20)
+- `--scene FILE`: Scene file in scenes/ directory
+- `--start-near {1,2}`: Start arm near block 1 or 2 (default: neutral)
+- `--viewer`: Show MuJoCo 3D viewer
+- `--max-steps N`: Maximum steps per episode (default: 300)
+
+**Viewer Controls:**
+- `Enter` or `Space` - Advance to next episode
+- `q` - Quit early
+- Close window - Exit
+
 ## End-Effector Action Space
 
 This repository supports training in two action spaces:
