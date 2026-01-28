@@ -20,6 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
 # Add project paths
@@ -66,6 +67,8 @@ def main():
     parser.add_argument("--root", type=str, default="./datasets", help="Output root directory")
     parser.add_argument("--scene", type=str, default=None, help="Scene XML path (default: so101_rgbd.xml)")
     parser.add_argument("--fps", type=int, default=None, help="Override FPS (default: use source dataset FPS)")
+    parser.add_argument("--randomize-confuser", type=float, default=0.0,
+                        help="Randomize confuser block position by this amount (meters, e.g. 0.03 for 3cm)")
 
     args = parser.parse_args()
 
@@ -90,6 +93,18 @@ def main():
     print(f"  Episodes: {source_dataset.meta.total_episodes}")
     print(f"  Frames: {len(source_dataset)}")
     print(f"  FPS: {source_fps}")
+
+    # Load episode scene metadata (contains block positions)
+    episode_scenes = None
+    try:
+        from huggingface_hub import hf_hub_download
+        scenes_path = hf_hub_download(args.source_dataset, 'meta/episode_scenes.json', repo_type='dataset')
+        with open(scenes_path) as f:
+            episode_scenes = json.load(f)
+        print(f"  Loaded episode scenes metadata ({len(episode_scenes)} episodes)")
+    except Exception as e:
+        print(f"  WARNING: Could not load episode_scenes.json: {e}")
+        print(f"  Block positions will use defaults!")
 
     # Setup simulation
     print("\nInitializing simulation...")
@@ -190,8 +205,80 @@ def main():
         # Reset simulation
         sim_robot.reset_scene(randomize=False)
 
-        # Try to restore original duplo position from source dataset metadata
-        # For now, just use default position
+        # Restore original duplo position from source dataset metadata
+        if episode_scenes and str(ep_idx) in episode_scenes:
+            scene_info = episode_scenes[str(ep_idx)]
+            if 'objects' in scene_info and 'duplo' in scene_info['objects']:
+                duplo_info = scene_info['objects']['duplo']
+                pos = duplo_info['position']
+                quat = duplo_info['quaternion']
+
+                # Set duplo position (qpos[0:3] = xyz, qpos[3:7] = quaternion wxyz)
+                sim_robot.mj_data.qpos[0] = pos['x']
+                sim_robot.mj_data.qpos[1] = pos['y']
+                sim_robot.mj_data.qpos[2] = pos['z']
+                sim_robot.mj_data.qpos[3] = quat['w']
+                sim_robot.mj_data.qpos[4] = quat['x']
+                sim_robot.mj_data.qpos[5] = quat['y']
+                sim_robot.mj_data.qpos[6] = quat['z']
+
+                # Step simulation to apply position
+                mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
+
+                print(f"  Block position: ({pos['x']:.3f}, {pos['y']:.3f})")
+
+        # Randomize confuser block position if requested
+        if args.randomize_confuser > 0:
+            try:
+                # Find confuser body and its qpos address
+                confuser_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "confuser")
+                if confuser_body_id >= 0:
+                    # Get the joint for this body
+                    confuser_joint_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_JOINT, "confuser_joint")
+                    if confuser_joint_id >= 0:
+                        qpos_addr = sim_robot.mj_model.jnt_qposadr[confuser_joint_id]
+
+                        # Get current duplo position
+                        duplo_x = sim_robot.mj_data.qpos[0]
+                        duplo_y = sim_robot.mj_data.qpos[1]
+
+                        # Get confuser base position
+                        confuser_base_x = sim_robot.mj_data.qpos[qpos_addr + 0]
+                        confuser_base_y = sim_robot.mj_data.qpos[qpos_addr + 1]
+
+                        # Try random offsets, ensuring minimum distance from duplo
+                        min_distance = 0.08  # 8cm minimum clearance
+                        max_attempts = 20
+                        for attempt in range(max_attempts):
+                            dx = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
+                            dy = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
+                            new_x = confuser_base_x + dx
+                            new_y = confuser_base_y + dy
+
+                            # Check distance to duplo
+                            dist = np.sqrt((new_x - duplo_x)**2 + (new_y - duplo_y)**2)
+                            if dist >= min_distance:
+                                break
+                        else:
+                            # All attempts failed, don't randomize this episode
+                            print(f"  Confuser: keeping default (duplo too close)")
+                            dx, dy = 0, 0
+
+                        sim_robot.mj_data.qpos[qpos_addr + 0] = confuser_base_x + dx
+                        sim_robot.mj_data.qpos[qpos_addr + 1] = confuser_base_y + dy
+
+                        # Random rotation around z-axis (quaternion: w, x, y, z)
+                        angle = np.random.uniform(-np.pi, np.pi)
+                        sim_robot.mj_data.qpos[qpos_addr + 3] = np.cos(angle / 2)  # w
+                        sim_robot.mj_data.qpos[qpos_addr + 4] = 0.0  # x
+                        sim_robot.mj_data.qpos[qpos_addr + 5] = 0.0  # y
+                        sim_robot.mj_data.qpos[qpos_addr + 6] = np.sin(angle / 2)  # z
+                        mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
+
+                        final_dist = np.sqrt((confuser_base_x + dx - duplo_x)**2 + (confuser_base_y + dy - duplo_y)**2)
+                        print(f"  Confuser offset: ({dx:.3f}, {dy:.3f}), rot: {np.degrees(angle):.0f}°, dist to duplo: {final_dist:.3f}m")
+            except Exception as e:
+                print(f"  WARNING: Could not randomize confuser: {e}")
 
         output_dataset.create_episode_buffer()
 

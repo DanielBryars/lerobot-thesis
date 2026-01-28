@@ -53,6 +53,7 @@ from utils.training import (
     prepare_obs_for_policy,
     run_evaluation,
     save_checkpoint,
+    load_checkpoint,
     get_scene_metadata,
 )
 
@@ -80,6 +81,8 @@ def main():
     parser.add_argument("--use_joint_actions", action="store_true", help="Use action_joints instead of action (for EE datasets with preserved joint actions)")
     parser.add_argument("--cameras", type=str, default=None,
                         help="Comma-separated camera names to use (e.g., 'wrist_cam,overhead_cam,overhead_cam_depth'). Default: all available")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint directory to resume training from")
 
     args = parser.parse_args()
 
@@ -223,6 +226,17 @@ def main():
         optimizer, T_max=args.steps, eta_min=1e-7
     )
 
+    # Resume from checkpoint if specified
+    start_step = 0
+    if args.resume:
+        resume_path = Path(args.resume)
+        if resume_path.exists():
+            print(f"Resuming from checkpoint: {resume_path}")
+            start_step = load_checkpoint(resume_path, policy, optimizer, scheduler)
+            print(f"  Resumed at step {start_step}")
+        else:
+            print(f"WARNING: Checkpoint not found: {resume_path}, starting from scratch")
+
     # Extract camera names from input features
     camera_names = [key.replace("observation.images.", "") for key in input_features.keys()
                     if key.startswith("observation.images.")]
@@ -315,14 +329,14 @@ def main():
 
     # Training loop
     print("Starting training...")
-    step = 0
+    step = start_step
     best_loss = float('inf')
     running_loss = 0.0
     running_kl_loss = 0.0
     start_time = time.time()
 
     data_iter = cycle(dataloader)
-    pbar = tqdm(total=args.steps, desc="Training")
+    pbar = tqdm(total=args.steps, initial=start_step, desc="Training")
 
     while step < args.steps:
         batch = next(data_iter)

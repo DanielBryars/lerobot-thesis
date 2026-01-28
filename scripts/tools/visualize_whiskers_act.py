@@ -33,6 +33,43 @@ from utils.whisker_visualizer import WhiskerVisualizer
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
 
+def set_arm_start_position(sim, start_near: int):
+    """Set the robot arm to start near a specific block position.
+
+    Args:
+        sim: The SO100Sim instance
+        start_near: 1 for block at pos1 (positive Y), 2 for block at pos2 (negative Y)
+    """
+    # In two-block scene, qpos layout:
+    # [0:7] = duplo freejoint (pos xyz + quat wxyz)
+    # [7:14] = duplo2 freejoint
+    # [14:20] = robot joints (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper)
+    # Single block scene: [0:7] = duplo, [7:13] = robot joints
+
+    # Try to find robot joint indices
+    try:
+        shoulder_pan_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_JOINT, "shoulder_pan")
+        shoulder_pan_qpos_idx = sim.mj_model.jnt_qposadr[shoulder_pan_id]
+    except:
+        # Fall back to common layouts
+        shoulder_pan_qpos_idx = 14 if sim.mj_model.nq > 14 else 7
+
+    if start_near == 1:
+        # Position arm toward block 1 (positive Y, x=0.22, y=0.225)
+        sim.mj_data.qpos[shoulder_pan_qpos_idx] = 0.8  # ~45 degrees toward pos1
+        sim.mj_data.qpos[shoulder_pan_qpos_idx + 1] = -0.3  # shoulder_lift
+        sim.mj_data.qpos[shoulder_pan_qpos_idx + 2] = 0.5   # elbow_flex
+    elif start_near == 2:
+        # Position arm toward block 2 (negative Y, x=0.32, y=-0.03)
+        sim.mj_data.qpos[shoulder_pan_qpos_idx] = -0.5  # ~-30 degrees toward pos2
+        sim.mj_data.qpos[shoulder_pan_qpos_idx + 1] = -0.3  # shoulder_lift
+        sim.mj_data.qpos[shoulder_pan_qpos_idx + 2] = 0.5   # elbow_flex
+
+    # Step to apply the changes
+    for _ in range(10):
+        mujoco.mj_step(sim.mj_model, sim.mj_data)
+
+
 def load_act_policy(checkpoint_path: str, device: str):
     """Load ACT policy and processors from checkpoint."""
     from lerobot.policies.act.modeling_act import ACTPolicy
@@ -78,6 +115,12 @@ def main():
                         help="Number of inferences per chunk (shows variance, follows last one)")
     parser.add_argument("--stochastic", action="store_true",
                         help="Enable stochastic sampling from VAE latent (required for variance visualization)")
+    parser.add_argument("--scene", type=str, default="so101_with_wrist_cam.xml",
+                        help="Scene XML file (in scenes/ directory)")
+    parser.add_argument("--no-randomize", action="store_true",
+                        help="Disable block position randomization (for fixed scenes)")
+    parser.add_argument("--start-near", type=int, choices=[1, 2], default=None,
+                        help="Start arm near block 1 or 2 (for two-block scenes)")
     args = parser.parse_args()
 
     # Check CUDA availability
@@ -110,8 +153,11 @@ def main():
     print(f"Policy loaded (n_action_steps={policy.config.n_action_steps}, chunk_size={policy.config.chunk_size})")
 
     # Create simulation
-    print("Creating simulation...")
-    scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+    print(f"Creating simulation with scene: {args.scene}")
+    scene_path = REPO_ROOT / "scenes" / args.scene
+    if not scene_path.exists():
+        print(f"ERROR: Scene not found: {scene_path}")
+        sys.exit(1)
     sim_config = SO100SimConfig(
         scene_xml=str(scene_path),
         sim_cameras=["overhead_cam", "wrist_cam"],
@@ -205,7 +251,10 @@ def main():
     with mujoco.viewer.launch_passive(sim.mj_model, sim.mj_data, key_callback=key_callback) as viewer:
         for ep in range(args.episodes):
             print(f"\nEpisode {ep + 1}/{args.episodes}")
-            sim.reset_scene(randomize=True, pos_range=0.04, rot_range=np.pi)
+            randomize = not args.no_randomize
+            sim.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi)
+            if args.start_near is not None:
+                set_arm_start_position(sim, args.start_near)
             policy.reset()
             whisker_history.clear()
             visualizer.clear_trails()

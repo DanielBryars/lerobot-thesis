@@ -126,6 +126,9 @@ class CachedDataset(torch.utils.data.Dataset):
 class DiskCachedDataset(torch.utils.data.Dataset):
     """Disk-cached dataset wrapper for fast training without high RAM usage.
 
+    OBSOLETE: This class has frame alignment issues with merged/multi-episode datasets.
+    Use no caching (direct dataset access) instead, or CachedDataset if RAM permits.
+
     On first run, decodes all video frames and saves to disk as torch tensors.
     On subsequent runs, loads directly from disk (~10-100x faster than video decode).
 
@@ -332,6 +335,7 @@ def run_evaluation(
     temporal_ensemble_coeff: float = None,
     block_x: float = None,
     block_y: float = None,
+    scene: str = None,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -356,6 +360,7 @@ def run_evaluation(
             (e.g., 0.01). Predicts every step and averages overlapping chunks.
         block_x: Optional X position for block center (default: scene XML default)
         block_y: Optional Y position for block center (default: scene XML default)
+        scene: Optional scene XML filename override (e.g., "so101_with_confuser.xml")
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -449,7 +454,9 @@ def run_evaluation(
     eval_camera_width = 640
     eval_camera_height = 480
     # Use RGBD scene if model uses depth cameras (different overhead FOV: 58° vs 52°)
-    if depth_camera_names:
+    if scene:
+        eval_scene = scene
+    elif depth_camera_names:
         eval_scene = "so101_rgbd.xml"
     else:
         eval_scene = "so101_with_wrist_cam.xml"

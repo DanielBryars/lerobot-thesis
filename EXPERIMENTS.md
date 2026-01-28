@@ -2464,12 +2464,84 @@ This means the success metrics don't capture the actual decision-making quality.
 
 **Implication**: The position bias findings are still valid (model clearly prefers pos1), but the success rates may overstate the model's actual competence. Visual inspection is essential for understanding true behavior.
 
-### Next Experiment: Confuser Block Training (PLANNED)
+### Trajectory Confusion Hypothesis (2026-01-26)
+
+**Key insight from visual observation**: The confusion with two blocks may not just occur at pickup time - it happens during the **entire trajectory**.
+
+**Geometric analysis:**
+- Position 1: x=0.22, y=0.225 (far from bowl)
+- Position 2: x=0.32, y=-0.03 (closer to bowl)
+- Bowl: x=0.217, y=-0.225
+
+When picking from **pos1** and carrying to the bowl, the robot's trajectory passes near **pos2**. If there's another white block there, the model might:
+1. Pick up block at pos1 successfully
+2. Start carrying toward bowl
+3. "See" the other white block during carry
+4. Get confused - "is THIS the block I should be holding?"
+5. Drop/fumble or try to interact with the second block
+
+**This explains the pattern:**
+- Two white blocks → confusion (sees identical block during carry)
+- White + red → success (can distinguish "my white block" from "that red thing")
+- Two red → success picking pos1 (even though both red, commits to pos1 trajectory)
+
+**Prediction**: If we visualize attention maps or action predictions during the carry phase, we should see the model's attention shifting to the second block, or action predictions becoming unstable/multi-modal.
+
+**Visualization attempt (2026-01-26)**: Added `--scene` argument to whiskers visualization script to test this hypothesis with the two-block scene. However...
+
+**HYPOTHESIS DISPROVEN**: Visual observation with whiskers shows the model doesn't even attempt to pick up the block in the problematic cases. The failure mode is not "confusion during carry" but "paralysis at the start" - the model sees two white blocks and fails to commit to any action.
+
+**More investigation required** to understand:
+- Why does the model freeze with two identical blocks?
+- Is it truly the arm starting position that matters (see above experiment)?
+- What does the attention focus on when two blocks are present?
+
+### Confuser Block Dataset Re-recorded (2026-01-26)
+
+Re-recorded the 220 episode dataset with a white "confuser" block visible in the scene at position (0.25, 0.05). Same actions as original, but with the distractor block present.
+
+**Scene**: `scenes/so101_with_confuser.xml`
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser`
+**Episodes**: 220 (same trajectories as original 220ep dataset)
+**Confuser position**: FIXED at (0.25, 0.05) for all episodes
+
+**Purpose**: Test whether training with a distractor block present teaches the model to ignore irrelevant objects and focus on the correct target during pickup.
+
+**TODO**: Train on this dataset and compare performance on:
+- Single block scenes (should still work)
+- Two block scenes (should improve disambiguation)
+
+### Visualization Tools Updated (2026-01-26)
+
+Added support for custom scenes to the whiskers and attention visualization scripts:
+
+**Whiskers visualization** (3D MuJoCo with predicted trajectories):
+```bash
+# Standard scene
+python scripts/tools/visualize_whiskers_act.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000
+
+# Two-block scene with arm starting near block 2
+python scripts/tools/visualize_whiskers_act.py --checkpoint outputs/train/act_2pos_220ep/checkpoint_030000 --scene so101_two_white_blocks.xml --no-randomize --start-near 2
+```
+
+**Attention visualization** (2D heatmaps showing where model "looks"):
+```bash
+python scripts/tools/visualize_attention_live.py outputs/train/act_2pos_220ep --checkpoint checkpoint_030000 --scene so101_two_white_blocks.xml --no-randomize
+```
+
+**New arguments added:**
+- `--scene <file>` - Scene XML file in scenes/ directory
+- `--no-randomize` - Disable block position randomization
+- `--start-near {1,2}` - Start arm near block 1 or 2 (for two-block scenes)
+
+### Next Experiment: Confuser Block Training
 
 **Hypothesis**: Training with a "confuser" block always present in the scene might teach the model to focus on the correct target and ignore distractors.
 
+**Dataset ready**: `danbhf/sim_pick_place_2pos_220ep_confuser` (see above)
+
 **Plan**:
-1. Re-record the 220 episode dataset with same actions but a second (confuser) block visible in the scene
+1. ~~Re-record the 220 episode dataset with same actions but a second (confuser) block visible in the scene~~ DONE
 2. Train on this augmented dataset
 3. Test whether the model learns better block disambiguation
 

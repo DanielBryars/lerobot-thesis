@@ -109,6 +109,7 @@ def evaluate_checkpoint(
     temporal_ensemble_coeff: float = None,
     block_x: float = None,
     block_y: float = None,
+    scene: str = None,
 ) -> dict:
     """Evaluate a single checkpoint and return results."""
     policy, preprocessor, postprocessor = load_policy_and_processors(
@@ -150,6 +151,7 @@ def evaluate_checkpoint(
         temporal_ensemble_coeff=temporal_ensemble_coeff,
         block_x=block_x,
         block_y=block_y,
+        scene=scene,
     )
 
     success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = results
@@ -200,6 +202,8 @@ def main():
                         help="X position for block center (default: scene XML default)")
     parser.add_argument("--block-y", type=float, default=None,
                         help="Y position for block center (default: scene XML default)")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Override scene XML (e.g., so101_with_confuser.xml)")
 
     args = parser.parse_args()
 
@@ -275,6 +279,7 @@ def main():
             temporal_ensemble_coeff=args.ensemble,
             block_x=args.block_x,
             block_y=args.block_y,
+            scene=args.scene,
         )
         all_results[checkpoint_name] = results
 

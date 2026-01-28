@@ -164,11 +164,13 @@ def run_live_visualization(
     device: torch.device,
     max_steps: int = 300,
     show_tiles: bool = True,
+    scene: str = "so101_with_wrist_cam.xml",
+    randomize: bool = True,
 ):
     """Run episode with live attention visualization using matplotlib."""
 
     # Create simulation
-    scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+    scene_path = REPO_ROOT / "scenes" / scene
     sim_config = SO100SimConfig(
         scene_xml=str(scene_path),
         sim_cameras=["overhead_cam", "wrist_cam"],
@@ -177,7 +179,7 @@ def run_live_visualization(
     )
     sim = SO100Sim(sim_config)
     sim.connect()
-    sim.reset_scene(randomize=False)
+    sim.reset_scene(randomize=randomize)
 
     # Reset policy state
     policy.reset()
@@ -339,6 +341,10 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--no-tiles", action="store_true", help="Hide raw tile view")
+    parser.add_argument("--scene", type=str, default="so101_with_wrist_cam.xml",
+                        help="Scene XML file (in scenes/ directory)")
+    parser.add_argument("--no-randomize", action="store_true",
+                        help="Disable block position randomization")
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -360,6 +366,8 @@ def main():
             device,
             max_steps=args.max_steps,
             show_tiles=not args.no_tiles,
+            scene=args.scene,
+            randomize=not args.no_randomize,
         )
     finally:
         attention_capture.remove_hooks()
