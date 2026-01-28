@@ -2542,7 +2542,79 @@ python scripts/tools/visualize_attention_live.py outputs/train/act_2pos_220ep --
 
 **Plan**:
 1. ~~Re-record the 220 episode dataset with same actions but a second (confuser) block visible in the scene~~ DONE
-2. Train on this augmented dataset
-3. Test whether the model learns better block disambiguation
+2. ~~Train on this augmented dataset~~ DONE
+3. ~~Test whether the model learns better block disambiguation~~ DONE
 
-**Next Step**: Retrain with task tokens and geo tokens to enable conditional pickup based on specified location.
+### Confuser Block Training Results (2026-01-27)
+
+#### Experiment 1: Fixed Confuser Position
+
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser` (confuser at fixed position 0.25, 0.05)
+**Model**: `danbhf/act_confuser_220ep`
+**Training**: 80k steps, ~125 minutes
+
+**Results** (20 episodes each):
+| Scene | Success | Never Picked | Dropped | Timeout |
+|-------|---------|--------------|---------|---------|
+| Without confuser | 30% | 7 | 6 | 1 |
+| With confuser | 30% | 4 | 6 | 4 |
+
+**Conclusion**: Training with fixed confuser position didn't help - 30% success in both scenarios. Baseline model without confuser training achieved 100% on single block, 20% with two blocks. This model is worse overall.
+
+#### Experiment 2: Randomized Confuser Position
+
+**Hypothesis**: Randomizing confuser position during training might help the model learn to disambiguate blocks better.
+
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser_rand` (confuser randomized ±3cm position and full rotation)
+**Model**: `danbhf/act_confuser_rand_220ep`
+**Training**: 80k steps
+
+**Results** (20 episodes, with confuser scene):
+| Checkpoint | Success |
+|------------|---------|
+| 10k-40k | 0% |
+| **45k** | **40%** |
+| 50k | 30% |
+| 55k-60k | 0% |
+| 65k | 30% |
+| 70k | 20% |
+| **75k, 80k** | **40%** |
+| final | 30% |
+
+**Failure modes**: Dominated by "never_picked_up" - model struggles to locate correct block.
+
+**Conclusion**: Very unstable training. Performance oscillates between 0% and 40%. Best checkpoints (45k, 75k, 80k) achieve 40%, slightly better than fixed confuser (30%), but still far below baseline single-block performance (100%).
+
+### Key Insights
+
+1. **Confuser training doesn't solve disambiguation**: Adding a distractor block during training doesn't teach the model to reliably distinguish the target.
+
+2. **Training instability**: The randomized confuser model shows extreme variance across checkpoints, suggesting the task is at the edge of what the model can learn.
+
+3. **Fixed vs randomized**: Randomized confuser position marginally improves peak performance (40% vs 30%) but introduces training instability.
+
+### Experiment 3: Full Workspace Confuser with Multiple Copies (2026-01-28)
+
+**Hypothesis**: Training with many copies of each episode, each with the confuser in a completely different random location across the full workspace, should teach the model that the confuser is irrelevant regardless of where it appears.
+
+**Dataset creation**:
+```bash
+python scripts/recording/rerecord_dataset.py danbhf/sim_pick_place_2pos_220ep_confuser --scene scenes/so101_with_confuser.xml --confuser-full-workspace --copies 5 -o sim_pick_place_220ep_confuser_5x
+```
+
+**Parameters**:
+- Source: 220 episodes
+- Copies per episode: 5
+- Total episodes: 1100
+- Confuser placement: Full workspace (X: 0.10-0.35, Y: -0.28 to 0.12)
+- Minimum distance from target: 8cm
+- Random rotation: Full 360°
+
+**Status**: Pending
+
+---
+
+**Future directions**:
+- Task tokens / language conditioning to specify which block to pick
+- Geometric tokens to encode target location
+- Different visual architectures (attention to specific regions)

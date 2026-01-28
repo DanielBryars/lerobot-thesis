@@ -69,6 +69,10 @@ def main():
     parser.add_argument("--fps", type=int, default=None, help="Override FPS (default: use source dataset FPS)")
     parser.add_argument("--randomize-confuser", type=float, default=0.0,
                         help="Randomize confuser block position by this amount (meters, e.g. 0.03 for 3cm)")
+    parser.add_argument("--confuser-full-workspace", action="store_true",
+                        help="Place confuser anywhere in workspace (ignores --randomize-confuser offset)")
+    parser.add_argument("--copies", type=int, default=1,
+                        help="Number of copies per episode with different confuser positions (default: 1)")
 
     args = parser.parse_args()
 
@@ -189,8 +193,16 @@ def main():
 
     # Process each episode
     total_episodes = source_dataset.meta.total_episodes
-    print(f"\nRe-recording {total_episodes} episodes...")
+    copies_per_episode = args.copies
+    total_output_episodes = total_episodes * copies_per_episode
+    print(f"\nRe-recording {total_episodes} episodes × {copies_per_episode} copies = {total_output_episodes} total episodes...")
 
+    # Workspace bounds for confuser placement (visible and reachable area)
+    # These cover the table area visible to overhead cam, avoiding robot base
+    WORKSPACE_X_MIN, WORKSPACE_X_MAX = 0.10, 0.35  # Front to back
+    WORKSPACE_Y_MIN, WORKSPACE_Y_MAX = -0.28, 0.12  # Right to left
+
+    output_ep_idx = 0
     for ep_idx in range(total_episodes):
         ep_meta = source_dataset.meta.episodes[ep_idx]
         from_idx = ep_meta['dataset_from_index']
@@ -200,128 +212,147 @@ def main():
         # Get episode scene info if available
         task = ep_meta.get('task', 'Pick up the Duplo block and place it in the bowl')
 
-        print(f"\nEpisode {ep_idx + 1}/{total_episodes} ({num_frames} frames)")
+        for copy_idx in range(copies_per_episode):
+            output_ep_idx += 1
+            copy_str = f" (copy {copy_idx + 1}/{copies_per_episode})" if copies_per_episode > 1 else ""
+            print(f"\nEpisode {output_ep_idx}/{total_output_episodes}{copy_str} [src ep {ep_idx + 1}] ({num_frames} frames)")
 
-        # Reset simulation
-        sim_robot.reset_scene(randomize=False)
+            # Reset simulation
+            sim_robot.reset_scene(randomize=False)
 
-        # Restore original duplo position from source dataset metadata
-        if episode_scenes and str(ep_idx) in episode_scenes:
-            scene_info = episode_scenes[str(ep_idx)]
-            if 'objects' in scene_info and 'duplo' in scene_info['objects']:
-                duplo_info = scene_info['objects']['duplo']
-                pos = duplo_info['position']
-                quat = duplo_info['quaternion']
+            # Restore original duplo position from source dataset metadata
+            if episode_scenes and str(ep_idx) in episode_scenes:
+                scene_info = episode_scenes[str(ep_idx)]
+                if 'objects' in scene_info and 'duplo' in scene_info['objects']:
+                    duplo_info = scene_info['objects']['duplo']
+                    pos = duplo_info['position']
+                    quat = duplo_info['quaternion']
 
-                # Set duplo position (qpos[0:3] = xyz, qpos[3:7] = quaternion wxyz)
-                sim_robot.mj_data.qpos[0] = pos['x']
-                sim_robot.mj_data.qpos[1] = pos['y']
-                sim_robot.mj_data.qpos[2] = pos['z']
-                sim_robot.mj_data.qpos[3] = quat['w']
-                sim_robot.mj_data.qpos[4] = quat['x']
-                sim_robot.mj_data.qpos[5] = quat['y']
-                sim_robot.mj_data.qpos[6] = quat['z']
+                    # Set duplo position (qpos[0:3] = xyz, qpos[3:7] = quaternion wxyz)
+                    sim_robot.mj_data.qpos[0] = pos['x']
+                    sim_robot.mj_data.qpos[1] = pos['y']
+                    sim_robot.mj_data.qpos[2] = pos['z']
+                    sim_robot.mj_data.qpos[3] = quat['w']
+                    sim_robot.mj_data.qpos[4] = quat['x']
+                    sim_robot.mj_data.qpos[5] = quat['y']
+                    sim_robot.mj_data.qpos[6] = quat['z']
 
-                # Step simulation to apply position
-                mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
+                    # Step simulation to apply position
+                    mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
 
-                print(f"  Block position: ({pos['x']:.3f}, {pos['y']:.3f})")
+                    print(f"  Block position: ({pos['x']:.3f}, {pos['y']:.3f})")
 
-        # Randomize confuser block position if requested
-        if args.randomize_confuser > 0:
-            try:
-                # Find confuser body and its qpos address
-                confuser_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "confuser")
-                if confuser_body_id >= 0:
-                    # Get the joint for this body
-                    confuser_joint_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_JOINT, "confuser_joint")
-                    if confuser_joint_id >= 0:
-                        qpos_addr = sim_robot.mj_model.jnt_qposadr[confuser_joint_id]
+            # Randomize confuser block position if requested
+            if args.randomize_confuser > 0 or args.confuser_full_workspace:
+                try:
+                    # Find confuser body and its qpos address
+                    confuser_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "confuser")
+                    if confuser_body_id >= 0:
+                        # Get the joint for this body
+                        confuser_joint_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_JOINT, "confuser_joint")
+                        if confuser_joint_id >= 0:
+                            qpos_addr = sim_robot.mj_model.jnt_qposadr[confuser_joint_id]
 
-                        # Get current duplo position
-                        duplo_x = sim_robot.mj_data.qpos[0]
-                        duplo_y = sim_robot.mj_data.qpos[1]
+                            # Get current duplo position
+                            duplo_x = sim_robot.mj_data.qpos[0]
+                            duplo_y = sim_robot.mj_data.qpos[1]
 
-                        # Get confuser base position
-                        confuser_base_x = sim_robot.mj_data.qpos[qpos_addr + 0]
-                        confuser_base_y = sim_robot.mj_data.qpos[qpos_addr + 1]
+                            # Try random positions, ensuring minimum distance from duplo
+                            min_distance = 0.08  # 8cm minimum clearance
+                            max_attempts = 50
 
-                        # Try random offsets, ensuring minimum distance from duplo
-                        min_distance = 0.08  # 8cm minimum clearance
-                        max_attempts = 20
-                        for attempt in range(max_attempts):
-                            dx = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
-                            dy = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
-                            new_x = confuser_base_x + dx
-                            new_y = confuser_base_y + dy
+                            if args.confuser_full_workspace:
+                                # Full workspace placement
+                                for attempt in range(max_attempts):
+                                    new_x = np.random.uniform(WORKSPACE_X_MIN, WORKSPACE_X_MAX)
+                                    new_y = np.random.uniform(WORKSPACE_Y_MIN, WORKSPACE_Y_MAX)
 
-                            # Check distance to duplo
-                            dist = np.sqrt((new_x - duplo_x)**2 + (new_y - duplo_y)**2)
-                            if dist >= min_distance:
-                                break
-                        else:
-                            # All attempts failed, don't randomize this episode
-                            print(f"  Confuser: keeping default (duplo too close)")
-                            dx, dy = 0, 0
+                                    # Check distance to duplo
+                                    dist = np.sqrt((new_x - duplo_x)**2 + (new_y - duplo_y)**2)
+                                    if dist >= min_distance:
+                                        break
+                                else:
+                                    print(f"  Confuser: couldn't find valid position after {max_attempts} attempts")
+                                    new_x = WORKSPACE_X_MAX  # Put it in corner
+                                    new_y = WORKSPACE_Y_MAX
+                            else:
+                                # Offset-based placement (original behavior)
+                                confuser_base_x = sim_robot.mj_data.qpos[qpos_addr + 0]
+                                confuser_base_y = sim_robot.mj_data.qpos[qpos_addr + 1]
 
-                        sim_robot.mj_data.qpos[qpos_addr + 0] = confuser_base_x + dx
-                        sim_robot.mj_data.qpos[qpos_addr + 1] = confuser_base_y + dy
+                                for attempt in range(max_attempts):
+                                    dx = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
+                                    dy = np.random.uniform(-args.randomize_confuser, args.randomize_confuser)
+                                    new_x = confuser_base_x + dx
+                                    new_y = confuser_base_y + dy
 
-                        # Random rotation around z-axis (quaternion: w, x, y, z)
-                        angle = np.random.uniform(-np.pi, np.pi)
-                        sim_robot.mj_data.qpos[qpos_addr + 3] = np.cos(angle / 2)  # w
-                        sim_robot.mj_data.qpos[qpos_addr + 4] = 0.0  # x
-                        sim_robot.mj_data.qpos[qpos_addr + 5] = 0.0  # y
-                        sim_robot.mj_data.qpos[qpos_addr + 6] = np.sin(angle / 2)  # z
-                        mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
+                                    # Check distance to duplo
+                                    dist = np.sqrt((new_x - duplo_x)**2 + (new_y - duplo_y)**2)
+                                    if dist >= min_distance:
+                                        break
+                                else:
+                                    print(f"  Confuser: keeping default (duplo too close)")
+                                    new_x = confuser_base_x
+                                    new_y = confuser_base_y
 
-                        final_dist = np.sqrt((confuser_base_x + dx - duplo_x)**2 + (confuser_base_y + dy - duplo_y)**2)
-                        print(f"  Confuser offset: ({dx:.3f}, {dy:.3f}), rot: {np.degrees(angle):.0f}°, dist to duplo: {final_dist:.3f}m")
-            except Exception as e:
-                print(f"  WARNING: Could not randomize confuser: {e}")
+                            sim_robot.mj_data.qpos[qpos_addr + 0] = new_x
+                            sim_robot.mj_data.qpos[qpos_addr + 1] = new_y
 
-        output_dataset.create_episode_buffer()
+                            # Random rotation around z-axis (quaternion: w, x, y, z)
+                            angle = np.random.uniform(-np.pi, np.pi)
+                            sim_robot.mj_data.qpos[qpos_addr + 3] = np.cos(angle / 2)  # w
+                            sim_robot.mj_data.qpos[qpos_addr + 4] = 0.0  # x
+                            sim_robot.mj_data.qpos[qpos_addr + 5] = 0.0  # y
+                            sim_robot.mj_data.qpos[qpos_addr + 6] = np.sin(angle / 2)  # z
+                            mujoco.mj_forward(sim_robot.mj_model, sim_robot.mj_data)
 
-        # Play through each frame
-        for frame_offset in range(num_frames):
-            frame_idx = from_idx + frame_offset
-            source_frame = source_dataset[frame_idx]
+                            final_dist = np.sqrt((new_x - duplo_x)**2 + (new_y - duplo_y)**2)
+                            print(f"  Confuser pos: ({new_x:.3f}, {new_y:.3f}), rot: {np.degrees(angle):.0f}°, dist to duplo: {final_dist:.3f}m")
+                except Exception as e:
+                    print(f"  WARNING: Could not randomize confuser: {e}")
 
-            # Get joint action from source
-            joint_action = source_frame[action_key].numpy()
-            if joint_action.ndim > 1:
-                joint_action = joint_action[0]  # Take first timestep if chunked
+            output_dataset.create_episode_buffer()
 
-            # Convert to action dict (joint_action is in degrees)
-            action_dict = {f"{MOTOR_NAMES[i]}.pos": float(joint_action[i]) for i in range(6)}
+            # Play through each frame
+            for frame_offset in range(num_frames):
+                frame_idx = from_idx + frame_offset
+                source_frame = source_dataset[frame_idx]
 
-            # Send to sim
-            sim_robot.send_action(action_dict)
+                # Get joint action from source
+                joint_action = source_frame[action_key].numpy()
+                if joint_action.ndim > 1:
+                    joint_action = joint_action[0]  # Take first timestep if chunked
 
-            # Get new observation
-            observation = sim_robot.get_observation()
+                # Convert to action dict (joint_action is in degrees)
+                action_dict = {f"{MOTOR_NAMES[i]}.pos": float(joint_action[i]) for i in range(6)}
 
-            # Build observation frame from simulation (new camera views)
-            obs_frame = build_dataset_frame(output_dataset.features, observation, prefix="observation")
+                # Send to sim
+                sim_robot.send_action(action_dict)
 
-            # Build output frame with new observations and original actions from source
-            output_frame = {
-                **obs_frame,
-                "task": task,
-            }
-            # Copy all action fields from source
-            for key in source_frame.keys():
-                if key.startswith("action"):
-                    output_frame[key] = source_frame[key]
+                # Get new observation
+                observation = sim_robot.get_observation()
 
-            output_dataset.add_frame(output_frame)
+                # Build observation frame from simulation (new camera views)
+                obs_frame = build_dataset_frame(output_dataset.features, observation, prefix="observation")
 
-            # Progress
-            if (frame_offset + 1) % 50 == 0:
-                print(f"  Frame {frame_offset + 1}/{num_frames}", end="\r")
+                # Build output frame with new observations and original actions from source
+                output_frame = {
+                    **obs_frame,
+                    "task": task,
+                }
+                # Copy all action fields from source
+                for key in source_frame.keys():
+                    if key.startswith("action"):
+                        output_frame[key] = source_frame[key]
 
-        output_dataset.save_episode()
-        print(f"  Saved episode {ep_idx + 1} ({num_frames} frames)")
+                output_dataset.add_frame(output_frame)
+
+                # Progress
+                if (frame_offset + 1) % 50 == 0:
+                    print(f"  Frame {frame_offset + 1}/{num_frames}", end="\r")
+
+            output_dataset.save_episode()
+            print(f"  Saved episode {output_ep_idx}/{total_output_episodes} ({num_frames} frames)")
 
     # Finalize
     print("\nFinalizing dataset...")
@@ -332,7 +363,7 @@ def main():
     print("=" * 60)
     print(f"Source: {args.source_dataset}")
     print(f"Output: {root_dir}")
-    print(f"Episodes: {total_episodes}")
+    print(f"Episodes: {total_output_episodes}" + (f" ({total_episodes} × {copies_per_episode} copies)" if copies_per_episode > 1 else ""))
     print(f"Depth: {'enabled' if args.depth else 'disabled'}")
     print("=" * 60)
 
