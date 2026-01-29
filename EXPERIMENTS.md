@@ -2610,11 +2610,65 @@ python scripts/recording/rerecord_dataset.py danbhf/sim_pick_place_2pos_220ep_co
 - Minimum distance from target: 8cm
 - Random rotation: Full 360°
 
+**Dataset**: `danbhf/sim_pick_place_220ep_confuser_5x`
+**Model**: `danbhf/act_confuser_5x_1100ep`
+**Training**: 80k steps, ~123 minutes
+**Best loss**: 0.093 (higher than previous experiments ~0.056)
+
+**Results** (20 episodes, with confuser scene):
+| Checkpoint | Success |
+|------------|---------|
+| 5k-25k | 0% |
+| 30k | 15% |
+| **35k, 40k** | **20%** |
+| 45k-55k | 0% |
+| 60k-80k | 5-10% |
+| final | 5% |
+
+**Conclusion**: Worse than Experiment 2 (20% vs 40% best). Full workspace randomization made the task harder:
+- Higher training loss suggests more difficult learning problem
+- Same trajectory repeated 5x with different confuser positions may confuse the model about what's relevant
+- Model may be learning "confuser is everywhere" rather than "ignore the confuser"
+
+### Experiment 4: Mixed Dataset (With and Without Confuser)
+
+**Hypothesis**: Including episodes WITHOUT the confuser block alongside episodes WITH confuser in various positions should help the model learn that the confuser is optional/irrelevant.
+
+**Plan**:
+- 5 copies per episode
+- 4 copies with confuser in random full-workspace positions
+- 1 copy with NO confuser block
+- Total: 1100 episodes (220 × 5)
+
 **Status**: Pending
 
 ---
 
-**Future directions**:
-- Task tokens / language conditioning to specify which block to pick
-- Geometric tokens to encode target location
-- Different visual architectures (attention to specific regions)
+### Future: Pickup Location Token Conditioning
+
+**Hypothesis**: Adding a `pickup_location` token (one-hot encoded grid cell) that specifies the target block location could help the model:
+1. Know which block to pick up
+2. Maintain focus during transport (persistent spatial context)
+3. Ignore confuser blocks in other grid cells
+
+**Workspace Grid Design:**
+- Workspace: X: 0.10-0.35 (25cm), Y: -0.28 to 0.12 (40cm)
+- Constraint: Cell must be large enough that two blocks (8cm min distance) can't share a cell
+
+| Grid | Cell Size | Cells | Safe? |
+|------|-----------|-------|-------|
+| 2×2 | 12.5cm × 20cm | 4 | ✓ Very safe |
+| 2×3 | 12.5cm × 13cm | 6 | ✓ Safe |
+| 3×3 | 8.3cm × 13cm | 9 | ⚠️ Borderline |
+
+**Recommended: 2×3 grid (6 cells)**
+- Safe margin for one-block-per-cell constraint
+- ~180 episodes per cell with 1100 episode dataset
+- Sufficient precision for the workspace
+
+**Implementation needs:**
+- Modify dataset to include `pickup_location` field (one-hot or class index)
+- Modify ACT model to accept additional input
+- Compute grid cell from block (x, y) position during recording
+
+**Status**: Planning
