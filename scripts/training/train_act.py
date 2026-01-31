@@ -49,6 +49,8 @@ from utils.ik_solver import IKSolver
 from utils.training import (
     CachedDataset,
     DiskCachedDataset,
+    EpisodeFilterDataset,
+    PickupCoordinateDataset,
     cycle,
     prepare_obs_for_policy,
     run_evaluation,
@@ -83,6 +85,10 @@ def main():
                         help="Comma-separated camera names to use (e.g., 'wrist_cam,overhead_cam,overhead_cam_depth'). Default: all available")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint directory to resume training from")
+    parser.add_argument("--pickup_coords", action="store_true",
+                        help="Add pickup location (x,y) conditioning from episode_scenes.json")
+    parser.add_argument("--pos1_only", action="store_true",
+                        help="Filter dataset to only include position 1 episodes (Y > 0.1)")
 
     args = parser.parse_args()
 
@@ -137,6 +143,49 @@ def main():
             or key.replace("observation.images.", "") in selected_cams
         }
 
+    # Load pickup coordinate conditioning if enabled
+    episode_scenes = None
+    pickup_coord_stats = None
+    pos1_episode_indices = None  # For --pos1_only filtering
+
+    if args.pickup_coords or args.pos1_only:
+        print("Loading episode_scenes.json...")
+        episode_scenes = PickupCoordinateDataset.load_episode_scenes(args.dataset)
+
+        if episode_scenes:
+            # Filter to position 1 only if requested
+            if args.pos1_only:
+                pos1_episode_indices = set()
+                for ep_idx_str, scene_info in episode_scenes.items():
+                    try:
+                        y = scene_info['objects']['duplo']['position']['y']
+                        if y > 0.1:  # Position 1
+                            pos1_episode_indices.add(int(ep_idx_str))
+                    except (KeyError, TypeError):
+                        pass
+                print(f"  Filtering to position 1 only: {len(pos1_episode_indices)} episodes")
+                # Filter episode_scenes too
+                episode_scenes = {k: v for k, v in episode_scenes.items() if int(k) in pos1_episode_indices}
+
+            if args.pickup_coords:
+                # Add observation.environment_state to input features for pickup coordinates
+                from lerobot.configs.types import PolicyFeature
+                input_features['observation.environment_state'] = PolicyFeature(
+                    type=FeatureType.STATE,
+                    shape=(2,),  # (pickup_x, pickup_y)
+                )
+                # Compute normalization stats
+                pickup_coord_stats = PickupCoordinateDataset.compute_stats(episode_scenes)
+                print(f"  Loaded coordinates for {len(episode_scenes)} episodes")
+        else:
+            print("  WARNING: No episode_scenes found")
+            if args.pickup_coords:
+                print("  Disabling pickup_coords")
+                args.pickup_coords = False
+            if args.pos1_only:
+                print("  Cannot filter by position without episode_scenes!")
+                args.pos1_only = False
+
     print(f"Input features: {list(input_features.keys())}")
     print(f"Output features: {list(output_features.keys())}")
 
@@ -156,15 +205,17 @@ def main():
 
     # Create pre/post processors for normalization
     # If using joint actions, rename stats key from action_joints to action
-    stats = dataset_metadata.stats
+    import copy
+    stats = copy.deepcopy(dict(dataset_metadata.stats))  # Deep copy to avoid modifying original
     if args.use_joint_actions:
-        import copy
-        stats = copy.deepcopy(dict(stats))  # Deep copy to avoid modifying original
         if 'action_joints' in stats:
             stats['action'] = stats.pop('action_joints')
         elif 'action' in stats:
             # Remove EE action stats if present (wrong shape)
             del stats['action']
+    # Add pickup coordinate stats if enabled
+    if pickup_coord_stats:
+        stats.update(pickup_coord_stats)
     preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=stats)
 
     # Count parameters
@@ -181,6 +232,9 @@ def main():
     if args.use_joint_actions:
         delta_timestamps["action_joints"] = [i / dataset_metadata.fps for i in range(args.chunk_size)]
     for key in input_features:
+        # Skip observation.environment_state - it's added by PickupCoordinateDataset wrapper, not in raw dataset
+        if key == 'observation.environment_state':
+            continue
         delta_timestamps[key] = [0.0]
 
     # Load dataset
@@ -207,6 +261,14 @@ def main():
         dataset = raw_dataset
         num_workers = args.num_workers
         pin_memory = device.type != "cpu"
+
+    # Filter to position 1 episodes only if requested
+    if args.pos1_only and pos1_episode_indices:
+        dataset = EpisodeFilterDataset(dataset, pos1_episode_indices)
+
+    # Wrap dataset with pickup coordinate conditioning if enabled
+    if args.pickup_coords and episode_scenes:
+        dataset = PickupCoordinateDataset(dataset, episode_scenes)
 
     # Create dataloader
     dataloader = torch.utils.data.DataLoader(
@@ -280,6 +342,8 @@ def main():
         "chunk_size": args.chunk_size,
         "fps": dataset_metadata.fps,
         "total_frames": len(dataset),
+        "pickup_coords": args.pickup_coords,
+        "pos1_only": args.pos1_only,
     }
 
     # Initialize WandB
@@ -304,6 +368,8 @@ def main():
                 "cache_image_size": args.cache_image_size,
                 "cameras": camera_names,
                 "action_space": action_space,
+                "pickup_coords": args.pickup_coords,
+                "pos1_only": args.pos1_only,
             },
         )
 
@@ -323,6 +389,8 @@ def main():
     print(f"Dataset caching: {cache_mode}")
     print(f"Cameras: {', '.join(camera_names)}")
     print(f"Action space: {action_space}")
+    print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
+    print(f"Position 1 only: {'enabled' if args.pos1_only else 'disabled'}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()
@@ -355,6 +423,11 @@ def main():
         if "observation.state" in batch and isinstance(batch["observation.state"], torch.Tensor):
             if batch["observation.state"].dim() == 3:
                 batch["observation.state"] = batch["observation.state"].squeeze(1)
+
+        # Same for environment_state (pickup coordinates)
+        if "observation.environment_state" in batch and isinstance(batch["observation.environment_state"], torch.Tensor):
+            if batch["observation.environment_state"].dim() == 3:
+                batch["observation.environment_state"] = batch["observation.environment_state"].squeeze(1)
 
         # Forward pass
         loss, output_dict = policy.forward(batch)

@@ -7,6 +7,7 @@ This module provides common functionality used across different policy training 
 - Training loop utilities
 """
 
+import json
 import re
 import time
 from pathlib import Path
@@ -266,6 +267,180 @@ class DiskCachedDataset(torch.utils.data.Dataset):
         return torch.load(cache_file, weights_only=False)
 
 
+class EpisodeFilterDataset(torch.utils.data.Dataset):
+    """Dataset wrapper that filters to specific episode indices.
+
+    Args:
+        dataset: The underlying dataset to wrap (LeRobotDataset or wrapper)
+        episode_indices: Set of episode indices to include
+    """
+
+    def __init__(self, dataset, episode_indices: set):
+        self.dataset = dataset
+        self.episode_indices = episode_indices
+
+        # Get episode indices efficiently from underlying hf_dataset
+        # Navigate through any wrappers to find the LeRobotDataset
+        base_dataset = dataset
+        while hasattr(base_dataset, 'dataset'):
+            base_dataset = base_dataset.dataset
+
+        if hasattr(base_dataset, 'hf_dataset'):
+            # Fast path: read episode_index column directly
+            all_episode_indices = base_dataset.hf_dataset['episode_index']
+            self.index_map = []
+            for i, ep_idx in enumerate(all_episode_indices):
+                if isinstance(ep_idx, torch.Tensor):
+                    ep_idx = ep_idx.item()
+                if ep_idx in episode_indices:
+                    self.index_map.append(i)
+        else:
+            # Slow fallback: iterate through dataset
+            self.index_map = []
+            for i in range(len(dataset)):
+                item = dataset[i]
+                if 'episode_index' in item:
+                    ep_idx = item['episode_index']
+                    if isinstance(ep_idx, torch.Tensor):
+                        ep_idx = ep_idx.item()
+                    if ep_idx in episode_indices:
+                        self.index_map.append(i)
+
+        print(f"EpisodeFilterDataset: {len(self.index_map)} samples from {len(episode_indices)} episodes")
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        return self.dataset[self.index_map[idx]]
+
+
+class PickupCoordinateDataset(torch.utils.data.Dataset):
+    """Dataset wrapper that adds pickup coordinates from episode_scenes.json.
+
+    This enables spatial conditioning for the ACT model by providing the
+    target pickup location (duplo block position) as additional input.
+
+    The coordinates are normalized to [-1, 1] based on workspace bounds.
+
+    Args:
+        dataset: The underlying dataset to wrap
+        episode_scenes: Dict mapping episode_index (str) -> scene info with objects.duplo.position
+        x_bounds: (min, max) tuple for X normalization
+        y_bounds: (min, max) tuple for Y normalization
+    """
+
+    # Full workspace bounds for generalization
+    # Covers both duplo range and confuser workspace
+    DEFAULT_X_BOUNDS = (0.10, 0.38)  # 28cm range (confuser min to duplo max)
+    DEFAULT_Y_BOUNDS = (-0.28, 0.27)  # 55cm range (confuser min to duplo max)
+
+    def __init__(
+        self,
+        dataset,
+        episode_scenes: dict,
+        x_bounds: tuple = None,
+        y_bounds: tuple = None,
+    ):
+        self.dataset = dataset
+        self.episode_scenes = episode_scenes
+        self.x_bounds = x_bounds or self.DEFAULT_X_BOUNDS
+        self.y_bounds = y_bounds or self.DEFAULT_Y_BOUNDS
+
+        # Pre-compute normalized coordinates for each episode
+        self.episode_coords = {}
+        for ep_idx_str, scene_info in episode_scenes.items():
+            ep_idx = int(ep_idx_str)
+            try:
+                pos = scene_info['objects']['duplo']['position']
+                x, y = pos['x'], pos['y']
+                # Normalize to [-1, 1]
+                x_norm = 2 * (x - self.x_bounds[0]) / (self.x_bounds[1] - self.x_bounds[0]) - 1
+                y_norm = 2 * (y - self.y_bounds[0]) / (self.y_bounds[1] - self.y_bounds[0]) - 1
+                # Clamp to [-1, 1] in case of slight out-of-bounds
+                x_norm = max(-1, min(1, x_norm))
+                y_norm = max(-1, min(1, y_norm))
+                self.episode_coords[ep_idx] = torch.tensor([x_norm, y_norm], dtype=torch.float32)
+            except (KeyError, TypeError):
+                # Missing position data - use zeros
+                self.episode_coords[ep_idx] = torch.tensor([0.0, 0.0], dtype=torch.float32)
+
+        print(f"PickupCoordinateDataset: loaded coordinates for {len(self.episode_coords)} episodes")
+        print(f"  X bounds: {self.x_bounds}, Y bounds: {self.y_bounds}")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # Get episode index from the item
+        ep_idx = item['episode_index']
+        if isinstance(ep_idx, torch.Tensor):
+            ep_idx = ep_idx.item()
+
+        # Look up pickup coordinates
+        if ep_idx in self.episode_coords:
+            coords = self.episode_coords[ep_idx]
+        else:
+            # Fallback for missing episodes
+            coords = torch.tensor([0.0, 0.0], dtype=torch.float32)
+
+        # Add as observation.environment_state (ACT model already supports this)
+        item['observation.environment_state'] = coords
+
+        return item
+
+    @classmethod
+    def load_episode_scenes(cls, dataset_repo_id: str) -> dict:
+        """Load episode_scenes.json from HuggingFace dataset.
+
+        Args:
+            dataset_repo_id: HuggingFace dataset ID (e.g., 'danbhf/sim_pick_place_2pos_220ep')
+
+        Returns:
+            Dict mapping episode_index (str) -> scene info
+        """
+        from huggingface_hub import hf_hub_download
+
+        try:
+            scenes_path = hf_hub_download(
+                dataset_repo_id,
+                'meta/episode_scenes.json',
+                repo_type='dataset'
+            )
+            with open(scenes_path) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"WARNING: Could not load episode_scenes.json: {e}")
+            return {}
+
+    @classmethod
+    def compute_stats(cls, episode_scenes: dict, x_bounds: tuple = None, y_bounds: tuple = None) -> dict:
+        """Compute normalization statistics for pickup coordinates.
+
+        Returns stats dict compatible with LeRobot's normalization pipeline.
+        Since we pre-normalize to [-1, 1], we return mean=0, std=1 so the
+        preprocessor doesn't modify the values (no-op normalization).
+
+        Args:
+            episode_scenes: Dict from load_episode_scenes()
+            x_bounds: (min, max) for X normalization (unused, kept for API compatibility)
+            y_bounds: (min, max) for Y normalization (unused, kept for API compatibility)
+
+        Returns:
+            Dict with 'mean' and 'std' tensors for observation.environment_state
+        """
+        # We pre-normalize to [-1, 1] in the dataset wrapper, so return
+        # mean=0, std=1 to make the preprocessor a no-op for this feature
+        return {
+            'observation.environment_state': {
+                'mean': torch.tensor([0.0, 0.0], dtype=torch.float32),
+                'std': torch.tensor([1.0, 1.0], dtype=torch.float32),
+            }
+        }
+
+
 def cycle(dataloader):
     """Infinite dataloader iterator."""
     while True:
@@ -336,6 +511,7 @@ def run_evaluation(
     block_x: float = None,
     block_y: float = None,
     scene: str = None,
+    pickup_coords: bool = False,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -361,6 +537,8 @@ def run_evaluation(
         block_x: Optional X position for block center (default: scene XML default)
         block_y: Optional Y position for block center (default: scene XML default)
         scene: Optional scene XML filename override (e.g., "so101_with_confuser.xml")
+        pickup_coords: If True, inject pickup coordinates (from block_x, block_y) into batch
+            as observation.environment_state. Required for models trained with --pickup_coords.
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -537,6 +715,27 @@ def run_evaluation(
         sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi,
                               pos_center_x=block_x, pos_center_y=block_y)
 
+        # Get actual block position for pickup coordinate conditioning
+        pickup_coord_tensor = None
+        if pickup_coords:
+            try:
+                duplo_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "duplo")
+                actual_block_x = sim_robot.mj_data.xpos[duplo_body_id][0]
+                actual_block_y = sim_robot.mj_data.xpos[duplo_body_id][1]
+                # Normalize to [-1, 1] using same bounds as PickupCoordinateDataset
+                x_bounds = PickupCoordinateDataset.DEFAULT_X_BOUNDS
+                y_bounds = PickupCoordinateDataset.DEFAULT_Y_BOUNDS
+                x_norm = 2 * (actual_block_x - x_bounds[0]) / (x_bounds[1] - x_bounds[0]) - 1
+                y_norm = 2 * (actual_block_y - y_bounds[0]) / (y_bounds[1] - y_bounds[0]) - 1
+                x_norm = max(-1, min(1, x_norm))
+                y_norm = max(-1, min(1, y_norm))
+                pickup_coord_tensor = torch.tensor([[x_norm, y_norm]], dtype=torch.float32, device=device)
+                if verbose and ep == 0:
+                    print(f"[pickup_coords: ({actual_block_x:.3f}, {actual_block_y:.3f}) -> ({x_norm:.2f}, {y_norm:.2f})]", end=" ")
+            except Exception as e:
+                if verbose:
+                    print(f"[pickup_coords error: {e}]", end=" ")
+
         # Reset temporal ensembling state for this episode
         if use_ensemble:
             from collections import deque
@@ -609,6 +808,10 @@ def run_evaluation(
                         break  # Break inner loop to reset episode
 
             batch = prepare_obs_for_policy(obs, device, depth_camera_names)
+
+            # Add pickup coordinates if enabled
+            if pickup_coord_tensor is not None:
+                batch["observation.environment_state"] = pickup_coord_tensor
 
             # Add language tokens if provided (for VLA models like SmolVLA)
             if lang_tokens is not None:
@@ -868,7 +1071,7 @@ def load_checkpoint(
     """Load a training checkpoint.
 
     Args:
-        checkpoint_dir: Directory containing checkpoint
+        checkpoint_dir: Directory containing checkpoint, or parent directory with checkpoint_* subdirs
         policy: The policy model to load weights into
         optimizer: Optional optimizer to load state into
         scheduler: Optional scheduler to load state into
@@ -876,11 +1079,32 @@ def load_checkpoint(
     Returns:
         Step number from checkpoint
     """
-    # Load training state
+    checkpoint_dir = Path(checkpoint_dir)
+
+    # If this is a parent directory, find the latest checkpoint subdirectory
     state_path = checkpoint_dir / "training_state.pt"
+    if not state_path.exists():
+        # Look for checkpoint_* subdirectories and find the latest one
+        checkpoints = sorted(
+            [d for d in checkpoint_dir.iterdir() if d.is_dir() and d.name.startswith("checkpoint_")],
+            key=lambda x: int(x.name.split("_")[1])
+        )
+        if checkpoints:
+            checkpoint_dir = checkpoints[-1]  # Use latest checkpoint
+            state_path = checkpoint_dir / "training_state.pt"
+            print(f"  Found latest checkpoint: {checkpoint_dir.name}")
+
     if state_path.exists():
         state = torch.load(state_path)
         step = state['step']
+
+        # Load policy weights
+        model_path = checkpoint_dir / "model.safetensors"
+        if model_path.exists():
+            from safetensors.torch import load_file
+            policy_state = load_file(model_path)
+            policy.load_state_dict(policy_state)
+            print(f"  Loaded policy weights from {model_path}")
 
         if optimizer and 'optimizer_state_dict' in state:
             optimizer.load_state_dict(state['optimizer_state_dict'])

@@ -195,6 +195,16 @@ class FKSolver:
         if self.ee_site_id == -1:
             raise ValueError(f"Could not find end-effector site '{ee_site_name}'")
 
+        # Find arm joint start position dynamically
+        # Look for the first arm joint (shoulder_pan) to determine offset
+        shoulder_joint_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, "shoulder_pan")
+        if shoulder_joint_id != -1:
+            self.arm_joint_start = mj_model.jnt_qposadr[shoulder_joint_id]
+        else:
+            # Fallback: count free joints (each takes 7 qpos values)
+            num_free_joints = sum(1 for i in range(mj_model.njnt) if mj_model.jnt_type[i] == mujoco.mjtJoint.mjJNT_FREE)
+            self.arm_joint_start = num_free_joints * 7
+
     def compute_ee_positions(self, joint_angles_sequence: np.ndarray) -> np.ndarray:
         """Compute EE positions for a sequence of joint angles.
 
@@ -209,11 +219,10 @@ class FKSolver:
         saved_qvel = self.mj_data.qvel.copy()
 
         positions = []
-        # Arm joints start at qpos[7] (after duplo's free joint at qpos[0:7])
-        arm_joint_start = 7
+        # Arm joints start position is computed in __init__ to handle different scenes
         for joint_angles in joint_angles_sequence:
             # Convert degrees to radians for MuJoCo
-            self.mj_data.qpos[arm_joint_start:arm_joint_start+6] = np.radians(joint_angles[:6])
+            self.mj_data.qpos[self.arm_joint_start:self.arm_joint_start+6] = np.radians(joint_angles[:6])
             mujoco.mj_forward(self.mj_model, self.mj_data)
             positions.append(self.mj_data.site_xpos[self.ee_site_id].copy())
 

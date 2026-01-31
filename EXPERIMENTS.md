@@ -1,5 +1,25 @@
 # Experiments Log
 
+## IMPORTANT: Resume Bug Found (2026-01-30)
+
+**Bug**: `load_checkpoint()` in `utils/training.py` was NOT loading policy weights on resume.
+
+**Impact**: Any training run that was resumed from a checkpoint would:
+- Continue from the correct step number ✓
+- Restore optimizer momentum ✓
+- Restore scheduler state ✓
+- **Use RANDOM model weights** ✗ (model.safetensors was never loaded!)
+
+This means resumed training was effectively starting from scratch with random weights, which would cause loss to spike and poor final performance.
+
+**Affected experiments**: Any experiment that crashed and was resumed, or was intentionally trained in stages.
+
+**Fixed**: 2026-01-30 - `load_checkpoint()` now:
+1. Auto-finds latest `checkpoint_*` subdirectory if given parent path
+2. Loads policy weights from `model.safetensors`
+
+---
+
 ## TODO: Follow-up Required
 
 ### ACT Model - 100k steps (2026-01-05)
@@ -2644,31 +2664,591 @@ python scripts/recording/rerecord_dataset.py danbhf/sim_pick_place_2pos_220ep_co
 
 ---
 
-### Future: Pickup Location Token Conditioning
+### Pickup Location Token Conditioning (2026-01-29)
 
-**Hypothesis**: Adding a `pickup_location` token (one-hot encoded grid cell) that specifies the target block location could help the model:
+**Hypothesis**: Adding spatial conditioning that specifies the target block location could help the model:
 1. Know which block to pick up
 2. Maintain focus during transport (persistent spatial context)
-3. Ignore confuser blocks in other grid cells
+3. Ignore confuser blocks at other locations
 
-**Workspace Grid Design:**
-- Workspace: X: 0.10-0.35 (25cm), Y: -0.28 to 0.12 (40cm)
-- Constraint: Cell must be large enough that two blocks (8cm min distance) can't share a cell
+#### Analysis: Grid-Based Approach
 
-| Grid | Cell Size | Cells | Safe? |
-|------|-----------|-------|-------|
-| 2×2 | 12.5cm × 20cm | 4 | ✓ Very safe |
-| 2×3 | 12.5cm × 13cm | 6 | ✓ Safe |
-| 3×3 | 8.3cm × 13cm | 9 | ⚠️ Borderline |
+**Initial idea**: Use a 2×3 grid (6 cells) with one-hot encoding.
 
-**Recommended: 2×3 grid (6 cells)**
-- Safe margin for one-block-per-cell constraint
-- ~180 episodes per cell with 1100 episode dataset
-- Sufficient precision for the workspace
+**Problem discovered**: The minimum distance between duplo and confuser is 8cm (enforced by rerecord script). For a grid cell to guarantee only one block per cell, the cell diagonal must be < 8cm.
 
-**Implementation needs:**
-- Modify dataset to include `pickup_location` field (one-hot or class index)
-- Modify ACT model to accept additional input
-- Compute grid cell from block (x, y) position during recording
+| Grid | Cell Size | Cell Diagonal | Works? |
+|------|-----------|---------------|--------|
+| 2×3 | 13.8cm × 13.3cm | 19.2cm | ❌ No |
+| 3×4 | 9.2cm × 10.0cm | 13.6cm | ❌ No |
+| 4×6 | 6.9cm × 6.7cm | 9.6cm | ❌ No |
+| **5×7** | **5.5cm × 5.7cm** | **7.9cm** | ✅ Yes |
 
-**Status**: Planning
+**Conclusion**: Would need a 5×7 grid (35 classes) to guarantee cell separation with 8cm min distance.
+
+#### Analysis: Natural Position Clusters
+
+Analyzed the `sim_pick_place_220ep_confuser_5x` dataset (1100 episodes):
+
+**Duplo positions form two distinct clusters:**
+| Zone | Y Range | Episodes | Description |
+|------|---------|----------|-------------|
+| Position 1 (far) | 0.19 - 0.26 | 500 (45%) | Far from robot |
+| Position 2 (near) | -0.05 - 0.02 | 600 (55%) | Close to robot |
+
+**Gap between clusters**: 16.3cm (Y = 0.02 to Y = 0.19)
+
+**Confuser workspace**: Y = -0.28 to 0.12
+- Overlaps with Position 2 (near zone)
+- Does NOT overlap with Position 1 (far zone)
+
+**Problem with 2-class token**: For Position 2 episodes, both duplo AND confuser are in the "near" zone. A simple far/near token wouldn't disambiguate.
+
+#### Analysis: Generalization Considerations
+
+**Goal**: Model should generalize to pickup positions not seen during training.
+
+**One-hot encoding (35 classes)**:
+- Each cell is an independent category
+- No spatial relationship between adjacent cells
+- Cell 15 and Cell 16 are as different as Cell 15 and Cell 35
+- ❌ Won't generalize to unseen cells
+
+**Learned embeddings**:
+- Same problem as one-hot
+- Embeddings for unseen cells are random/untrained
+- ❌ Won't generalize
+
+**Continuous XY coordinates**:
+- Position represented as continuous (x, y) floats
+- Preserves spatial relationships - nearby positions have similar values
+- Model can learn smooth functions of position
+- Can interpolate to unseen positions
+- ✅ Best chance for generalization
+
+#### Decision: Continuous Coordinate Conditioning
+
+**Approach**: Use 2 float values `(pickup_x, pickup_y)` representing the target block's position.
+
+**Normalization**: Scale to [-1, 1] or [0, 1] based on workspace bounds:
+- X: 0.17 - 0.38 (actual duplo range)
+- Y: -0.05 - 0.26 (actual duplo range)
+
+**Integration with ACT model**:
+- Concatenate normalized (x, y) with robot state token
+- Or add as separate conditioning token in transformer encoder
+
+**Advantages**:
+- Simple (2 values vs 35 classes)
+- Preserves spatial continuity
+- Allows interpolation to unseen positions
+- No arbitrary grid discretization
+
+**Data source**: `episode_scenes.json` contains duplo position for each episode. This metadata is now uploaded to all HuggingFace datasets.
+
+**Implementation plan**:
+1. Load `episode_scenes.json` at training start
+2. For each batch, lookup duplo (x, y) from episode index
+3. Normalize coordinates to [-1, 1]
+4. Inject as additional conditioning in ACT model
+5. At inference, provide target pickup location as input
+
+**Status**: Implemented
+
+#### Discussion: Is This "Cheating"?
+
+**What we provide:**
+- Target (x, y) position normalized to [-1, 1]
+
+**What the model must still learn:**
+- How to move arm to reach that position
+- Approach angle and grasp orientation (NOT provided)
+- Grasp timing and force
+- Lift without dropping
+- Transport to bowl
+- Place correctly
+
+**This is a valid robotics architecture:**
+```
+Perception system → "block at (0.25, 0.15)"
+                          ↓
+Policy → motor commands to pick from that location
+```
+
+We're training the manipulation policy, not the perception system. The pickup coordinates could come from:
+- A separate vision model
+- Human pointing/clicking
+- Language instruction parsed to coordinates
+- Task specification
+
+**Key point**: We do NOT provide the block's rotation angle - the model must learn to approach and grasp from any orientation based on visual input.
+
+#### Experiment 5a: Baseline Test with Pickup Coords (2026-01-29)
+
+**Purpose**: Verify pickup_coords implementation works on simple dataset before confuser experiments.
+
+**Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, position 1 only, no confuser)
+**Model**: `danbhf/act_pickup_coords_157ep`
+**Training**: 50k steps, ~119 minutes
+**Best loss**: 0.061
+
+**Evaluation Results** (20 episodes per checkpoint):
+
+| Checkpoint | Success Rate | Avg Steps |
+|------------|-------------|-----------|
+| checkpoint_005000 | 90.0% | 162.8 |
+| checkpoint_010000 | **100.0%** | 140.6 |
+| checkpoint_015000 | 90.0% | 146.4 |
+| checkpoint_020000 | 90.0% | 148.5 |
+| checkpoint_025000 | 85.0% | 148.7 |
+| checkpoint_030000 | 80.0% | 153.7 |
+| checkpoint_035000 | 90.0% | 135.2 |
+| checkpoint_040000 | **100.0%** | 121.0 |
+| checkpoint_045000 | 90.0% | 140.2 |
+| checkpoint_050000 | 90.0% | 144.7 |
+| final | 80.0% | 160.6 |
+
+**Best checkpoints**:
+- checkpoint_010000: 100% success (140.6 avg steps)
+- checkpoint_040000: 100% success (121.0 avg steps - fastest)
+
+**Status**: ✅ SUCCESS - Pickup coords baseline validated. The coordinate conditioning does not hurt performance on the simple task, and actually achieves 100% success rate at best checkpoints.
+
+#### Experiment 5b: Confuser Scene with Pickup Coords (2026-01-29)
+
+**Purpose**: Test if pickup coordinates can solve the confuser disambiguation problem.
+
+**Model**: `danbhf/act_pickup_coords_157ep` (trained on 157ep WITHOUT confuser)
+**Scene**: `so101_with_confuser.xml` (contains identical red confuser block)
+
+**Evaluation Results** (20 episodes per checkpoint):
+
+| Checkpoint | Success Rate | Avg Steps |
+|------------|-------------|-----------|
+| checkpoint_005000 | 90.0% | 178.8 |
+| checkpoint_010000 | 85.0% | 195.9 |
+| checkpoint_015000 | 85.0% | 169.7 |
+| checkpoint_020000 | 95.0% | 167.2 |
+| checkpoint_025000 | **100.0%** | 159.8 |
+| checkpoint_030000 | 95.0% | 156.0 |
+| checkpoint_035000 | 90.0% | 158.7 |
+| checkpoint_040000 | 85.0% | 165.3 |
+| checkpoint_045000 | 80.0% | 183.8 |
+| checkpoint_050000 | 85.0% | 172.5 |
+| final | **100.0%** | 160.1 |
+
+**Best checkpoints**:
+- checkpoint_025000: 100% success (159.8 avg steps)
+- final: 100% success (160.1 avg steps)
+
+**Status**: ✅ MAJOR SUCCESS!
+
+**Comparison to previous confuser experiments WITHOUT pickup coords:**
+
+| Experiment | Training Data | Pickup Coords | Success Rate |
+|------------|---------------|---------------|--------------|
+| Exp 1 | 157ep (no confuser) | ❌ | 30% |
+| Exp 2 | 157ep (trained on confuser scene) | ❌ | 40% |
+| Exp 3 | 220ep (with confuser data) | ❌ | 20% |
+| **Exp 5b** | **157ep (no confuser)** | **✅** | **100%** |
+
+**Key insight**: The pickup coordinate conditioning completely solves the disambiguation problem. The model trained without ANY confuser data achieves 100% success when given the target coordinates. This validates the "perception→manipulation" architecture where:
+1. A perception system (vision model, human input, task planner) provides the target location
+2. The manipulation policy executes the grasp using coordinate + visual feedback
+
+**The model must still learn**:
+- Approach trajectory from any starting pose
+- Grasp orientation (we don't provide rotation angle)
+- Visual servoing to correct position errors
+- Transport and placement at goal location
+
+#### Experiment 5c: Mixed Confuser Dataset with Pickup Coords (2026-01-29)
+
+**Purpose**: Test if training ON confuser data with pickup coords improves results.
+
+**Dataset**: `danbhf/sim_pick_place_220ep_confuser_mixed_5x` (1100 episodes, 4:1 confuser:no-confuser)
+**Model**: `danbhf/act_pickup_coords_confuser_mixed`
+**Training**: 50k steps, ~87 minutes
+**Best loss**: 0.133 (vs 0.061 for 157ep model - significantly higher)
+
+**Evaluation Results** (20 episodes per checkpoint):
+
+| Checkpoint | Success Rate | Avg Steps |
+|------------|-------------|-----------|
+| checkpoint_005000 | 0.0% | 300.0 |
+| checkpoint_010000 | 0.0% | 300.0 |
+| checkpoint_015000 | 0.0% | 300.0 |
+| checkpoint_020000 | 0.0% | 300.0 |
+| checkpoint_025000 | 5.0% | 291.4 |
+| checkpoint_030000 | 0.0% | 300.0 |
+| checkpoint_035000 | 0.0% | 300.0 |
+| checkpoint_040000 | 0.0% | 300.0 |
+| checkpoint_045000 | 0.0% | 300.0 |
+| checkpoint_050000 | 0.0% | 300.0 |
+| final | 0.0% | 300.0 |
+
+**Status**: ❌ COMPLETE FAILURE (on confuser scene)
+
+**Detailed Analysis**:
+
+**KL Loss Comparison** - VAE latent space is fine:
+| Model | Best Loss | KL Loss |
+|-------|-----------|---------|
+| 157ep | 0.061 | 0.000376 |
+| Mixed | 0.133 | 0.000422 |
+
+KL losses are nearly identical (~0.0004). The problem is reconstruction loss (2x higher), not latent encoding. Model is struggling to predict correct actions given increased position variability.
+
+**Training Data Distribution**:
+- Position 1 (Y > 0.1): 500 episodes, Y range: 0.187 to 0.264
+- Position 2 (Y < 0.1): 600 episodes, Y range: -0.054 to 0.024
+- Episodes in eval range (Y: 0.19-0.26): 440
+
+The model HAS training data for the eval positions (440 episodes), but still fails.
+
+**Quick Test on No-Confuser Scene**:
+```
+checkpoint_025000 on so101_with_wrist_cam.xml: 20% success (1/5)
+```
+Not completely broken - just severely undertrained. One successful pickup shows the model architecture works.
+
+**Comparison**:
+
+| Model | Training Data | Epochs (approx) | Loss | Success (confuser) | Success (no confuser) |
+|-------|--------------|-----------------|------|---------|---------|
+| 157ep | 157ep, pos1 only | ~320 | 0.061 | 100% | 100% |
+| Mixed | 1100ep, both positions + confuser | ~45 | 0.133 | 0-5% | ~20% |
+
+The mixed model sees each episode ~45 times vs ~320 times for the 157ep model.
+
+**Conclusion**: Model needs much longer training. To match 157ep coverage (~2500 samples/episode):
+- Need ~350k steps (vs 50k run)
+- Or ~7x longer training time
+
+#### Experiment 5d: Mixed Confuser Dataset - 200k Steps (2026-01-30)
+
+**Purpose**: Extended training to see if more steps would help the mixed dataset model converge.
+
+**Dataset**: `danbhf/sim_pick_place_220ep_confuser_mixed_5x` (1100 episodes)
+**Model**: `danbhf/act_pickup_coords_confuser_mixed_200k`
+**Training**: 200k steps
+**Best loss**: 0.056 (matches the working 157ep model!)
+
+**Evaluation Results** (20 episodes per checkpoint, confuser scene):
+
+| Checkpoint | Success Rate |
+|------------|-------------|
+| checkpoint_010000 - checkpoint_050000 | 0% |
+| checkpoint_060000 | **10%** (best) |
+| checkpoint_070000 - checkpoint_200000 | 0% |
+| final | 0% |
+
+**Status**: ❌ STILL FAILING despite good loss!
+
+**Critical Finding**:
+- Loss reached 0.056 (same as working 157ep model)
+- But success rate is still 0%
+- All failures are "never_picked_up"
+
+**This is NOT a training time problem!** The loss converged but the model doesn't work.
+
+**Comparison**:
+
+| Model | Training Data | Steps | Loss | Success |
+|-------|--------------|-------|------|---------|
+| 157ep (no confuser) | 157ep, pos1 only | 50k | 0.061 | **100%** |
+| Mixed (confuser) | 1100ep, both positions | 200k | 0.056 | **0%** |
+
+**Hypothesis**: Something is fundamentally incompatible between:
+1. Training with confuser visible in scene
+2. Having position variability (pos1 + pos2) in coordinates
+3. The visual distractor may be causing the model to learn wrong features
+
+**Key observation**: The 157ep model (trained WITHOUT confuser) works perfectly ON the confuser scene when given coordinates. But training WITH confuser data causes complete failure.
+
+**Next investigation needed**:
+- Test if model works on no-confuser scene - **TESTED: 0% success, same failure**
+- Check position 2 coordinate encoding
+- Try training on position 1 only WITH confuser visible
+
+**Coordinate Range Analysis**:
+```
+157ep dataset:     X: 0.177-0.257, Y: 0.185-0.265 (tight cluster, pos1 only)
+Mixed dataset:     X: 0.177-0.376, Y: -0.054-0.264 (wide spread, pos1+pos2)
+```
+
+The 157ep model learned from a tight coordinate cluster, mixed model has to handle much wider range.
+
+**Hypothesis: Mode Collapse**
+The model may be outputting average/mean actions that minimize loss but don't accomplish the task. This happens when model learns to predict the mean of all possible trajectories.
+
+**Next Step**: Visualize actions with whisker tool to see what the model is actually predicting.
+
+#### Visualization Diagnosis (2026-01-30)
+
+**Observation**: Robot tries to pick up from **halfway between the two blocks** - classic mode collapse!
+
+**The puzzle summarized:**
+
+| Aspect | Working (157ep) | Failed (Mixed 200k) |
+|--------|-----------------|---------------------|
+| Dataset | 157ep, pos1 only | 1100ep, pos1+pos2 |
+| Confuser in training | NO | YES |
+| Coord range | Tight (X:0.18-0.26, Y:0.19-0.27) | Wide (X:0.18-0.38, Y:-0.05-0.26) |
+| Training steps | 50k | 200k |
+| Loss | 0.061 | 0.056 (better!) |
+| Success | **100%** | **0%** |
+
+**More data + longer training + lower loss = complete failure**
+
+The 157ep model never saw a confuser during training but handles it perfectly with coords.
+The mixed model trained WITH confuser data fails completely.
+
+**Diagnosis: Mode Collapse**
+The model learned to output the AVERAGE trajectory between position 1 and position 2, which minimizes MSE loss but results in picking up from empty space between the blocks. This is a classic failure mode when training with high position variability.
+
+**Screenshot**: `outputs/experiments/200K Model Colapse half way between blocks.png`
+
+**Key insight**: The coordinate conditioning (`observation.environment_state`) is being passed correctly during inference, but the model learned to IGNORE it. During training, outputting the mean trajectory was an easier way to minimize loss than actually using the coordinates to distinguish positions.
+
+The 157ep model works because all training data was from position 1 - the "average" IS position 1, so there's no collapse possible.
+
+**Note**: The robot isn't going exactly to the midpoint between pos1 and pos2 - behavior is more complex than simple averaging. Needs more investigation to understand what's actually happening.
+
+**Potential fixes to try:**
+1. **Train only on position 1 data WITH confuser visible** - tests if confuser presence alone causes issues
+2. **Use a different loss function** that penalizes mode collapse (e.g., contrastive loss on coordinates)
+3. **Increase coordinate embedding weight** in the model architecture
+4. **Curriculum learning** - start with position 1 only, gradually add position 2
+5. **Investigate further** - what IS the model actually doing? Is it ignoring coords entirely or partially using them?
+
+#### Experiment 5e: Position 1 Only WITH Confuser Visible (2026-01-30)
+
+**Purpose**: Test if training on position 1 data only BUT with confuser visible in the scene works. This isolates whether the problem is:
+- A) Position variability (pos1 + pos2) causing mode collapse
+- B) Confuser presence in training data causing confusion
+
+**Dataset**: `danbhf/sim_pick_place_220ep_confuser_mixed_5x` filtered to position 1 episodes only
+**Filter**: Y > 0.1 (position 1 criteria)
+**Training episodes**: 500 (out of 1100 total)
+**Model**: `danbhf/act_pickup_coords_pos1_confuser`
+**Training**: 50k steps with `--pickup_coords --pos1_only`
+**Final loss**: 0.080
+
+**Evaluation Results** (10 episodes per checkpoint, confuser scene):
+
+| Checkpoint | Success Rate |
+|------------|-------------|
+| checkpoint_005000 | 0% |
+| checkpoint_010000 | **20%** |
+| checkpoint_015000 | 0% |
+| checkpoint_020000 | 0% |
+| checkpoint_025000 | **40%** (best) |
+| checkpoint_030000 | 0% |
+| checkpoint_035000 | 0% |
+| checkpoint_040000 | 0% |
+| checkpoint_045000 | 0% |
+| checkpoint_050000 | 0% |
+| final | 0% |
+
+**Status**: ❌ POOR - Best checkpoint only 40% success, final model 0%
+
+**Comparison with 157ep model**:
+
+| Model | Confuser in Training | Positions | Steps | Loss | Success |
+|-------|---------------------|-----------|-------|------|---------|
+| 157ep (no confuser) | NO | pos1 only | 50k | 0.061 | **100%** |
+| Pos1+confuser | YES | pos1 only | 50k | 0.080 | **40%** (best), 0% (final) |
+
+**Critical Finding**: Even with position variability eliminated, training WITH confuser visible causes significant degradation:
+- 157ep (no confuser): 100% success
+- Same data distribution but WITH confuser: 40% max, 0% at convergence
+
+**Conclusion**: The confuser presence in training data IS causing problems, not just position variability. The model is learning something about the confuser that hurts performance. Possible explanations:
+1. Confuser adds visual complexity that degrades feature learning
+2. Model may be learning to attend to confuser features instead of target block
+3. The confuser and target have identical appearance (both duplo blocks) - visual ambiguity in training data even with coordinate conditioning
+
+---
+
+## Experiment 6: Vision Transformer (ViT) Backbone (2026-01-30)
+
+### Motivation
+
+The standard ACT uses ResNet18 as the vision backbone. We hypothesized that the ResNet architecture might contribute to the coordinate conditioning problem because:
+
+1. **ResNet processes images BEFORE coordinates** - Features are extracted from both blocks equally, then coordinates must somehow tell the transformer to ignore certain features
+2. **Global Average Pooling** - ResNet ends with GAP, potentially discarding spatial information needed to localize based on coordinates
+3. **ImageNet pretraining** - Features optimized for classification, not spatial reasoning for manipulation
+
+ViT (Vision Transformer) offers potential advantages:
+- Processes images as patches, preserving spatial structure
+- Each patch token corresponds to a specific image region
+- Native transformer architecture may integrate better with coordinate tokens
+- Attention can potentially learn to focus on coordinate-relevant patches
+
+### Implementation
+
+Created `models/act_vit.py` with:
+- **ViT-B/16 backbone** (86M parameters) replacing ResNet18 (~11M parameters)
+- Images resized to 224x224 before ViT processing
+- ViT outputs 196 patch tokens (14x14 grid) per camera
+- Patch tokens fed directly to ACT encoder alongside coordinate tokens
+
+**Architecture comparison:**
+
+| Component | ACT (ResNet) | ACT-ViT |
+|-----------|--------------|---------|
+| Vision backbone | ResNet18 | ViT-B/16 |
+| Backbone params | ~11M | ~86M |
+| Total params | ~51M | ~126M |
+| Image size | 480x640 (native) | 224x224 (resized) |
+| Tokens per camera | 300 (15x20 spatial) | 196 (14x14 patches) |
+| Pretrained | ImageNet | ImageNet |
+| Backbone frozen | No (separate LR) | No (separate LR) |
+
+### Experiment 6a: ViT on 157ep Dataset (Baseline)
+
+**Purpose**: Establish ViT baseline on known-working dataset before testing with confuser.
+
+**Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, no confuser)
+**Model**: `danbhf/act_vit_157ep` (pending upload)
+**Training**: 50k steps, batch size 8, lr 1e-5
+
+**Training Progress:**
+
+| Step | Loss | KL Loss | Notes |
+|------|------|---------|-------|
+| 100 | 9.62 | 0.91 | Initial (high, expected) |
+| 675 | 2.25 | 0.19 | Rapid initial learning |
+| 1,754 | 1.29 | 0.11 | |
+| 4,091 | 0.48 | 0.03 | |
+| 5,000 | 0.34 | 0.02 | Checkpoint 1 |
+| 46,663 | 0.061 | 0.0005 | Nearly converged |
+
+**Final Results:**
+
+| Metric | ACT-ViT | ACT (ResNet) |
+|--------|---------|--------------|
+| Best Loss | **0.055** | 0.061 |
+| Training Time | 109 min | ~80 min |
+| Parameters | 126M | 51M |
+
+**Evaluation Results** (10 episodes each):
+
+| Checkpoint | Success Rate |
+|------------|-------------|
+| checkpoint_025000 | **100%** |
+| checkpoint_035000 | **100%** |
+| checkpoint_050000 | **100%** |
+| final | **100%** |
+
+**Status**: ✅ SUCCESS - ACT-ViT matches ResNet ACT performance!
+
+**Key findings:**
+1. ViT backbone achieves identical 100% success rate as ResNet
+2. Slightly better loss convergence (0.055 vs 0.061)
+3. ~2.5x more parameters (126M vs 51M)
+4. ~35% slower training (109 min vs ~80 min)
+5. Stable performance across all checkpoints
+
+### Next Steps
+
+1. ~~Evaluate ACT-ViT on 157ep dataset~~ ✅ Done - 100% success
+2. Test ACT-ViT with pickup coordinates on confuser dataset
+3. Compare attention patterns between ViT and ResNet models
+4. Test if ViT's patch-based representation helps with coordinate conditioning
+
+### Experiment 6b: ACT-ViT with Pickup Coords (In Progress)
+
+**Purpose**: Replicate the ResNet ACT experiments with ViT backbone to see if ViT avoids mode collapse.
+
+**Plan**:
+1. Train ACT-ViT on 157ep WITH pickup_coords → test on confuser scene
+2. Train ACT-ViT on mixed confuser dataset WITH pickup_coords → test if ViT avoids mode collapse
+
+**Training**: 50k steps, save every 10k (for crash recovery)
+
+**Experiment 6b-1: 157ep + pickup_coords** ✅ Complete
+- Dataset: `danbhf/sim_pick_place_157ep`
+- Model: `danbhf/act_vit_pickup_coords_157ep`
+- Training: 50k steps, 129 minutes
+- Best loss: **0.054**
+
+**Evaluation on confuser scene (10 episodes):**
+- Success Rate: **100%**
+- Pick Rate: 100%
+- Drop Rate: 0%
+
+**Status**: ✅ SUCCESS - Matches ResNet ACT performance!
+
+**Experiment 6b-2: Mixed Confuser Dataset + pickup_coords** ✅ BREAKTHROUGH!
+- Dataset: `danbhf/sim_pick_place_220ep_confuser_mixed_5x` (1100 episodes, both positions, confuser visible)
+- Model: `danbhf/act_vit_pickup_coords_confuser_mixed`
+- Training: 50k steps, 90 minutes
+- Best loss: 0.121
+
+**Evaluation Results (confuser scene, 10-20 episodes per checkpoint):**
+
+| Checkpoint | Success Rate | Pick Rate | Notes |
+|------------|-------------|-----------|-------|
+| checkpoint_010000 | 0% | 0% | Not learned yet |
+| checkpoint_020000 | 0% | 0% | Not learned yet |
+| checkpoint_030000 | 0% | 100% | Picks but drops/misses |
+| checkpoint_040000 | **100%** | 100% | ✅ Working |
+| checkpoint_050000 | **100%** | 100% | ✅ Working |
+| final | **100%** | 100% | ✅ Working |
+
+## 🎉 CRITICAL FINDING: ViT Avoids Mode Collapse!
+
+| Model | Backbone | Dataset | Steps | Loss | Success |
+|-------|----------|---------|-------|------|---------|
+| ACT | ResNet18 | Mixed confuser | 200k | 0.056 | **0%** ❌ |
+| ACT-ViT | ViT-B/16 | Mixed confuser | 50k | 0.121 | **100%** ✅ |
+
+**Analysis:**
+- ResNet ACT collapsed despite 4x more training and 2x better loss
+- ViT ACT learns to properly use coordinate conditioning
+- The patch-based representation of ViT appears to integrate better with coordinate tokens
+- ViT maintains spatial information that ResNet may lose through pooling
+
+**Hypothesis confirmed**: The ResNet backbone was a key contributor to mode collapse. ViT's architecture better preserves the spatial-coordinate relationship needed for disambiguation.
+
+### Experiment 6c: A-B-A Validation (2026-01-31)
+
+**Purpose**: Validate the breakthrough finding with rigorous A-B-A testing.
+
+**A-B Validation Results (20 episodes each):**
+
+| Model | Backbone | Success Rate | Pick Rate | Notes |
+|-------|----------|--------------|-----------|-------|
+| A: ACT-ViT | ViT-B/16 | **100%** (20/20) | 100% | Consistent success |
+| B: ACT | ResNet18 | **0%** (0/20) | 0% | Never picked up |
+
+**A-B-A Protocol:**
+- A1 (ViT original): 100% ✅
+- B (ResNet): 0% ✅
+- A2 (ViT replication): Training in progress (step ~3700/50000)
+
+### Experiment 6d: Generalization Test - Novel Block Positions
+
+**Purpose**: Test if coordinate conditioning enables true spatial generalization.
+
+**Training Data Bounds:**
+- X: (0.10, 0.38) - 28cm range
+- Y: (-0.28, 0.27) - 55cm range
+
+**Test Results:**
+
+| Block Position | Normalized Coords | Success Rate | Notes |
+|----------------|-------------------|--------------|-------|
+| (0.217, 0.225) - Default duplo | (-0.16, 0.84) | **100%** | Training position |
+| (0.25, 0.05) - Confuser pos | (0.07, 0.20) | **0%** | Novel position |
+| (0.24, 0.0) - Center | (~0.0, ~0.0) | **0%** | Novel position |
+| (0.15, -0.1) - Other area | (~-0.6, ~-0.4) | **0%** | Novel position |
+
+**Finding**: The model does NOT generalize to arbitrary positions. It learns to distinguish between the specific training positions (pos1 vs pos2) but cannot pick up blocks at novel locations, even within the training coordinate bounds.
+
+**Interpretation**: Coordinate conditioning helps the model learn "which of the known positions to go to" rather than "go to arbitrary x,y coordinates". This is still useful for disambiguation but not true spatial grounding.
+
+**Implication**: For true coordinate-based manipulation, training data should include blocks at many random positions, not just 2 fixed positions.

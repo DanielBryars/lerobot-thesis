@@ -45,6 +45,22 @@ from lerobot.policies.factory import make_pre_post_processors
 from utils.training import run_evaluation
 
 
+def cleanup_config_files(model_dir: Path) -> None:
+    """Remove incompatible fields from config.json files."""
+    extra_fields = ['use_peft']  # Fields that may not exist in local lerobot
+    for config_path in model_dir.rglob('config.json'):
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        modified = False
+        for field in extra_fields:
+            if field in config:
+                del config[field]
+                modified = True
+        if modified:
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=4)
+
+
 def find_checkpoints(model_dir: Path) -> list:
     """Find all checkpoint directories in a model directory."""
     checkpoints = []
@@ -110,6 +126,7 @@ def evaluate_checkpoint(
     block_x: float = None,
     block_y: float = None,
     scene: str = None,
+    pickup_coords: bool = False,
 ) -> dict:
     """Evaluate a single checkpoint and return results."""
     policy, preprocessor, postprocessor = load_policy_and_processors(
@@ -152,6 +169,7 @@ def evaluate_checkpoint(
         block_x=block_x,
         block_y=block_y,
         scene=scene,
+        pickup_coords=pickup_coords,
     )
 
     success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = results
@@ -204,6 +222,8 @@ def main():
                         help="Y position for block center (default: scene XML default)")
     parser.add_argument("--scene", type=str, default=None,
                         help="Override scene XML (e.g., so101_with_confuser.xml)")
+    parser.add_argument("--pickup-coords", action="store_true",
+                        help="Enable pickup coordinate conditioning (for models trained with --pickup_coords)")
 
     args = parser.parse_args()
 
@@ -232,6 +252,8 @@ def main():
                 local_dir=f"./eval_cache/{args.path.replace('/', '_')}"
             ))
         print(f"Downloaded to: {model_dir}")
+        # Remove incompatible config fields that may not exist in local lerobot
+        cleanup_config_files(model_dir)
 
     # Determine checkpoints to evaluate
     if args.all_checkpoints:
@@ -280,6 +302,7 @@ def main():
             block_x=args.block_x,
             block_y=args.block_y,
             scene=args.scene,
+            pickup_coords=args.pickup_coords,
         )
         all_results[checkpoint_name] = results
 
