@@ -82,6 +82,9 @@ def main():
     parser.add_argument("--pickup_coords", action="store_true", help="Add pickup location conditioning")
     parser.add_argument("--pos1_only", action="store_true", help="Filter to position 1 episodes only")
     parser.add_argument("--freeze_backbone", action="store_true", help="Freeze ViT backbone (only train projection layers)")
+    parser.add_argument("--vit_model", type=str, default="vit_b_16",
+                        choices=["vit_b_16", "vit_b_32", "vit_l_16", "vit_l_32"],
+                        help="ViT model variant (default: vit_b_16). vit_b_32 has fewer patches (49 vs 196)")
 
     args = parser.parse_args()
 
@@ -168,6 +171,8 @@ def main():
         chunk_size=args.chunk_size,
         n_action_steps=args.chunk_size,
     )
+    # Store ViT model name as a custom attribute (ACTConfig validates vision_backbone as ResNet)
+    cfg.vit_model = args.vit_model
 
     # Create ViT-based ACT policy
     print("Creating ACT-ViT policy...")
@@ -280,7 +285,7 @@ def main():
     training_metadata = {
         "dataset_repo_id": args.dataset,
         "model_type": "act_vit",
-        "vision_backbone": "vit_b_16",
+        "vision_backbone": args.vit_model,
         "cameras": camera_names,
         "action_space": action_space,
         "action_dim": action_dim,
@@ -299,7 +304,7 @@ def main():
             name=args.run_name or f"act_vit_{args.dataset.split('/')[-1]}",
             config={
                 "model_type": "act_vit",
-                "vision_backbone": "vit_b_16",
+                "vision_backbone": args.vit_model,
                 "dataset": args.dataset,
                 "training_steps": args.steps,
                 "batch_size": args.batch_size,
@@ -324,7 +329,7 @@ def main():
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.lr}")
     print(f"Chunk size: {args.chunk_size}")
-    print(f"Vision backbone: ViT-B/16")
+    print(f"Vision backbone: {args.vit_model}")
     print(f"Cameras: {', '.join(camera_names)}")
     print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
     print(f"Frozen backbone: {'yes' if args.freeze_backbone else 'no'}")

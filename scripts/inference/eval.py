@@ -82,6 +82,17 @@ def load_policy_and_processors(model_path: Path, policy_type: str, device: torch
     # Load policy
     if policy_type == "act":
         policy = ACTPolicy.from_pretrained(str(model_path))
+    elif policy_type == "act_vit":
+        from models.act_vit import ACTViTPolicy
+        # Check training_metadata for ViT model variant
+        vit_model = "vit_b_16"  # default
+        training_metadata_path = model_path / "training_metadata.json"
+        if training_metadata_path.exists():
+            with open(training_metadata_path) as f:
+                meta = json.load(f)
+            if "vision_backbone" in meta:
+                vit_model = meta["vision_backbone"]
+        policy = ACTViTPolicy.from_pretrained(str(model_path), vit_model=vit_model)
     else:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
         policy = SmolVLAPolicy.from_pretrained(str(model_path))
@@ -267,16 +278,32 @@ def main():
     # Auto-detect policy type from first checkpoint
     first_checkpoint_path = model_dir / checkpoints[0]
     config_path = first_checkpoint_path / "config.json"
+    training_metadata_path = first_checkpoint_path / "training_metadata.json"
     if args.policy is None:
-        with open(config_path) as f:
-            config = json.load(f)
-        # Check both "type" field and "_class_name" for policy detection
-        policy_type = config.get("type", "").lower()
-        class_name = config.get("_class_name", "").lower()
-        if "smolvla" in policy_type or "smolvla" in class_name:
-            args.policy = "smolvla"
+        # First check training_metadata.json for model_type
+        if training_metadata_path.exists():
+            with open(training_metadata_path) as f:
+                training_meta = json.load(f)
+            model_type = training_meta.get("model_type", "").lower()
+            if model_type == "act_vit":
+                args.policy = "act_vit"
+            elif "smolvla" in model_type:
+                args.policy = "smolvla"
+            else:
+                args.policy = "act"
         else:
-            args.policy = "act"
+            # Fall back to config.json
+            with open(config_path) as f:
+                config = json.load(f)
+            # Check both "type" field and "_class_name" for policy detection
+            policy_type = config.get("type", "").lower()
+            class_name = config.get("_class_name", "").lower()
+            if "smolvla" in policy_type or "smolvla" in class_name:
+                args.policy = "smolvla"
+            elif "act_vit" in policy_type or "actvit" in class_name:
+                args.policy = "act_vit"
+            else:
+                args.policy = "act"
         print(f"Auto-detected policy type: {args.policy}")
 
     # Evaluate checkpoints

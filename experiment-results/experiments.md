@@ -567,3 +567,279 @@ episodes  checkpoint_005000  checkpoint_010000  ...  final
 
 Started: 2026-01-22 ~01:55
 Current progress: Training ep_001 (1 episode)
+
+---
+
+## 2026-01-31: A-B-A Validation - ACT-ViT on Confuser Dataset (A2)
+
+**Objective**: Test if ViT backbone resolves confuser block issues seen with ResNet.
+
+### Training
+
+**Model**: ACT-ViT (ViT-B/16 backbone)
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser` (220 episodes, 2 block positions with confuser)
+**Training**: 50,000 steps, batch_size=64, lr=1e-5, chunk_size=50
+**Duration**: ~9.5 hours
+**Final Loss**: 0.053 (best: 0.052)
+**Output**: `checkpoints/act_a2_vit/`
+
+### Evaluation Results
+
+| Metric | Value |
+|--------|-------|
+| Success Rate | **72%** |
+| Pick Rate | 96% |
+| Drop Rate | 20.8% |
+| Avg Steps (success) | 140 |
+
+**Failure Breakdown**:
+- Never picked up: 2/50 (4%)
+- Dropped during transport: 10/50 (20%)
+- Timeout: 2/50 (4%)
+
+### Comparison with ResNet
+
+| Backbone | Cameras | Success Rate | Pick Rate | Drop Rate | Never Picked |
+|----------|---------|--------------|-----------|-----------|--------------|
+| ResNet-18 | 2 (wrist+overhead) | 50% | 70% | 20% | 30% |
+| **ViT-B/16** | **1 (wrist only)** | **72%** | **96%** | 20.8% | **4%** |
+
+**Key Finding**: ViT backbone achieves +22% higher success rate with fewer cameras!
+
+### Key Observations
+
+1. **ViT achieves 72% on confuser dataset** - need to compare with ResNet baseline
+2. **High pick rate (96%)** - the model successfully identifies and picks up blocks
+3. **Main failure mode is dropping (20.8%)** - transport phase needs improvement
+
+---
+
+## 2026-02-01: Smaller ViT Experiment (ViT-B/32)
+
+**Status**: COMPLETED
+
+**Objective**: Test if smaller patch size (fewer patches) maintains performance while being faster.
+
+| Model | Patches/Image | Hidden Dim | Params |
+|-------|---------------|------------|--------|
+| ViT-B/16 | 196 (14×14) | 768 | 126M |
+| ViT-B/32 | 49 (7×7) | 768 | 128M |
+
+### Training
+
+**Model**: ACT-ViT (ViT-B/32 backbone)
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser` (220 episodes)
+**Training**: 50,000 steps, batch_size=64, lr=1e-5, chunk_size=50
+**Duration**: 9h 47m (587 minutes)
+**Final Loss**: 0.061 (best: 0.061)
+**Output**: `checkpoints/act_a2_vit_b32/`
+**WandB**: https://wandb.ai/bryars-bryars/lerobot-thesis/runs/jhv8w3jt
+
+### Evaluation Results
+
+| Metric | Value |
+|--------|-------|
+| Success Rate | **60%** |
+| Pick Rate | 80% |
+| Drop Rate | 20% |
+| Avg Steps (success) | 177 |
+
+**Failure Breakdown**:
+- Never picked up: 10/50 (20%)
+- Dropped during transport: 7/50 (14%)
+- Missed goal: 1/50 (2%)
+- Timeout: 2/50 (4%)
+
+### Comparison with ViT-B/16 and ResNet
+
+| Backbone | Cameras | Patches | Success Rate | Pick Rate | Never Picked |
+|----------|---------|---------|--------------|-----------|--------------|
+| ResNet-18 | 2 (wrist+overhead) | N/A | 50% | 70% | 30% |
+| **ViT-B/16** | **1 (wrist only)** | **196** | **72%** | **96%** | **4%** |
+| ViT-B/32 | 1 (wrist only) | 49 | 60% | 80% | 20% |
+
+### Key Findings
+
+1. **ViT-B/32 performs worse than ViT-B/16** (60% vs 72%)
+2. **Spatial resolution matters**: Coarser patches (32×32 vs 16×16) reduce the model's ability to precisely locate and grasp the block
+3. **Pick rate dropped significantly**: 80% vs 96% - the model struggles more with initial block detection/grasping with fewer patches
+4. **Training loss similar**: Both reached ~0.06 final loss, but the lower spatial resolution hurts generalization
+5. **Speed difference negligible**: ViT-B/32 doesn't provide meaningful speed benefits given the performance degradation
+
+**Recommendation**: Use ViT-B/16 over ViT-B/32 for manipulation tasks where spatial precision matters.
+
+---
+
+## 2026-02-01: Frozen Backbone Experiment (ViT-B/16)
+
+**Status**: COMPLETED
+
+**Objective**: Test if pretrained ViT features (ImageNet) are sufficient for manipulation, or if fine-tuning is necessary.
+
+**Training**:
+- Output: `checkpoints/act_a2_vit_frozen/`
+- WandB: https://wandb.ai/bryars-bryars/lerobot-thesis/runs/jdcsjjwq
+- Total parameters: 126.4M
+- Trainable parameters: 40.6M (32%)
+- Frozen backbone: 85.8M (68%)
+
+**Hypothesis**: Frozen ImageNet features may lack domain-specific visual patterns for robotics, requiring fine-tuning for optimal performance.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Success Rate | **74%** |
+| Pick Rate | 84% |
+| Drop Rate | 9.5% |
+| Avg Steps (success) | 171 |
+
+**Key Finding**: Frozen backbone **outperforms** unfrozen (74% vs 72%) with 68% fewer trainable parameters!
+
+This suggests:
+1. Pre-trained ImageNet features transfer well to robotic manipulation
+2. Full fine-tuning may cause slight overfitting on this dataset size
+3. Frozen backbone is more parameter-efficient and trains faster
+
+---
+
+## 2026-02-02: Two-Camera ViT Bug Discovery
+
+**Status**: BUG FOUND AND FIXED
+
+### Problem
+
+All previous ViT experiments used only **wrist_cam** (1 camera). When testing with both cameras:
+
+| Cameras | Success Rate |
+|---------|-------------|
+| 1 (wrist only) | 72% |
+| 2 (wrist + overhead) | **36%** ← Much worse! |
+
+### Root Cause
+
+In `models/act_vit.py`, both cameras shared the **same positional embeddings**:
+
+```python
+# BUG: Both cameras get identical position embeddings
+patch_pos = self.encoder_vit_pos_embed.weight.unsqueeze(1)  # Same for all cameras
+```
+
+The model couldn't distinguish which patches came from which camera. Wrist and overhead patches were spatially concatenated but had identical positional encodings - the model was confused.
+
+### Fix
+
+Added **learnable camera embeddings** to distinguish patches from different cameras:
+
+```python
+# Each camera gets a unique embedding added to all its patches
+self.encoder_camera_embed = nn.Embedding(num_cameras, config.dim_model)
+
+# In forward pass:
+camera_embed = self.encoder_camera_embed.weight[cam_idx]
+patch_pos = patch_pos + camera_embed  # Position + Camera identity
+```
+
+Now each patch gets: `patch_features + position_embedding + camera_embedding`
+
+This separates:
+1. **Where** in the image (positional) - shared across cameras
+2. **Which** camera (camera embedding) - one learnable vector per camera
+
+### Re-training Results (Camera Embeddings Only)
+
+Re-trained 2-camera model from checkpoint 15000 with camera embeddings fix, keeping chunk_size=100.
+
+**Result: 36% success** — identical to the broken model. Camera embeddings alone did NOT help.
+
+This revealed the real confounding variable: **chunk_size**, not cameras.
+
+---
+
+## 2026-02-03: Chunk Size vs Camera Count — Isolating the Variable
+
+**Status**: COMPLETED
+
+**Objective**: Determine whether 2-camera degradation (72% → 36%) was caused by multiple cameras or by the larger chunk_size used in 2-camera experiments.
+
+### Background
+
+All previous 2-camera experiments used chunk_size=100 (default), while the successful 1-camera model used chunk_size=50. These two variables changed simultaneously, making it impossible to attribute the performance drop.
+
+### Dataset
+
+**All models trained on**: `danbhf/sim_pick_place_2pos_220ep_confuser`
+- 220 episodes, 2 block positions with confuser block present
+- 31,210 total frames
+- Cameras available: wrist_cam (640×480), overhead_cam (640×480)
+
+### Experiment Design
+
+| Model | Backbone | Cameras | Chunk Size | Camera Embeddings |
+|-------|----------|---------|------------|-------------------|
+| A (baseline) | ViT-B/16 | 1 (wrist) | 50 | N/A |
+| B (original 2-cam) | ViT-B/16 | 2 (wrist+overhead) | 100 | No |
+| C (camera fix) | ViT-B/16 | 2 (wrist+overhead) | 100 | Yes |
+| **D (chunk fix)** | **ViT-B/16** | **2 (wrist+overhead)** | **50** | **Yes** |
+
+All models: 50,000 steps, lr=1e-5, batch_size=8 (2-cam) or 64 (1-cam).
+
+### Training
+
+**Model D**: `checkpoints/act_a2_vit_2cam_chunk50/`
+- Training steps: 50,000
+- Best loss: 0.1000
+
+### Results
+
+| Model | Cameras | Chunk Size | Success Rate | Pick Rate | Drop Rate | Never Picked |
+|-------|---------|------------|--------------|-----------|-----------|--------------|
+| A (1-cam baseline) | 1 (wrist) | 50 | **72%** | 96% | 20.8% | 4% |
+| B (2-cam, big chunk) | 2 | 100 | 36% | 58% | — | — |
+| C (2-cam + cam embed) | 2 | 100 | 36% | 58% | 27.6% | 42% |
+| **D (2-cam, small chunk)** | **2** | **50** | **58%** | **92%** | **32.6%** | **8%** |
+
+**Failure breakdown for Model D (50 episodes)**:
+- Never picked up: 4 (8%)
+- Dropped during transport: 13 (26%)
+- Missed goal: 2 (4%)
+- Timeout: 2 (4%)
+
+### Key Findings
+
+1. **Chunk size was the primary variable** — reducing chunk_size from 100 to 50 improved success from 36% to 58% (+22 percentage points)
+2. **Camera embeddings had no measurable effect** — Models B and C both scored 36% with chunk_size=100
+3. **Pick rate recovered** — 2-cam chunk_50 achieves 92% pick rate (comparable to 1-cam's 96%), vs 58% with chunk_100
+4. **Drop rate is the remaining gap** — 32.6% drop rate vs 20.8% for 1-cam, accounting for most of the 14% success gap
+5. **Larger chunk_size hurts more with more cameras** — more visual tokens + longer prediction horizon may exceed model capacity
+
+### Comparison with ResNet Baseline
+
+| Backbone | Cameras | Chunk Size | Success Rate | Pick Rate |
+|----------|---------|------------|--------------|-----------|
+| ResNet-18 | 2 (wrist+overhead) | 100 | 50% | 70% |
+| ViT-B/16 | 2 (wrist+overhead) | 100 | 36% | 58% |
+| ViT-B/16 | 2 (wrist+overhead) | 50 | **58%** | **92%** |
+| ViT-B/16 | 1 (wrist only) | 50 | **72%** | **96%** |
+
+ResNet-18 with 2 cameras and chunk_size=100 actually outperformed ViT-B/16 under the same settings (50% vs 36%). This suggests ResNet's compact representation may be more robust to larger chunk sizes, while ViT's higher-dimensional patch tokens require shorter prediction horizons to train effectively.
+
+### Implications
+
+- **Chunk size is a critical hyperparameter** that interacts with model capacity and input complexity
+- **Adding cameras is not free** — more visual information requires careful tuning of other hyperparameters
+- **Fair comparisons require controlling chunk_size** — previous 1-cam vs 2-cam comparisons were confounded
+- Future work: test ResNet 2-cam with chunk_size=50 for a fully controlled comparison
+
+---
+
+## Notes / Future Work
+
+### GPU Utilization Optimization
+
+**TODO**: Investigate increasing batch size or other hyperparameters to better utilize GPU capacity during training.
+
+Current observations:
+- ACT-ViT training runs at ~1-2 it/s with batch_size=64, which may indicate room for improvement
+- Speed fluctuates significantly (1.1-2.3 it/s) likely due to data loading patterns
+- Consider: larger batch size, data prefetching, disk caching, or mixed precision training
