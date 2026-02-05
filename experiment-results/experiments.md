@@ -833,6 +833,87 @@ ResNet-18 with 2 cameras and chunk_size=100 actually outperformed ViT-B/16 under
 
 ---
 
+## 2026-02-03: Pickup Coordinates Conditioning
+
+**Status**: COMPLETED
+
+**Objective**: Test whether providing explicit block XY coordinates as input improves policy performance beyond what the vision backbone alone provides.
+
+### Dataset
+
+**Dataset**: `danbhf/sim_pick_place_2pos_220ep_confuser` (220 episodes, 2 block positions with confuser)
+
+### Training
+
+**Model**: ACT-ViT (ViT-B/16) with `--pickup_coords` enabled
+- 1 camera (wrist_cam), chunk_size=50
+- Block XY coordinates from `episode_scenes.json` fed as additional conditioning
+- X bounds: (0.1, 0.38), Y bounds: (-0.28, 0.27)
+- 50,000 steps, batch_size=8, lr=1e-5
+- Best loss: 0.1053
+- Output: `checkpoints/act_a2_vit_coords/`
+- WandB: https://wandb.ai/bryars-bryars/lerobot-thesis/runs/lsvn7ccg
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Success Rate | **76%** |
+| Pick Rate | 90% |
+| Drop Rate | 15.6% |
+| Avg Steps (success) | 167 |
+| Avg Max Height | 0.249 |
+
+**Failure Breakdown**:
+- Never picked up: 5/50 (10%)
+- Dropped during transport: 6/50 (12%)
+- Missed goal: 1/50 (2%)
+- Timeout: 0/50 (0%)
+
+### Comparison — All ViT-B/16 Models on Confuser Dataset
+
+| Model | Cameras | Chunk Size | Coords | Success | Pick Rate | Drop Rate |
+|-------|---------|------------|--------|---------|-----------|-----------|
+| ViT baseline | 1 (wrist) | 50 | No | 72% | 96% | 20.8% |
+| ViT frozen | 1 (wrist) | 50 | No | 74% | 84% | 9.5% |
+| **ViT + coords** | **1 (wrist)** | **50** | **Yes** | **76%** | **90%** | **15.6%** |
+| ViT 2-cam | 2 | 50 | No | 58% | 92% | 32.6% |
+| ViT 2-cam | 2 | 100 | No | 36% | 58% | 27.6% |
+| ResNet-18 | 2 | 100 | No | 50% | 70% | 20% |
+
+### Key Findings
+
+1. **Coords provide a modest +4% improvement** over the unfrozen ViT baseline (76% vs 72%)
+2. **Drop rate improved significantly**: 15.6% vs 20.8% — explicit coordinates help the transport phase
+3. **Avg max height is much higher** (0.249 vs 0.173 for 2-cam) — model lifts block more confidently
+4. **Zero timeouts** — model is more decisive with explicit spatial information
+5. **Pick rate slightly lower** (90% vs 96%) — possible interference between visual and coordinate signals during reaching
+
+### Interpretation
+
+Providing block coordinates gives the model a small but real advantage. The improvement is modest because the ViT backbone already extracts spatial information from wrist camera images fairly effectively. The main benefit is in the transport phase (lower drop rate), suggesting coordinates help the model maintain a more stable grasp trajectory when it knows exactly where the block started.
+
+---
+
+## 2026-02-03: Temporal Ensembling on 2-Camera Model
+
+**Status**: COMPLETED
+
+**Objective**: Test if temporal ensembling (which improved 1-cam from 82% to 90%) helps the 2-camera model.
+
+### Results
+
+| Condition | Success | Pick Rate | Drop Rate | Timeouts |
+|-----------|---------|-----------|-----------|----------|
+| 2-cam chunk_50 (no ensemble) | **58%** | **92%** | 32.6% | 2 |
+| 2-cam chunk_50 + ensemble 0.01 | 50% | 78% | **15.4%** | 8 |
+
+### Key Finding
+
+Temporal ensembling **hurt** the 2-camera model (-8%). While it halved the drop rate (good), it made the approach too cautious — more timeouts and missed pickups. The smoothing that helps 1-camera models appears to hurt with 2 cameras, likely because the overhead view introduces more prediction variance that the ensemble averages into a sluggish trajectory.
+
+---
+
 ## Notes / Future Work
 
 ### GPU Utilization Optimization
