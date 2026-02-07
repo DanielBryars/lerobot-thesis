@@ -138,6 +138,9 @@ def evaluate_checkpoint(
     block_y: float = None,
     scene: str = None,
     pickup_coords: bool = False,
+    subtask: bool = False,
+    selective_coords: bool = False,
+    delta_actions: bool = False,
 ) -> dict:
     """Evaluate a single checkpoint and return results."""
     policy, preprocessor, postprocessor = load_policy_and_processors(
@@ -181,6 +184,9 @@ def evaluate_checkpoint(
         block_y=block_y,
         scene=scene,
         pickup_coords=pickup_coords,
+        subtask=subtask,
+        selective_coords=selective_coords,
+        delta_actions=delta_actions,
     )
 
     success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = results
@@ -210,7 +216,7 @@ def main():
                         help="Treat path as local directory instead of HuggingFace repo")
     parser.add_argument("--episodes", type=int, default=50,
                         help="Number of evaluation episodes (default: 50)")
-    parser.add_argument("--policy", type=str, choices=["act", "smolvla"], default=None,
+    parser.add_argument("--policy", type=str, choices=["act", "act_vit", "smolvla"], default=None,
                         help="Policy type (auto-detected if not specified)")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device (default: cuda)")
@@ -235,6 +241,12 @@ def main():
                         help="Override scene XML (e.g., so101_with_confuser.xml)")
     parser.add_argument("--pickup-coords", action="store_true",
                         help="Enable pickup coordinate conditioning (for models trained with --pickup_coords)")
+    parser.add_argument("--subtask", action="store_true",
+                        help="Enable subtask phase conditioning (for models trained with --subtask)")
+    parser.add_argument("--selective-coords", action="store_true",
+                        help="Zero out coords during PICK_UP and DROP phases (test camera-only feedback)")
+    parser.add_argument("--delta-actions", action="store_true",
+                        help="Use delta/relative actions (for models trained with --delta_actions)")
 
     args = parser.parse_args()
 
@@ -330,6 +342,9 @@ def main():
             block_y=args.block_y,
             scene=args.scene,
             pickup_coords=args.pickup_coords,
+            subtask=args.subtask,
+            selective_coords=args.selective_coords,
+            delta_actions=args.delta_actions,
         )
         all_results[checkpoint_name] = results
 

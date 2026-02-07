@@ -3252,3 +3252,9 @@ Created `models/act_vit.py` with:
 **Interpretation**: Coordinate conditioning helps the model learn "which of the known positions to go to" rather than "go to arbitrary x,y coordinates". This is still useful for disambiguation but not true spatial grounding.
 
 **Implication**: For true coordinate-based manipulation, training data should include blocks at many random positions, not just 2 fixed positions.
+
+---
+
+## Note: Experiments Continued in experiments2.md
+
+This file has grown large. New experiments starting from Experiment 7 (Subtask Decomposition) are documented in **experiments2.md**.

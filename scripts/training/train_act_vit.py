@@ -49,6 +49,8 @@ from utils.training import (
     CachedDataset,
     DiskCachedDataset,
     PickupCoordinateDataset,
+    SubtaskDataset,
+    DeltaActionDataset,
     EpisodeFilterDataset,
     cycle,
     prepare_obs_for_policy,
@@ -80,11 +82,14 @@ def main():
     parser.add_argument("--cameras", type=str, default=None, help="Comma-separated camera names to use")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint directory to resume from")
     parser.add_argument("--pickup_coords", action="store_true", help="Add pickup location conditioning")
+    parser.add_argument("--subtask", action="store_true", help="Add subtask phase conditioning (requires subtask_annotations.json)")
     parser.add_argument("--pos1_only", action="store_true", help="Filter to position 1 episodes only")
     parser.add_argument("--freeze_backbone", action="store_true", help="Freeze ViT backbone (only train projection layers)")
     parser.add_argument("--vit_model", type=str, default="vit_b_16",
                         choices=["vit_b_16", "vit_b_32", "vit_l_16", "vit_l_32"],
                         help="ViT model variant (default: vit_b_16). vit_b_32 has fewer patches (49 vs 196)")
+    parser.add_argument("--delta_actions", action="store_true",
+                        help="Use delta/relative actions instead of absolute (predicts frame-to-frame changes)")
 
     args = parser.parse_args()
 
@@ -161,8 +166,71 @@ def main():
             if args.pos1_only:
                 args.pos1_only = False
 
+    # Load subtask conditioning
+    subtask_annotations = None
+    subtask_stats = None
+
+    if args.subtask:
+        print("Loading subtask_annotations.json...")
+        # Try local path first, then HuggingFace
+        local_path = Path(f"datasets/{args.dataset.split('/')[-1]}")
+        if local_path.exists():
+            subtask_annotations = SubtaskDataset.load_annotations_local(str(local_path))
+        if not subtask_annotations:
+            subtask_annotations = SubtaskDataset.load_annotations(args.dataset)
+
+        if subtask_annotations:
+            # Subtask is added to observation.environment_state (concatenated with pickup_coords if present)
+            # Determine combined feature size:
+            # - pickup_coords only: 2 dims
+            # - subtask only: 4 dims (one-hot)
+            # - both: 6 dims
+            env_state_dim = SubtaskDataset.NUM_SUBTASKS  # 4 for subtask one-hot
+            if args.pickup_coords and episode_scenes:
+                env_state_dim += 2  # Add pickup coord dims
+
+            from lerobot.configs.types import PolicyFeature
+            # Override/set the environment_state feature with combined size
+            input_features['observation.environment_state'] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(env_state_dim,),
+            )
+            subtask_stats = SubtaskDataset.compute_stats(use_one_hot=True)
+            # Merge subtask stats with pickup_coord stats if needed
+            if pickup_coord_stats:
+                # Combine stats: pickup_coords (2) + subtask (4) = 6 dims
+                combined_mean = torch.cat([
+                    pickup_coord_stats['observation.environment_state']['mean'],
+                    subtask_stats['observation.environment_state']['mean']
+                ])
+                combined_std = torch.cat([
+                    pickup_coord_stats['observation.environment_state']['std'],
+                    subtask_stats['observation.environment_state']['std']
+                ])
+                pickup_coord_stats['observation.environment_state']['mean'] = combined_mean
+                pickup_coord_stats['observation.environment_state']['std'] = combined_std
+            else:
+                # Use subtask stats alone
+                pickup_coord_stats = subtask_stats
+            print(f"  Loaded subtask annotations for {len(subtask_annotations)} episodes")
+            print(f"  Combined environment_state dim: {env_state_dim}")
+        else:
+            print("  WARNING: No subtask_annotations found - disabling subtask conditioning")
+            args.subtask = False
+
     print(f"Input features: {list(input_features.keys())}")
     print(f"Output features: {list(output_features.keys())}")
+
+    # Compute delta action stats if enabled
+    delta_action_stats = None
+    if args.delta_actions:
+        print("Computing delta action stats...")
+        # Use fast path: compute directly from parquet files
+        delta_action_stats = DeltaActionDataset.compute_stats(
+            args.dataset,  # Pass repo_id string for fast path
+            action_dim=output_features['action'].shape[0],
+            num_samples=10000
+        )
 
     # Create ACT config
     cfg = ACTConfig(
@@ -190,8 +258,12 @@ def main():
     # Create processors
     import copy
     stats = copy.deepcopy(dict(dataset_metadata.stats))
+    # pickup_coord_stats contains merged stats if both pickup_coords and subtask are enabled
     if pickup_coord_stats:
         stats.update(pickup_coord_stats)
+    # Update action stats for delta actions
+    if delta_action_stats:
+        stats.update(delta_action_stats)
     preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=stats)
 
     # Count parameters
@@ -208,7 +280,7 @@ def main():
     }
     for key in input_features:
         if key == 'observation.environment_state':
-            continue
+            continue  # Added by dataset wrappers (pickup coords and/or subtask)
         delta_timestamps[key] = [0.0]
 
     # Load dataset
@@ -241,6 +313,15 @@ def main():
     # Add pickup coordinates
     if args.pickup_coords and episode_scenes:
         dataset = PickupCoordinateDataset(dataset, episode_scenes)
+
+    # Add subtask conditioning
+    if args.subtask and subtask_annotations:
+        dataset = SubtaskDataset(dataset, subtask_annotations, use_one_hot=True)
+
+    # Add delta action transformation
+    if args.delta_actions:
+        action_dim = output_features['action'].shape[0]
+        dataset = DeltaActionDataset(dataset, action_dim=action_dim)
 
     # Create dataloader
     dataloader = torch.utils.data.DataLoader(
@@ -293,6 +374,7 @@ def main():
         "fps": dataset_metadata.fps,
         "total_frames": len(dataset),
         "pickup_coords": args.pickup_coords,
+        "delta_actions": args.delta_actions,
         "pos1_only": args.pos1_only,
     }
 
@@ -332,6 +414,7 @@ def main():
     print(f"Vision backbone: {args.vit_model}")
     print(f"Cameras: {', '.join(camera_names)}")
     print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
+    print(f"Delta actions: {'enabled' if args.delta_actions else 'disabled'}")
     print(f"Frozen backbone: {'yes' if args.freeze_backbone else 'no'}")
     print("=" * 60)
     print()

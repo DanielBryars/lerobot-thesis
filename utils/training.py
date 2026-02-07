@@ -441,6 +441,371 @@ class PickupCoordinateDataset(torch.utils.data.Dataset):
         }
 
 
+class SubtaskDataset(torch.utils.data.Dataset):
+    """Dataset wrapper that adds subtask labels from subtask_annotations.json.
+
+    This enables subtask conditioning for the ACT model by providing the
+    current subtask phase as additional input.
+
+    Subtask labels:
+        0: MOVE_TO_SOURCE - Approaching the target block
+        1: PICK_UP - Near block, executing grasp
+        2: MOVE_TO_DEST - Transporting to destination
+        3: DROP - Near destination, releasing
+
+    Args:
+        dataset: The underlying dataset to wrap
+        subtask_annotations: Dict mapping episode_index (int) -> list of subtask labels per frame
+        use_one_hot: If True, return one-hot encoding (4 dims). If False, return integer label.
+    """
+
+    NUM_SUBTASKS = 4
+    SUBTASK_NAMES = ["MOVE_TO_SOURCE", "PICK_UP", "MOVE_TO_DEST", "DROP"]
+
+    def __init__(
+        self,
+        dataset,
+        subtask_annotations: dict,
+        use_one_hot: bool = True,
+    ):
+        self.dataset = dataset
+        self.subtask_annotations = subtask_annotations
+        self.use_one_hot = use_one_hot
+
+        # Convert string keys to int if needed
+        self.subtask_annotations = {
+            int(k): v for k, v in subtask_annotations.items()
+        }
+
+        print(f"SubtaskDataset: loaded annotations for {len(self.subtask_annotations)} episodes")
+        print(f"  Output format: {'one-hot (4 dims)' if use_one_hot else 'integer label'}")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # Get episode and frame index from the item
+        ep_idx = item['episode_index']
+        if isinstance(ep_idx, torch.Tensor):
+            ep_idx = ep_idx.item()
+
+        frame_idx = item['frame_index']
+        if isinstance(frame_idx, torch.Tensor):
+            frame_idx = frame_idx.item()
+
+        # Look up subtask label
+        if ep_idx in self.subtask_annotations:
+            annotations = self.subtask_annotations[ep_idx]
+            if frame_idx < len(annotations):
+                subtask = annotations[frame_idx]
+            else:
+                # Frame index out of range - use last known subtask
+                subtask = annotations[-1] if annotations else 0
+        else:
+            # Fallback for missing episodes - assume MOVE_TO_SOURCE
+            subtask = 0
+
+        # Convert to tensor
+        if self.use_one_hot:
+            subtask_tensor = torch.zeros(self.NUM_SUBTASKS, dtype=torch.float32)
+            subtask_tensor[subtask] = 1.0
+        else:
+            subtask_tensor = torch.tensor([subtask], dtype=torch.float32)
+
+        # Add subtask to observation.environment_state (concatenate if exists)
+        # This allows the model to use subtask through the existing env_state pathway
+        if 'observation.environment_state' in item:
+            # Concatenate with existing env state (e.g., pickup coords)
+            existing = item['observation.environment_state']
+            item['observation.environment_state'] = torch.cat([existing, subtask_tensor])
+        else:
+            # Create new env state from subtask alone
+            item['observation.environment_state'] = subtask_tensor
+
+        return item
+
+    @classmethod
+    def load_annotations(cls, dataset_repo_id: str) -> dict:
+        """Load subtask_annotations.json from HuggingFace dataset.
+
+        Args:
+            dataset_repo_id: HuggingFace dataset ID (e.g., 'danbhf/sim_pick_place_157ep')
+
+        Returns:
+            Dict mapping episode_index (int) -> list of subtask labels per frame
+        """
+        from huggingface_hub import hf_hub_download
+
+        try:
+            annotations_path = hf_hub_download(
+                dataset_repo_id,
+                'meta/subtask_annotations.json',
+                repo_type='dataset'
+            )
+            with open(annotations_path) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"WARNING: Could not load subtask_annotations.json: {e}")
+            return {}
+
+    @classmethod
+    def load_annotations_local(cls, dataset_path: str) -> dict:
+        """Load subtask_annotations.json from local dataset path.
+
+        Args:
+            dataset_path: Path to local dataset directory
+
+        Returns:
+            Dict mapping episode_index (int) -> list of subtask labels per frame
+        """
+        from pathlib import Path
+        annotations_file = Path(dataset_path) / 'meta' / 'subtask_annotations.json'
+        if annotations_file.exists():
+            with open(annotations_file) as f:
+                return json.load(f)
+        else:
+            print(f"WARNING: subtask_annotations.json not found at {annotations_file}")
+            return {}
+
+    @classmethod
+    def compute_stats(cls, use_one_hot: bool = True) -> dict:
+        """Compute normalization statistics for subtask labels.
+
+        Returns stats dict compatible with LeRobot's normalization pipeline.
+        For one-hot encoding, we return mean=0, std=1 (no-op normalization).
+
+        Note: Subtask is added to observation.environment_state, so we return
+        stats under that key.
+
+        Args:
+            use_one_hot: Whether using one-hot encoding
+
+        Returns:
+            Dict with 'mean' and 'std' tensors for observation.environment_state
+        """
+        if use_one_hot:
+            return {
+                'observation.environment_state': {
+                    'mean': torch.zeros(cls.NUM_SUBTASKS, dtype=torch.float32),
+                    'std': torch.ones(cls.NUM_SUBTASKS, dtype=torch.float32),
+                }
+            }
+        else:
+            return {
+                'observation.environment_state': {
+                    'mean': torch.tensor([0.0], dtype=torch.float32),
+                    'std': torch.tensor([1.0], dtype=torch.float32),
+                }
+            }
+
+
+class DeltaActionDataset(torch.utils.data.Dataset):
+    """Dataset wrapper that converts absolute actions to frame-to-frame deltas.
+
+    For action chunks of shape (chunk_size, action_dim):
+    - delta[0] = action[0] - observation.state[:action_dim]  (first target relative to current)
+    - delta[i] = action[i] - action[i-1] for i > 0  (subsequent relative to previous)
+
+    At inference time, use cumsum to convert back:
+    - target[0] = current_state + delta[0]
+    - target[i] = target[i-1] + delta[i]
+
+    This representation has ~99.7% lower variance than absolute actions,
+    potentially improving generalization to novel positions.
+    """
+
+    def __init__(self, dataset, action_dim: int = 6):
+        """
+        Args:
+            dataset: Base dataset that returns action chunks
+            action_dim: Number of action dimensions (default: 6 for joint control)
+        """
+        self.dataset = dataset
+        self.action_dim = action_dim
+        print(f"DeltaActionDataset: converting actions to frame-to-frame deltas")
+        print(f"  Action dimension: {action_dim}")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # Get action chunk and current state
+        actions = item['action']  # Shape: (chunk_size, action_dim) or (action_dim,)
+        state = item['observation.state']  # Shape: (state_dim,)
+
+        # Handle both chunked and single-step cases
+        if actions.dim() == 1:
+            # Single action: delta = action - state
+            delta = actions[:self.action_dim] - state[:self.action_dim]
+            item['action'] = delta
+        else:
+            # Action chunk: convert to deltas
+            chunk_size = actions.shape[0]
+            deltas = torch.zeros_like(actions)
+
+            # First delta: relative to current state
+            deltas[0] = actions[0, :self.action_dim] - state[:self.action_dim]
+            if actions.shape[1] > self.action_dim:
+                # Keep gripper action as absolute (last dim)
+                deltas[0, self.action_dim:] = actions[0, self.action_dim:]
+
+            # Subsequent deltas: relative to previous action
+            for i in range(1, chunk_size):
+                deltas[i, :self.action_dim] = actions[i, :self.action_dim] - actions[i-1, :self.action_dim]
+                if actions.shape[1] > self.action_dim:
+                    deltas[i, self.action_dim:] = actions[i, self.action_dim:]
+
+            item['action'] = deltas
+
+        return item
+
+    @staticmethod
+    def deltas_to_absolute(deltas: torch.Tensor, initial_state: torch.Tensor, action_dim: int = 6) -> torch.Tensor:
+        """Convert delta actions back to absolute positions for execution.
+
+        Args:
+            deltas: Delta actions, shape (chunk_size, action_dim) or (batch, chunk_size, action_dim)
+            initial_state: Current joint state, shape (action_dim,) or (batch, action_dim)
+            action_dim: Number of joint dimensions (gripper kept absolute)
+
+        Returns:
+            Absolute action targets with same shape as deltas
+        """
+        if deltas.dim() == 2:
+            # Single batch: (chunk_size, action_dim)
+            absolute = torch.zeros_like(deltas)
+            absolute[0, :action_dim] = initial_state[:action_dim] + deltas[0, :action_dim]
+            if deltas.shape[1] > action_dim:
+                absolute[0, action_dim:] = deltas[0, action_dim:]
+
+            for i in range(1, deltas.shape[0]):
+                absolute[i, :action_dim] = absolute[i-1, :action_dim] + deltas[i, :action_dim]
+                if deltas.shape[1] > action_dim:
+                    absolute[i, action_dim:] = deltas[i, action_dim:]
+
+            return absolute
+        else:
+            # Batched: (batch, chunk_size, action_dim)
+            batch_size = deltas.shape[0]
+            absolute = torch.zeros_like(deltas)
+
+            for b in range(batch_size):
+                absolute[b] = DeltaActionDataset.deltas_to_absolute(
+                    deltas[b], initial_state[b], action_dim
+                )
+
+            return absolute
+
+    @classmethod
+    def compute_stats(cls, base_dataset_or_repo_id, action_dim: int = 6, num_samples: int = 10000) -> dict:
+        """Compute normalization statistics for delta actions.
+
+        This uses a fast path that reads directly from parquet files when
+        a repo_id string is provided, avoiding slow video decoding.
+
+        Args:
+            base_dataset_or_repo_id: Either a dataset object or HuggingFace repo ID string
+            action_dim: Number of action dimensions
+            num_samples: Number of samples to use for stats computation
+
+        Returns:
+            Dict with 'mean' and 'std' tensors for 'action'
+        """
+        import pandas as pd
+        from pathlib import Path
+
+        # Fast path: load directly from parquet if repo_id provided
+        if isinstance(base_dataset_or_repo_id, str):
+            from huggingface_hub import hf_hub_download, list_repo_files
+
+            repo_id = base_dataset_or_repo_id
+            print(f"  Loading delta stats from parquet files (fast path)...")
+
+            # Find parquet files
+            files = list_repo_files(repo_id, repo_type="dataset")
+            parquet_files = [f for f in files if f.endswith('.parquet') and 'data' in f]
+
+            # Download and load
+            all_actions = []
+            all_states = []
+            for pf in parquet_files[:3]:  # Limit to first 3 chunks for speed
+                local_path = hf_hub_download(repo_id, pf, repo_type="dataset")
+                df = pd.read_parquet(local_path)
+                all_actions.extend(df['action'].tolist())
+                all_states.extend(df['observation.state'].tolist())
+
+            actions = np.array(all_actions)
+            states = np.array(all_states)
+
+            # Compute frame-to-frame deltas
+            # Group by episode and compute deltas within each
+            # For simplicity, just compute consecutive deltas (ignoring episode boundaries)
+            # This is approximate but good enough for normalization stats
+            deltas = actions[1:, :action_dim] - actions[:-1, :action_dim]
+
+            # Sample if too many
+            if len(deltas) > num_samples:
+                indices = np.random.choice(len(deltas), num_samples, replace=False)
+                deltas = deltas[indices]
+
+            mean = torch.tensor(deltas.mean(axis=0), dtype=torch.float32)
+            std = torch.tensor(deltas.std(axis=0), dtype=torch.float32)
+            std = torch.clamp(std, min=1e-6)
+
+            # Pad to full action dim if needed (for gripper)
+            if len(mean) < action_dim:
+                mean = torch.cat([mean, torch.zeros(action_dim - len(mean))])
+                std = torch.cat([std, torch.ones(action_dim - len(std))])
+
+            print(f"  Delta stats (from {len(deltas)} frame-to-frame deltas):")
+            print(f"    Mean: {mean.numpy()}")
+            print(f"    Std:  {std.numpy()}")
+
+            return {
+                'action': {
+                    'mean': mean,
+                    'std': std,
+                }
+            }
+
+        # Slow path: iterate through dataset
+        base_dataset = base_dataset_or_repo_id
+        delta_ds = cls(base_dataset, action_dim=action_dim)
+
+        # Sample deltas
+        indices = torch.randperm(len(delta_ds))[:num_samples]
+        deltas = []
+        for idx in indices:
+            item = delta_ds[idx.item()]
+            deltas.append(item['action'])
+
+        deltas = torch.stack(deltas)
+
+        # Handle chunked vs single
+        if deltas.dim() == 3:
+            # (num_samples, chunk_size, action_dim) -> flatten to (N, action_dim)
+            deltas = deltas.reshape(-1, deltas.shape[-1])
+
+        mean = deltas.mean(dim=0)
+        std = deltas.std(dim=0)
+        std = torch.clamp(std, min=1e-6)  # Avoid division by zero
+
+        print(f"DeltaActionDataset stats (from {num_samples} samples):")
+        print(f"  Mean: {mean[:action_dim].numpy()}")
+        print(f"  Std:  {std[:action_dim].numpy()}")
+
+        return {
+            'action': {
+                'mean': mean,
+                'std': std,
+            }
+        }
+
+
 def cycle(dataloader):
     """Infinite dataloader iterator."""
     while True:
@@ -512,6 +877,9 @@ def run_evaluation(
     block_y: float = None,
     scene: str = None,
     pickup_coords: bool = False,
+    subtask: bool = False,
+    selective_coords: bool = False,
+    delta_actions: bool = False,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -539,6 +907,8 @@ def run_evaluation(
         scene: Optional scene XML filename override (e.g., "so101_with_confuser.xml")
         pickup_coords: If True, inject pickup coordinates (from block_x, block_y) into batch
             as observation.environment_state. Required for models trained with --pickup_coords.
+        subtask: If True, compute and inject subtask phase (one-hot) into batch.
+            Uses FK state machine: MOVE_TO_SOURCE -> PICK_UP -> MOVE_TO_DEST -> DROP
 
     Returns:
         Tuple of (success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary)
@@ -712,7 +1082,14 @@ def run_evaluation(
     for ep in range(num_episodes):
         print(f"  Episode {ep+1}/{num_episodes}...", end=" ", flush=True)
         policy.reset()  # Reset action chunking state
-        sim_robot.reset_scene(randomize=randomize, pos_range=0.04, rot_range=np.pi,
+        # Reset delta action accumulator
+        if hasattr(policy, '_delta_prev_target'):
+            delattr(policy, '_delta_prev_target')
+        # If explicit block position provided, disable randomization
+        fixed_pos = block_x is not None and block_y is not None
+        sim_robot.reset_scene(randomize=randomize,
+                              pos_range=0.0 if fixed_pos else 0.04,
+                              rot_range=np.pi,
                               pos_center_x=block_x, pos_center_y=block_y)
 
         # Get actual block position for pickup coordinate conditioning
@@ -735,6 +1112,29 @@ def run_evaluation(
             except Exception as e:
                 if verbose:
                     print(f"[pickup_coords error: {e}]", end=" ")
+
+        # Setup subtask state machine for this episode
+        subtask_state = 0  # Start at MOVE_TO_SOURCE
+        block_pos_3d = None
+        bowl_pos_3d = np.array([0.217, -0.225, 0.0])  # Fixed bowl position
+        ee_site_id = None
+        NEAR_THRESHOLD = 0.06  # 6cm
+        FAR_THRESHOLD = 0.12   # 12cm
+
+        if subtask:
+            try:
+                duplo_body_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_BODY, "duplo")
+                block_pos_3d = sim_robot.mj_data.xpos[duplo_body_id].copy()
+                # Find EE site
+                for site_name in ["gripperframe", "gripper_site", "ee_site"]:
+                    ee_site_id = mujoco.mj_name2id(sim_robot.mj_model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+                    if ee_site_id != -1:
+                        break
+                if verbose and ep == 0:
+                    print(f"[subtask: block=({block_pos_3d[0]:.2f}, {block_pos_3d[1]:.2f})]", end=" ")
+            except Exception as e:
+                if verbose:
+                    print(f"[subtask error: {e}]", end=" ")
 
         # Reset temporal ensembling state for this episode
         if use_ensemble:
@@ -809,9 +1209,50 @@ def run_evaluation(
 
             batch = prepare_obs_for_policy(obs, device, depth_camera_names)
 
-            # Add pickup coordinates if enabled
-            if pickup_coord_tensor is not None:
+            # Save raw state before preprocessing (needed for delta action conversion)
+            raw_state = batch["observation.state"].clone()
+
+            # Compute subtask state if enabled
+            subtask_tensor = None
+            if subtask and ee_site_id is not None and block_pos_3d is not None:
+                # Get current EE position
+                ee_pos = sim_robot.mj_data.site_xpos[ee_site_id].copy()
+
+                # Compute distances
+                dist_to_block_xy = np.linalg.norm(ee_pos[:2] - block_pos_3d[:2])
+                dist_to_block_3d = np.linalg.norm(ee_pos - block_pos_3d)
+                dist_to_bowl_xy = np.linalg.norm(ee_pos[:2] - bowl_pos_3d[:2])
+
+                # Forward-only state machine
+                if subtask_state == 0:  # MOVE_TO_SOURCE
+                    if dist_to_block_xy < NEAR_THRESHOLD:
+                        subtask_state = 1  # -> PICK_UP
+                elif subtask_state == 1:  # PICK_UP
+                    if dist_to_block_3d > FAR_THRESHOLD:
+                        subtask_state = 2  # -> MOVE_TO_DEST
+                elif subtask_state == 2:  # MOVE_TO_DEST
+                    if dist_to_bowl_xy < NEAR_THRESHOLD:
+                        subtask_state = 3  # -> DROP
+                # subtask_state 3 (DROP) is terminal
+
+                # Create one-hot tensor
+                subtask_onehot = torch.zeros(4, dtype=torch.float32, device=device)
+                subtask_onehot[subtask_state] = 1.0
+                subtask_tensor = subtask_onehot.unsqueeze(0)  # (1, 4)
+
+            # Add pickup coordinates and/or subtask to environment_state
+            if pickup_coord_tensor is not None and subtask_tensor is not None:
+                # Both: concatenate coords (2) + subtask (4) = 6 dims
+                # If selective_coords is enabled, zero out coords during PICK_UP (1) and DROP (3)
+                if selective_coords and subtask_state in (1, 3):
+                    zeroed_coords = torch.zeros_like(pickup_coord_tensor)
+                    batch["observation.environment_state"] = torch.cat([zeroed_coords, subtask_tensor], dim=1)
+                else:
+                    batch["observation.environment_state"] = torch.cat([pickup_coord_tensor, subtask_tensor], dim=1)
+            elif pickup_coord_tensor is not None:
                 batch["observation.environment_state"] = pickup_coord_tensor
+            elif subtask_tensor is not None:
+                batch["observation.environment_state"] = subtask_tensor
 
             # Add language tokens if provided (for VLA models like SmolVLA)
             if lang_tokens is not None:
@@ -875,6 +1316,20 @@ def run_evaluation(
                 # Holding position causes policy/robot state mismatch and cascading failures
             else:
                 joint_action = action_np[:NUM_JOINTS]
+
+            # Convert delta actions to absolute if needed
+            # For delta actions with chunking: deltas are relative to previous action in chunk
+            # delta[0] = target[0] - initial_state
+            # delta[i] = target[i] - target[i-1]
+            # So we need to accumulate: target[i] = initial_state + sum(delta[0:i+1])
+            if delta_actions and not is_ee_action_space:
+                if step == 0 or not hasattr(policy, '_delta_prev_target'):
+                    # First step: use current state as base
+                    policy._delta_prev_target = raw_state.cpu().numpy().flatten()[:NUM_JOINTS].copy()
+
+                # Accumulate delta to previous target (not current state)
+                policy._delta_prev_target = policy._delta_prev_target + joint_action
+                joint_action = policy._delta_prev_target.copy()
 
             action_dict = {f"{MOTOR_NAMES[i]}.pos": float(joint_action[i]) for i in range(NUM_JOINTS)}
             sim_robot.send_action(action_dict)
