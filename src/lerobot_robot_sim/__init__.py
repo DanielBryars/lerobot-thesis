@@ -98,6 +98,9 @@ class SO100SimConfig(RobotConfig):
     # Enable VR output
     enable_vr: bool = False
 
+    # Use legacy buggy state (reads duplo position instead of robot joints)
+    legacy_state_bug: bool = False
+
     # Real cameras config (not used for sim, but needed for interface compat)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
@@ -202,6 +205,14 @@ class SO100Sim(Robot):
             except Exception:
                 logger.warning(f"Camera '{cam_name}' not in model, using default view")
                 self._camera_ids[cam_name] = None
+
+        # Cache robot joint qpos addresses for correct state reading
+        self._joint_qpos_indices = []
+        for name in MOTOR_NAMES:
+            jnt_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            self._joint_qpos_indices.append(self.mj_model.jnt_qposadr[jnt_id])
+        self._joint_qpos_indices = np.array(self._joint_qpos_indices)
+        logger.info(f"Robot joint qpos indices: {self._joint_qpos_indices}")
 
         # Initialize sim
         for _ in range(100):
@@ -365,7 +376,10 @@ class SO100Sim(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Read joint positions
-        joint_radians = self.mj_data.qpos[:6].copy()
+        if self.config.legacy_state_bug:
+            joint_radians = self.mj_data.qpos[:6].copy()  # Bug: reads duplo position, not robot joints
+        else:
+            joint_radians = self.mj_data.qpos[self._joint_qpos_indices].copy()
         obs_dict = radians_to_normalized(joint_radians, self.config.use_degrees)
         obs_dict = {f"{motor}.pos": obs_dict[motor] for motor in MOTOR_NAMES}
 
@@ -462,7 +476,7 @@ class SO100Sim(Robot):
             self._action_count = 0
         self._action_count += 1
         if self._action_count % 100 == 1:
-            actual_qpos = self.mj_data.qpos[:6]
+            actual_qpos = self.mj_data.qpos[self._joint_qpos_indices]
             norm_vals = [goal_pos.get(m, 0.0) for m in MOTOR_NAMES]
             logger.info(f"Action #{self._action_count}:")
             logger.info(f"  Normalized: [{norm_vals[0]:6.1f}, {norm_vals[1]:6.1f}, {norm_vals[2]:6.1f}, {norm_vals[3]:6.1f}, {norm_vals[4]:6.1f}, {norm_vals[5]:5.1f}]")

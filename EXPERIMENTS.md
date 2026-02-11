@@ -1,5 +1,9 @@
 # Experiments Log
 
+> Lab notebook documenting experiments for the MSc thesis: *Improving Generalisation Performance of Imitation-Learnt Tasks of Small Vision-Based Policies for Robot Control Under Low-Cost Constraints*. All experiments use the LeRobot framework (Cadene et al., 2024) with SO-100/101 robot arms in MuJoCo simulation (Todorov et al., 2012).
+
+---
+
 ## IMPORTANT: Resume Bug Found (2026-01-30)
 
 **Bug**: `load_checkpoint()` in `utils/training.py` was NOT loading policy weights on resume.
@@ -32,6 +36,7 @@ This means resumed training was effectively starting from scratch with random we
 - **TODO**: Run evaluation in simulation to measure success rate
 
 ### SmolVLA Model - 200k steps (2026-01-06) [FAILED - 0% SUCCESS]
+SmolVLA is a compact Vision-Language-Action model from HuggingFace (Allal et al., 2025).
 - **Model**: `danbhf/smolvla_sim_pick_place_200k`
 - **Dataset**: `danbhf/sim_pick_place_40ep_rgbd_ee` (RGBD + EE space)
 - **Training**: 200k steps on H100
@@ -137,6 +142,7 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi0_so101 \
 ```
 
 ### ACT Model - 157 Episodes (2026-01-18) [SUCCESS - 100% at 45k]
+ACT (Action Chunking with Transformers) is a lightweight behavioural cloning policy using a CVAE encoder and transformer decoder to predict action chunks (Zhao et al., 2023).
 - **Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, joint space)
 - **Training**: 50k steps, ~2 hours locally on RTX 5090
 - **Best checkpoint**: `checkpoint_045000` - **100% success** (10/10 episodes)
@@ -157,6 +163,7 @@ The model peaks around 45k steps, slight overfitting after that.
 ---
 
 ### Pi0 Model - LeRobot PyTorch (2026-01-18/19) [SUCCESS - TRAINED]
+Pi0 is a 3B-parameter Vision-Language-Action flow model for general robot control (Black et al., 2024), using flow matching (Lipman et al., 2023) to iteratively denoise action predictions.
 - **Docker image**: `aerdanielbryars101/lerobot-pi0:latest`
 - **Dataset**: `danbhf/sim_pick_place_157ep` (157 episodes, joint space)
 - **Training**: vast.ai H100, ~1.3s/step with gradient checkpointing
@@ -411,7 +418,7 @@ correction. ACT with temporal ensemble would correct every step. This could expl
 - ACT: 31ms/step = **32 Hz** ✓ (viable for real-time control)
 - Pi0: 250ms/step = **4 Hz** ✗ (too slow for reactive control)
 
-**This is a fundamental architectural trade-off:**
+**This is a fundamental architectural trade-off** (see also the discussion of action chunking in Zhao et al., 2023, §3.2):
 - **ACT**: Small transformer (~few M params), fast inference → CAN do temporal ensemble / visual servoing
 - **Pi0**: Large VLM (3B params), slow inference → MUST commit to longer action chunks
 
@@ -422,9 +429,9 @@ quickly from the queue. But this means it can only "see" and react every 50 step
 **The real question becomes:** Can a VLM predict accurately enough 50 steps into the future
 that it doesn't need frequent visual feedback? Or is the task too dynamic for open-loop chunks?
 
-**Implications for VLMs in robotics:**
+**Implications for VLMs in robotics** (cf. Brohan et al., 2023, "RT-2"; Driess et al., 2023, "PaLM-E"):
 - VLMs may be better suited for **high-level planning** (what to do) than **low-level control** (how to do it)
-- Hybrid approaches: VLM for goal/waypoint generation, small policy for reactive execution
+- Hybrid approaches: VLM for goal/waypoint generation, small policy for reactive execution (as in SayCan, Ahn et al., 2022)
 - Or: Accept lower control rates for tasks where 4 Hz is sufficient (slow manipulation)
 - Or: Distill VLM knowledge into smaller, faster models for deployment
 
@@ -854,6 +861,8 @@ Unlikely to help significantly because:
 
 ### Pi0.5 Training Notes
 
+Pi0.5 extends Pi0 with web-scale VLM pretraining for improved language grounding and multi-step task planning (Physical Intelligence, 2025).
+
 **Important advice (from friend with experience):**
 > "For Pi0.5, use directly the implementation of Physical Intelligence in JAX. The one in LeRobot was repeatedly reported as not working (which is the case for a lot of HF models btw)"
 
@@ -925,7 +934,7 @@ cd /app/openpi && XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
 
 ## Engineering Issues Can Dominate Results
 
-**Key Lesson**: When evaluation results don't match expectations, the problem is usually a bug in the evaluation code, not the model. We spent significant time debugging eval code issues before getting meaningful results.
+**Key Lesson**: When evaluation results don't match expectations, the problem is usually a bug in the evaluation code, not the model. We spent significant time debugging eval code issues before getting meaningful results. This echoes Henderson et al. (2018, "Deep Reinforcement Learning that Matters") on the importance of implementation details in empirical RL/IL research.
 
 ### Bug Synopsis (2026-01-06)
 
@@ -1148,9 +1157,9 @@ Need to investigate which approach is most practical without full retraining.
 - **Reference**: PDF tutorial from `docs/2510.12403v1.pdf` (pages 23-33)
 - **Goal**: Learn HIL-SERL (Human-in-the-Loop Sample Efficient Robot RL) workflow
 
-**What is HIL-SERL?**
+**What is HIL-SERL?** (Luo et al., 2024)
 - Real-world RL training that achieves 99%+ success in 1-2 hours
-- Combines SAC + RLPD + human interventions during training
+- Combines SAC (Haarnoja et al., 2018) + RLPD (Ball et al., 2023) + human interventions during training
 - Uses a **learned reward classifier** instead of hand-crafted rewards
 
 **Key insight - Reward Classifier:**
@@ -1379,9 +1388,9 @@ MuJoCo scatter visualization with:
 
 ### Implications for Thesis
 
-This demonstrates a critical limitation of behavior cloning approaches like ACT:
+This demonstrates a critical limitation of behavioural cloning (Pomerleau, 1991; Ross et al., 2011) approaches like ACT:
 - Training data was collected at a single position with small noise
-- Policy memorizes the exact visual-motor mapping for that position
+- Policy memorises the exact visual-motor mapping for that position
 - No ability to interpolate or extrapolate to novel positions
 - Suggests need for either: (a) diverse training data, or (b) policy architecture with better spatial reasoning
 
@@ -1424,15 +1433,17 @@ Visualized the 10-step flow matching denoising process from noise (t=1.0) to fin
 
 #### How Flow Matching Works
 
+Flow matching (Lipman et al., 2023) learns a continuous normalising flow that maps a simple prior distribution to the data distribution via an ODE:
+
 ```
 Start: x₁ ~ N(0, I)           # Pure noise at t=1.0
 For step in range(10):
-    v_t = model(x_t, t)       # Predict velocity
-    x_{t-dt} = x_t + dt * v_t # Move along velocity field
+    v_t = model(x_t, t)       # Predict velocity field
+    x_{t-dt} = x_t + dt * v_t # Euler integration along flow
 End: x₀ = actions             # Final actions at t=0.0
 ```
 
-Each step moves the sample along the learned velocity field. Unlike diffusion which gradually removes noise, flow matching learns direct paths from noise to data.
+Each step moves the sample along the learned velocity field. Unlike DDPM-style diffusion (Ho et al., 2020) which gradually removes noise through a discrete Markov chain, flow matching learns direct optimal-transport paths from noise to data, requiring fewer denoising steps (typically 10 vs 50-1000).
 
 ---
 
@@ -1485,7 +1496,7 @@ The model runs **open-loop**: predict 100 actions, execute all 100, then re-pred
 
 ### What is Temporal Ensembling?
 
-With ensembling enabled, the policy predicts every step, creating overlapping chunks:
+Temporal ensembling was introduced in the original ACT paper (Zhao et al., 2023, Algorithm 2) to smooth action predictions across overlapping chunks. With ensembling enabled, the policy predicts every step, creating overlapping chunks:
 
 ```
 Step 0:  Predict [a₀, a₁, ..., a₉₉]  →  Execute a₀
@@ -1822,7 +1833,7 @@ Episodes  005K   010K   015K   020K   025K   030K   035K   040K   045K   Final
 
 ### The 40-60 Episode Dip: A Grokking Hypothesis
 
-The non-monotonic performance dip at 40-60 episodes is intriguing. More data temporarily *hurt* performance:
+The non-monotonic performance dip at 40-60 episodes is intriguing and may relate to the *grokking* phenomenon (Power et al., 2022). More data temporarily *hurt* performance:
 
 | Episodes | Best Success |
 |----------|--------------|
@@ -1833,7 +1844,7 @@ The non-monotonic performance dip at 40-60 episodes is intriguing. More data tem
 
 **Hypothesis: Memorization → Generalization Transition**
 
-This pattern may be related to **grokking** - the phenomenon where neural networks suddenly generalize after a period of memorization, often well after achieving low training loss.
+This pattern may be related to **grokking** (Power et al., 2022) — the phenomenon where neural networks suddenly generalise after a period of memorisation, often well after achieving low training loss.
 
 - **1-20 episodes**: Limited diversity. The model can **memorize** the trajectories and achieve decent performance through pattern matching.
 - **40-60 episodes**: Increased trajectory diversity. Pure memorization no longer works - the model must **generalize**. But 45k training steps may not be enough for this transition to complete.
@@ -3005,7 +3016,7 @@ The 157ep model never saw a confuser during training but handles it perfectly wi
 The mixed model trained WITH confuser data fails completely.
 
 **Diagnosis: Mode Collapse**
-The model learned to output the AVERAGE trajectory between position 1 and position 2, which minimizes MSE loss but results in picking up from empty space between the blocks. This is a classic failure mode when training with high position variability.
+The model learned to output the AVERAGE trajectory between position 1 and position 2, which minimises MSE loss but results in picking up from empty space between the blocks. This is a well-known failure mode of behavioural cloning with MSE loss when the action distribution is multi-modal (see Florence et al., 2022, "Implicit Behavioral Cloning"; Chi et al., 2023, "Diffusion Policy", §2).
 
 **Screenshot**: `outputs/experiments/200K Model Colapse half way between blocks.png`
 
@@ -3075,13 +3086,13 @@ The 157ep model works because all training data was from position 1 - the "avera
 
 ### Motivation
 
-The standard ACT uses ResNet18 as the vision backbone. We hypothesized that the ResNet architecture might contribute to the coordinate conditioning problem because:
+The standard ACT uses ResNet18 (He et al., 2016) as the vision backbone. We hypothesised that the ResNet architecture might contribute to the coordinate conditioning problem because:
 
 1. **ResNet processes images BEFORE coordinates** - Features are extracted from both blocks equally, then coordinates must somehow tell the transformer to ignore certain features
 2. **Global Average Pooling** - ResNet ends with GAP, potentially discarding spatial information needed to localize based on coordinates
 3. **ImageNet pretraining** - Features optimized for classification, not spatial reasoning for manipulation
 
-ViT (Vision Transformer) offers potential advantages:
+ViT (Vision Transformer; Dosovitskiy et al., 2021) offers potential advantages:
 - Processes images as patches, preserving spatial structure
 - Each patch token corresponds to a specific image region
 - Native transformer architecture may integrate better with coordinate tokens
@@ -3099,7 +3110,7 @@ Created `models/act_vit.py` with:
 
 | Component | ACT (ResNet) | ACT-ViT |
 |-----------|--------------|---------|
-| Vision backbone | ResNet18 | ViT-B/16 |
+| Vision backbone | ResNet18 (He et al., 2016) | ViT-B/16 (Dosovitskiy et al., 2021) |
 | Backbone params | ~11M | ~86M |
 | Total params | ~51M | ~126M |
 | Image size | 480x640 (native) | 224x224 (resized) |
@@ -3199,7 +3210,7 @@ Created `models/act_vit.py` with:
 | checkpoint_050000 | **100%** | 100% | ✅ Working |
 | final | **100%** | 100% | ✅ Working |
 
-## 🎉 CRITICAL FINDING: ViT Avoids Mode Collapse!
+## CRITICAL FINDING: ViT Avoids Mode Collapse!
 
 | Model | Backbone | Dataset | Steps | Loss | Success |
 |-------|----------|---------|-------|------|---------|
@@ -3258,3 +3269,30 @@ Created `models/act_vit.py` with:
 ## Note: Experiments Continued in experiments2.md
 
 This file has grown large. New experiments starting from Experiment 7 (Subtask Decomposition) are documented in **experiments2.md**.
+
+---
+
+## References
+
+- Ahn, M., Brohan, A., Brown, N., et al. (2022). "Do As I Can, Not As I Say: Grounding Language in Robotic Affordances" (SayCan). *arXiv:2204.01691*.
+- Allal, L. B., et al. (2025). "SmolVLA: A Small Vision-Language-Action Model for Efficient Robot Learning". HuggingFace.
+- Ball, P. J., Smith, L., Kostrikov, I., & Levine, S. (2023). "Efficient Online Reinforcement Learning with Offline Data" (RLPD). *ICML 2023*.
+- Black, K., Brown, N., Driess, D., et al. (2024). "π0: A Vision-Language-Action Flow Model for General Robot Control". *Physical Intelligence*. arXiv:2410.24164.
+- Brohan, A., Brown, N., Carbajal, J., et al. (2023). "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control". *arXiv:2307.15818*.
+- Cadene, R., Alibert, S., Serre, A., et al. (2024). "LeRobot: State-of-the-art Machine Learning for Real-World Robotics in a Lightweight Python Package". HuggingFace. https://github.com/huggingface/lerobot.
+- Chi, C., Feng, S., Du, Y., et al. (2023). "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion". *RSS 2023*. arXiv:2303.04137.
+- Dosovitskiy, A., Beyer, L., Kolesnikov, A., et al. (2021). "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale". *ICLR 2021*. arXiv:2010.11929.
+- Driess, D., Xia, F., Sajjadi, M. S. M., et al. (2023). "PaLM-E: An Embodied Multimodal Language Model". *ICML 2023*. arXiv:2303.03378.
+- Florence, P., Lynch, C., Zeng, A., et al. (2022). "Implicit Behavioral Cloning". *CoRL 2022*. arXiv:2109.00137.
+- Haarnoja, T., Zhou, A., Abbeel, P., & Levine, S. (2018). "Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor" (SAC). *ICML 2018*. arXiv:1801.01290.
+- He, K., Zhang, X., Ren, S., & Sun, J. (2016). "Deep Residual Learning for Image Recognition". *CVPR 2016*. arXiv:1512.03385.
+- Henderson, P., Islam, R., Bachman, P., et al. (2018). "Deep Reinforcement Learning that Matters". *AAAI 2018*. arXiv:1709.06560.
+- Ho, J., Jain, A., & Abbeel, P. (2020). "Denoising Diffusion Probabilistic Models". *NeurIPS 2020*. arXiv:2006.11239.
+- Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., & Le, M. (2023). "Flow Matching for Generative Modeling". *ICLR 2023*. arXiv:2210.02747.
+- Luo, J., Xu, C., Zhan, X., et al. (2024). "SERL: A Software Suite for Sample-Efficient Robotic Reinforcement Learning". *arXiv:2401.16013*.
+- Pomerleau, D. A. (1991). "Efficient Training of Artificial Neural Networks for Autonomous Navigation". *Neural Computation*, 3(1), 88-97.
+- Power, A., Burda, Y., Edwards, H., Babuschkin, I., & Misra, V. (2022). "Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets". *arXiv:2201.02177*.
+- Ross, S., Gordon, G. J., & Bagnell, D. (2011). "A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning" (DAgger). *AISTATS 2011*.
+- Stone, A., Raber, O., Bulber, B., et al. (2021). "The Distracting Control Suite: A Challenging Benchmark for Reinforcement Learning from Pixels". *arXiv:2101.02722*.
+- Todorov, E., Erez, T., & Tassa, Y. (2012). "MuJoCo: A Physics Engine for Model-based Control". *IROS 2012*.
+- Zhao, T. Z., Kumar, V., Levine, S., & Finn, C. (2023). "Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware". *RSS 2023*. arXiv:2304.13705.

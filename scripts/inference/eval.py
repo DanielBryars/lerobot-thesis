@@ -141,6 +141,7 @@ def evaluate_checkpoint(
     subtask: bool = False,
     selective_coords: bool = False,
     delta_actions: bool = False,
+    blinkering: bool = False,
 ) -> dict:
     """Evaluate a single checkpoint and return results."""
     policy, preprocessor, postprocessor = load_policy_and_processors(
@@ -187,6 +188,7 @@ def evaluate_checkpoint(
         subtask=subtask,
         selective_coords=selective_coords,
         delta_actions=delta_actions,
+        blinkering=blinkering,
     )
 
     success_rate, avg_steps, avg_time, ik_failure_rate, avg_ik_error, failure_summary = results
@@ -247,6 +249,8 @@ def main():
                         help="Zero out coords during PICK_UP and DROP phases (test camera-only feedback)")
     parser.add_argument("--delta-actions", action="store_true",
                         help="Use delta/relative actions (for models trained with --delta_actions)")
+    parser.add_argument("--blinkering", action="store_true",
+                        help="Enable blinkering: mask overhead camera during PICK_UP/DROP subtasks")
 
     args = parser.parse_args()
 
@@ -345,6 +349,7 @@ def main():
             subtask=args.subtask,
             selective_coords=args.selective_coords,
             delta_actions=args.delta_actions,
+            blinkering=args.blinkering,
         )
         all_results[checkpoint_name] = results
 

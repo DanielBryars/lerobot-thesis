@@ -1,0 +1,67 @@
+{
+  "dataset": "danbhf/sim_pick_place_2pos_220ep_v2",
+  "camera": "overhead_cam",
+  "num_frames": 5,
+  "frames": [
+    {
+      "episode": 0,
+      "file": "episode_0000.png",
+      "duplo_position": {
+        "x": 0.2130100638119491,
+        "y": 0.2535083926280051
+      },
+      "bowl_position": {
+        "x": 0.217,
+        "y": -0.225
+      }
+    },
+    {
+      "episode": 50,
+      "file": "episode_0050.png",
+      "duplo_position": {
+        "x": 0.1801781907225167,
+        "y": 0.2375103770881066
+      },
+      "bowl_position": {
+        "x": 0.217,
+        "y": -0.225
+      }
+    },
+    {
+      "episode": 100,
+      "file": "episode_0100.png",
+      "duplo_position": {
+        "x": 0.3069962497568532,
+        "y": -0.0333956982136861
+      },
+      "bowl_position": {
+        "x": 0.217,
+        "y": -0.225
+      }
+    },
+    {
+      "episode": 150,
+      "file": "episode_0150.png",
+      "duplo_position": {
+        "x": 0.3039079428545167,
+        "y": -0.052462682530895074
+      },
+      "bowl_position": {
+        "x": 0.217,
+        "y": -0.225
+      }
+    },
+    {
+      "episode": 200,
+      "file": "episode_0200.png",
+      "duplo_position": {
+        "x": 0.3132372843090642,
+        "y": 0.023215176403578917
+      },
+      "bowl_position": {
+        "x": 0.217,
+        "y": -0.225
+      }
+    }
+  ]
+}

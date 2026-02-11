@@ -806,6 +806,105 @@ class DeltaActionDataset(torch.utils.data.Dataset):
         }
 
 
+class SubtaskChunkDataset(torch.utils.data.Dataset):
+    """Truncates action chunks at subtask boundaries and adds completion progress labels.
+
+    For each training sample at frame t in subtask S:
+    - Computes `remaining` = number of frames until subtask S ends
+    - action_mask: 1.0 for action indices within current subtask, 0.0 beyond
+    - completion_progress: (i+1)/remaining for i < remaining, 1.0 beyond
+
+    This enables:
+    1. Clean subtask training: action loss only supervises within the current subtask
+    2. Completion prediction: model learns to predict when the subtask will end
+
+    Must be applied AFTER SubtaskDataset (needs subtask annotations loaded).
+
+    Args:
+        dataset: The underlying dataset (must already have subtask annotations applied)
+        subtask_annotations: Dict mapping episode_index -> list of per-frame subtask labels
+        chunk_size: Action chunk size (must match model config)
+    """
+
+    def __init__(self, dataset, subtask_annotations: dict, chunk_size: int = 100, mask_actions: bool = True):
+        self.dataset = dataset
+        self.subtask_annotations = {int(k): v for k, v in subtask_annotations.items()}
+        self.chunk_size = chunk_size
+        self.mask_actions = mask_actions
+        mode = "action masking + completion head" if mask_actions else "completion head only (no action masking)"
+        print(f"SubtaskChunkDataset: {mode} (chunk_size={chunk_size})")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        ep_idx = item['episode_index']
+        if isinstance(ep_idx, torch.Tensor):
+            ep_idx = ep_idx.item()
+
+        frame_idx = item['frame_index']
+        if isinstance(frame_idx, torch.Tensor):
+            frame_idx = frame_idx.item()
+
+        annotations = self.subtask_annotations.get(ep_idx, [])
+
+        if frame_idx < len(annotations):
+            current_subtask = annotations[frame_idx]
+        else:
+            current_subtask = annotations[-1] if annotations else 0
+
+        # Count remaining frames in the current subtask
+        remaining = 0
+        for i in range(self.chunk_size):
+            future_frame = frame_idx + i
+            if future_frame < len(annotations) and annotations[future_frame] == current_subtask:
+                remaining += 1
+            else:
+                break
+
+        remaining = max(remaining, 1)  # At least 1 step
+
+        # Action mask: 1 within subtask, 0 beyond
+        action_mask = torch.zeros(self.chunk_size, dtype=torch.float32)
+        action_mask[:remaining] = 1.0
+
+        # Completion progress: ramps from ~0 to 1.0 within subtask, stays 1.0 after
+        completion_progress = torch.ones(self.chunk_size, dtype=torch.float32)
+        for i in range(remaining):
+            completion_progress[i] = (i + 1) / remaining
+
+        if self.mask_actions:
+            item['action_mask'] = action_mask
+        item['completion_progress'] = completion_progress
+
+        return item
+
+
+class FixedStateDataset(torch.utils.data.Dataset):
+    """Replaces buggy observation.state (duplo position) with action values (commanded joints).
+
+    The original dataset has a bug where observation.state contains the duplo block's
+    freejoint position (qpos[:6]) instead of robot joint positions (qpos[7:13]).
+
+    Since the position controller tracks targets closely at 30fps, action[0] (the
+    commanded joint position at the current timestep) approximates actual joint position.
+    """
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+        print("FixedStateDataset: replacing observation.state with action[0] (commanded joint positions)")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        item['observation.state'] = item['action'][0].clone()
+        return item
+
+
 def cycle(dataloader):
     """Infinite dataloader iterator."""
     while True:
@@ -880,6 +979,7 @@ def run_evaluation(
     subtask: bool = False,
     selective_coords: bool = False,
     delta_actions: bool = False,
+    blinkering: bool = False,
 ) -> tuple:
     """Run evaluation episodes in simulation.
 
@@ -1078,6 +1178,23 @@ def run_evaluation(
     episode_analyses = []
 
     policy.eval()
+
+    # Detect completion head
+    has_completion_head = (hasattr(policy, 'model') and
+                          hasattr(policy.model, 'use_completion_head') and
+                          policy.model.use_completion_head)
+    COMPLETION_THRESHOLD = 2.0  # Disabled by default: completion resetting hurts open-loop performance
+
+    # Enable/disable blinkering on model
+    if blinkering and hasattr(policy, 'model') and hasattr(policy.model, 'blinkering'):
+        policy.model.blinkering = True
+        if verbose:
+            print(f"  Blinkering ENABLED on model")
+    elif hasattr(policy, 'model') and hasattr(policy.model, 'blinkering'):
+        policy.model.blinkering = False
+
+    if has_completion_head and verbose:
+        print(f"  Completion head ENABLED (threshold={COMPLETION_THRESHOLD})")
 
     for ep in range(num_episodes):
         print(f"  Episode {ep+1}/{num_episodes}...", end=" ", flush=True)
@@ -1292,6 +1409,13 @@ def run_evaluation(
 
                     # Skip postprocessor since we already applied it to the chunk
                     action = torch.from_numpy(action_np)
+                elif has_completion_head:
+                    action, progress = policy.select_action_with_completion(batch)
+                    # Apply postprocessor (denormalizes action)
+                    action = postprocessor(action)
+                    # Reset action queue when subtask is predicted complete
+                    if progress is not None and progress > COMPLETION_THRESHOLD:
+                        policy.reset()
                 else:
                     action = policy.select_action(batch)
                     # Apply postprocessor (denormalizes action)

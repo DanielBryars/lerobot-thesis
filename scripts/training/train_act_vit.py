@@ -52,6 +52,8 @@ from utils.training import (
     SubtaskDataset,
     DeltaActionDataset,
     EpisodeFilterDataset,
+    FixedStateDataset,
+    SubtaskChunkDataset,
     cycle,
     prepare_obs_for_policy,
     run_evaluation,
@@ -90,6 +92,18 @@ def main():
                         help="ViT model variant (default: vit_b_16). vit_b_32 has fewer patches (49 vs 196)")
     parser.add_argument("--delta_actions", action="store_true",
                         help="Use delta/relative actions instead of absolute (predicts frame-to-frame changes)")
+    parser.add_argument("--blinkering", action="store_true",
+                        help="Enable blinkering: mask overhead camera during PICK_UP/DROP subtasks (requires --subtask)")
+    parser.add_argument("--fix_state", action="store_true",
+                        help="Fix observation.state bug: replace duplo position with commanded joint positions")
+    parser.add_argument("--subtask_chunks", action="store_true",
+                        help="Enable completion head for subtask progress prediction (requires --subtask). "
+                             "By default also masks action loss at subtask boundaries; use --no_mask_actions to disable masking.")
+    parser.add_argument("--no_mask_actions", action="store_true",
+                        help="With --subtask_chunks: disable action masking, only use completion head as auxiliary task. "
+                             "Actions are supervised across subtask boundaries (like normal training).")
+    parser.add_argument("--completion_weight", type=float, default=0.1,
+                        help="Weight for completion loss (default: 0.1)")
 
     args = parser.parse_args()
 
@@ -241,6 +255,11 @@ def main():
     )
     # Store ViT model name as a custom attribute (ACTConfig validates vision_backbone as ResNet)
     cfg.vit_model = args.vit_model
+    # Store blinkering flag
+    cfg.blinkering = args.blinkering
+    # Completion head for subtask chunk truncation
+    cfg.use_completion_head = args.subtask_chunks
+    cfg.completion_loss_weight = args.completion_weight
 
     # Create ViT-based ACT policy
     print("Creating ACT-ViT policy...")
@@ -318,6 +337,19 @@ def main():
     if args.subtask and subtask_annotations:
         dataset = SubtaskDataset(dataset, subtask_annotations, use_one_hot=True)
 
+    # Fix observation.state bug (replace duplo position with commanded joints)
+    if args.fix_state:
+        dataset = FixedStateDataset(dataset)
+
+    # Add completion head labels (and optionally mask actions at subtask boundaries)
+    if args.subtask_chunks:
+        if not args.subtask or not subtask_annotations:
+            print("WARNING: --subtask_chunks requires --subtask with valid annotations. Skipping.")
+        else:
+            mask_actions = not args.no_mask_actions
+            dataset = SubtaskChunkDataset(dataset, subtask_annotations,
+                                          chunk_size=args.chunk_size, mask_actions=mask_actions)
+
     # Add delta action transformation
     if args.delta_actions:
         action_dim = output_features['action'].shape[0]
@@ -376,6 +408,12 @@ def main():
         "pickup_coords": args.pickup_coords,
         "delta_actions": args.delta_actions,
         "pos1_only": args.pos1_only,
+        "blinkering": args.blinkering,
+        "state_bug_fixed": args.fix_state,
+        "subtask_chunks": args.subtask_chunks,
+        "mask_actions": args.subtask_chunks and not args.no_mask_actions,
+        "completion_head": args.subtask_chunks,
+        "completion_weight": args.completion_weight if args.subtask_chunks else None,
     }
 
     # Initialize WandB
@@ -415,6 +453,13 @@ def main():
     print(f"Cameras: {', '.join(camera_names)}")
     print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
     print(f"Delta actions: {'enabled' if args.delta_actions else 'disabled'}")
+    print(f"Blinkering: {'enabled' if args.blinkering else 'disabled'}")
+    print(f"State fix: {'enabled' if args.fix_state else 'disabled (buggy duplo state)'}")
+    if args.subtask_chunks:
+        mask_str = "action masking + " if not args.no_mask_actions else "auxiliary "
+        print(f"Subtask chunks: enabled ({mask_str}completion head, weight={args.completion_weight})")
+    else:
+        print(f"Subtask chunks: disabled")
     print(f"Frozen backbone: {'yes' if args.freeze_backbone else 'no'}")
     print("=" * 60)
     print()
@@ -435,7 +480,18 @@ def main():
 
         # Move to device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+        # Preserve custom keys that the preprocessor strips
+        action_mask = batch.get("action_mask")
+        completion_progress = batch.get("completion_progress")
+
         batch = preprocessor(batch)
+
+        # Restore custom keys after preprocessing
+        if action_mask is not None:
+            batch["action_mask"] = action_mask
+        if completion_progress is not None:
+            batch["completion_progress"] = completion_progress
 
         # Fix tensor dimensions
         if "observation.state" in batch and isinstance(batch["observation.state"], torch.Tensor):
@@ -473,6 +529,8 @@ def main():
             }
             if "kld_loss" in output_dict:
                 log_dict["train/kl_loss"] = output_dict["kld_loss"]
+            if "completion_loss" in output_dict:
+                log_dict["train/completion_loss"] = output_dict["completion_loss"]
             wandb.log(log_dict, step=step)
 
         # Console logging
