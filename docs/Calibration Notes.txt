@@ -1,0 +1,269 @@
+https://chatgpt.com/share/693c3273-6614-8001-9fb3-b0aee5f58ade
+
+
+
+
+Short answer: SO100 datasets are not in degrees.
+What units are typically used?
+For SO100 datasets on Hugging Face (LeRobot / ACT / SmolVLA ecosystem):
+Joint positions
+Units: radians
+Range: usually normalised to the robot’s joint limits, but still expressed in radians
+This follows:
+ROS conventions
+MuJoCo conventions
+PyTorch / robotics ML norms
+If you see values around:
+±3.14 → definitely radians
+±1.57 → also radians
+±90 / ±180 → that would indicate degrees (very uncommon)
+Joint velocities
+Units: radians / second
+Joint efforts / torques (if present)
+Units: Newton-metres (Nm)
+Often omitted in imitation-learning datasets
+Gripper
+This is the main source of confusion.
+Depending on the dataset:
+Normalised scalar in [0, 1]
+OR [-1, 1]
+OR raw servo ticks (older / non-LeRobot datasets)
+You should not assume physical units for the gripper unless the dataset explicitly states it.
+End-effector poses (if included)
+Less common for SO100 datasets, but when present:
+Position: metres
+Orientation: quaternion (unitless, normalised)
+Why radians, not degrees?
+Because:
+All underlying simulators (MuJoCo, PyBullet) use radians
+Trigonometric ops assume radians
+Mixing degrees silently breaks learning
+ACT / SmolVLA codepaths assume radians everywhere
+How to sanity-check a dataset
+Quick checks you can do:
+~±3 → radians
+~±180 → degrees (🚨)
+One important gotcha (very relevant to your thesis)
+Some datasets normalise joint angles to [-1, 1] after converting from radians.
+In that case:
+The dataset is no longer in physical units
+You must:
+either un-normalise before FK / IK
+or train and infer consistently in the normalised space
+Mixing these is a very common SO100 / OpenVLA failure mode.
+Recommendation for you
+Given your ACT / Pi-0 / SmolVLA comparisons:
+import numpy as np q = dataset["observation"]["joint_positions"]
+print(q.min(), q.max())
+Assume radians unless proven otherwise
+Explicitly document:
+raw units
+any normalisation
+Add an assertion in your dataloader checking max |q| < π
+If you want, send me:
+a specific HF dataset name
+or a snippet of stats.json
+and I’ll tell you exactly what units it’s using.
+Yeah okay looks like the smolvla datasets are in degrees 
+and their zero pose is different to standard, can you have a
+look?
+Yes — you’re right, and your confusion is justified. SmolVLA datasets are an exception to
+the usual LeRobot / ACT conventions.
+Here’s what’s going on.
+1. Units: degrees, not radians
+SmolVLA SO100 datasets typically store:
+Joint angles in degrees
+Not radians
+Often centred around a task-specific zero, not the robot’s mechanical zero
+You’ll see ranges like:
+[-90, +90]
+[-120, +120]
+That is definitively degrees.
+This choice was made because:
+SmolVLA was optimised for lightweight training + human interpretability
+Some datasets were collected outside the strict ROS / MuJoCo pipeline
+Consistency with ACT / OpenVLA was not a design goal
+2. Zero pose: not the URDF / ROS zero
+This is the bigger gotcha.
+SmolVLA datasets usually define zero as a “neutral / ready” pose, e.g.:
+Arm roughly forward
+Elbow slightly bent
+Wrist roughly level
+So:
+That means:
+0° in the dataset is already offset
+Joint limits are asymmetric around zero
+FK / IK will be wrong unless corrected
+This is why plugging SmolVLA data straight into:
+MuJoCo
+Webots
+OpenVLA
+ACT
+often produces wildly incorrect arm poses.
+3. What SmolVLA actually expects internally
+SmolVLA models typically learn in a space like:
+Where:
+q_zero_offset is per-joint
+q_scale is often max(|min|, |max|)
+Result is roughly [-1, 1]
+This is dataset-specific, not robot-specific.
+dataset_zero ≠ URDF_zero ≠ simulator_zero
+q_model = (q_degrees - q_zero_offset) / q_scale
+4. How to verify this in your dataset (quickly)
+Check two things:
+A. Magnitudes
+If you see values > 6 → not radians.
+B. Zero alignment
+Find frames where the arm is visually “neutral” and inspect q .
+If those values are near zero → dataset-defined zero pose.
+5. What you should do (strong recommendation)
+For your MSc work, pick one canonical internal representation.
+I would suggest:
+Canonical internal space
+Radians
+URDF zero
+True joint limits
+Then add explicit adapters:
+SmolVLA dataset → canonical
+Canonical → SmolVLA (if needed)
+That means:
+and document this clearly in your methodology — this is absolutely thesis-worthy material.
+6. Why this matters (and why your instinct is right)
+This unit + zero mismatch:
+Explains why SmolVLA can look “okay” in isolation
+Explains why transfer to other VLAs often fails
+q = data["action"] q.min(), q.max()
+q_rad = deg2rad(q_deg + zero_offset_deg)
+Is a hidden confound in cross-model comparisons
+Calling this out explicitly will strengthen your evaluation section.
+If you want, give me:
+the exact SmolVLA HF dataset name
+or its stats.json
+and I’ll derive the exact per-joint offsets and scales for you.
+lerobot/svla_so101_pickplace
+Thought for …
+Yep — for lerobot/svla_so101_pickplace , the joint values are clearly in degrees, not
+radians.
+In the dataset viewer you can see action entries like -99.4, +99.5, +74.8 … which
+can’t be radians.
+meta/stats.json confirms ranges like:
+action[1] min -100.0 , max +8.13
+action[2] min +12.97 , max +100.0
+and similar ~±90-ish numbers for other joints
+So: degrees for the 5 arm joints, and the 6th dimension ( gripper.pos ) also looks like it’s
+in a degree-ish / servo-space range (it goes 0 to ~33 ).
+About the “zero pose is different”
+Also yes: the dataset’s “zero” doesn’t match what you’d consider URDF/standard zero.
+You can see it in the stats: observation.state has means like ~ -55 / +66 / +69 degrees
+on several joints — i.e. the arm spends a lot of time around a non-zero configuration.
+That’s consistent with the dataset being recorded around a comfortable “ready” pose, not
+a canonical kinematic zero.
+What to do (practical mapping)
+If you want to use this dataset with anything expecting radians + your own home pose:
+Hugging Face
+Hugging Face
+Hugging Face
+Hugging Face
+1. Convert to radians
+q_rad = q_deg * π/180
+2. Estimate the dataset’s “home/neutral” (per joint)
+A robust trick: take observation.state at frame_index == 0 (or first few frames)
+across episodes, and compute median/mean → q_home_dataset_deg .
+3. Shift into your robot’s home
+If your robot’s “home” in radians is q_home_robot_rad , then:
+q_robot_rad = deg2rad(q_deg - q_home_dataset_deg) + q_home_robot_rad
+That one line usually fixes the “zero pose mismatch” without needing to guess hidden
+offsets.
+If you paste a few observation.state rows for frame_index==0 (first frame of a couple
+episodes), I’ll tell you what q_home_dataset_deg likely is for this dataset.
+Yeah but someone must have done this before?
+Thought for…
+Yes — this has definitely been done before, and it’s not just “folklore”: LeRobot explicitly
+documents the SO100/SO101 degrees + zero/offset convention changes and even
+includes an example replay script showing the exact per-joint fixes.
+The key reference: LeRobot backward compatibility notes (PR #777)
+LeRobot changed the SO100/SO101 calibration / normalisation conventions:
+Before: joints stored in degrees -180…180 with a horizontal fully-extended “zero”
+After: a different convention where zero is mid-range, and actions
+are normalised (joints -100…100 , gripper 0…100 )
+They warn that older datasets will replay incorrectly unless you apply the conversion.
+Concrete “someone already did it” mapping (example code)
+In their backward-compat replay example, they apply explicit transforms:
+shoulder_lift : -(q - 90) (offset + sign flip)
+elbow_flex : q -= 90 (offset)
+…and they run the robot in degrees mode ( --robot.use_degrees=true ).
+Hugging Face
+Hugging Face
+Hugging Face
+Hugging Face
+So: yes, there’s precedent and a canonical-ish set of transforms for SO10x.
+Why your “URDF zero differs” observation is real
+Even the Foxglove tutorial calls out that URDF 0 ≠ LeRobot 0, and shows converting
+LeRobot’s degree readings to radians (and even flipping a joint sign) when publishing TF.
+What this means for lerobot/svla_so101_pickplace
+Treat it as part of this SO10x calibration universe:
+Angles are degrees (your observation matches the documented historic convention)
+“Zero pose” is calibration-defined, not URDF-defined
+You typically need (a) degrees→radians, and (b) per-joint offsets/signs if you want it
+to line up with your URDF / simulator
+Practical recommendation (so you don’t reinvent the wheel)
+Use the LeRobot approach:
+1. Keep the dataset in degrees in the LeRobot hardware stack ( use_degrees=true )
+2. If you need URDF/sim alignment, apply the documented transforms (start with
+shoulder_lift + elbow_flex) and then verify visually.
+If you tell me what you mean by “standard” (URDF you’re using: Webots? MuJoCo? a
+specific SO101 URDF repo?), I’ll give you the exact conversion chain that lands you
+in that convention.
+foxglove.dev
+Yes please
+Thought for …
+Yep — there are two “already-known” conversions in the LeRobot world, and between
+them they cover almost everything you’re seeing with lerobot/svla_so101_pickplace .
+1) Degrees, and URDF zero/sign mismatch (the common one)
+LeRobot’s own docs/tutorials explicitly call out that URDF 0 differs from LeRobot 0, and
+show the canonical conversion pattern:
+angles come out of LeRobot in degrees ( use_degrees=True )
+convert to radians for URDF / FK
+flip shoulder_pan sign (very common)
+From your dataset’s meta/stats.json , the action/state ranges are clearly degree-ish (tens
+to ~100).
+A practical adapter for this dataset (vector action → URDF joint dict):
+That alone usually fixes “it moves but the pose is weird”.
+2) Old-vs-new SO10x calibration (only if you’re mixing datasets)
+LeRobot also documents a hardware calibration breaking change (PR #777):
+Old datasets: degrees -180..180 , zero = arm fully extended horizontally
+New datasets: normalised-ish degrees range (joints about -100..100 ), zero = midrange
+And for old datasets they give specific per-joint fixes before replay/inference:
+shoulder_lift.pos = -(shoulder_lift.pos - 90)
+elbow_flex.pos -= 90
+Your svla_so101_pickplace stats already look like the new convention (ranges
+around -100..100 ), so you shouldn’t apply those offsets unless you confirm the dataset
+was recorded pre-#777.
+What I’d do for SO101 (robust and fast)
+1. Apply the URDF adapter above (deg→rad + shoulder_pan sign flip + gripper scaling).
+Foxglove +1
+Hugging Face
+import math # action order in the parquet viewer is 6 values; map to joint
+names you use in URDF JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex",
+"wrist_flex", "wrist_roll", "gripper"] # Use dataset stats
+(svla_so101_pickplace/meta/stats.json) for gripper scaling: GRIP_MIN_DEG = 0.0
+GRIP_MAX_DEG = 32.99845504760742 # from stats.json "action" max for gripper
+:contentReference[oaicite:2]{index=2} def
+action_vec_to_urdf_cfg(action_deg_vec): a = dict(zip(JOINTS, action_deg_vec))
+cfg = {} cfg["shoulder_pan"] = -math.radians(a["shoulder_pan"]) # sign flip
+(LeRobot→URDF) :contentReference[oaicite:3]{index=3} cfg["shoulder_lift"] =
+math.radians(a["shoulder_lift"]) cfg["elbow_flex"] =
+math.radians(a["elbow_flex"]) cfg["wrist_flex"] =
+math.radians(a["wrist_flex"]) cfg["wrist_roll"] =
+math.radians(a["wrist_roll"]) # Gripper: dataset is 0..~33 (not 0..100), so
+scale to your URDF gripper joint range. # Many URDFs use 0..pi for a single
+gripper joint; adapt if yours differs. g = (a["gripper"] - GRIP_MIN_DEG) /
+(GRIP_MAX_DEG - GRIP_MIN_DEG + 1e-9) cfg["gripper"] = g * math.pi return cfg
+Hugging Face +1
+Hugging Face
+Hugging Face +1
+2. If the arm is still systematically “off” by a constant, compute a per-joint offset using
+the first frame of each episode as “home”, and subtract it (that’s the clean way to
+reconcile “dataset home” vs “your URDF home”).
+If you tell me which URDF you’re using (the LeRobot Simulation one, Webots, or another
+repo), I can pin down whether any other joints need a sign flip besides shoulder_pan 
