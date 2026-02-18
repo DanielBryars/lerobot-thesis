@@ -485,8 +485,8 @@ class VRRenderer:
             return
 
         # Outline color: light red, semi-transparent
-        outline_rgba = np.array([1.0, 0.2, 0.2, 0.5], dtype=np.float32)
-        fill_rgba = np.array([1.0, 0.15, 0.15, 0.12], dtype=np.float32)
+        outline_rgba = np.array([1.0, 0.2, 0.2, 0.9], dtype=np.float32)
+        fill_rgba = np.array([1.0, 0.15, 0.15, 0.2], dtype=np.float32)
         line_w = 0.003
 
         # Draw outline
@@ -498,7 +498,7 @@ class VRRenderer:
             a, b = corners[i], corners[(i + 1) % n]
             mujoco.mjv_connector(
                 geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w,
-                a[0], a[1], a[2], b[0], b[1], b[2],
+                a, b,
             )
             geom.rgba[:] = outline_rgba
             self.mj_scene.ngeom += 1
@@ -515,7 +515,7 @@ class VRRenderer:
             geom = self.mj_scene.geoms[self.mj_scene.ngeom]
             mujoco.mjv_connector(
                 geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w * 0.5,
-                left[0], left[1], left[2], right[0], right[1], right[2],
+                left, right,
             )
             geom.rgba[:] = fill_rgba
             self.mj_scene.ngeom += 1
