@@ -141,6 +141,10 @@ class VRRenderer:
         self.last_head_pos = None
         self.last_head_fwd = None  # Head forward direction in XR coords
 
+        # Wrist camera FOV overlay
+        self.show_wrist_cam_fov = False
+        self._wrist_cam_id = None
+
     def init_all(self):
         """Initialize GLFW, OpenXR, and MuJoCo rendering."""
         self._init_glfw()
@@ -438,6 +442,84 @@ class VRRenderer:
             v[2]
         ], dtype=np.float64)
 
+    def _add_wrist_cam_fov_overlay(self):
+        """Add wrist camera FOV projection as a light red overlay on the table."""
+        if self._wrist_cam_id is None:
+            self._wrist_cam_id = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist_cam"
+            )
+        cam_id = self._wrist_cam_id
+        if cam_id < 0:
+            return
+
+        cam_pos = self.data.cam_xpos[cam_id].copy()
+        cam_mat = self.data.cam_xmat[cam_id].reshape(3, 3)
+
+        # Camera FOV parameters
+        fovy_rad = np.radians(self.model.cam_fovy[cam_id])
+        aspect = 640.0 / 480.0
+        half_fovy = fovy_rad / 2
+        half_fovx = np.arctan(np.tan(half_fovy) * aspect)
+
+        # Corner rays in camera frame (X=right, Y=up, -Z=forward)
+        tx, ty = np.tan(half_fovx), np.tan(half_fovy)
+        rays_cam = [
+            np.array([-tx, -ty, -1.0]),  # bottom-left
+            np.array([ tx, -ty, -1.0]),  # bottom-right
+            np.array([ tx,  ty, -1.0]),  # top-right
+            np.array([-tx,  ty, -1.0]),  # top-left
+        ]
+
+        # Intersect rays with table plane (z = table_z)
+        table_z = 0.015
+        corners = []
+        for ray_cam in rays_cam:
+            ray_world = cam_mat @ ray_cam
+            if abs(ray_world[2]) < 1e-6:
+                continue
+            t = (table_z - cam_pos[2]) / ray_world[2]
+            if t > 0:
+                corners.append(cam_pos + t * ray_world)
+
+        if len(corners) < 3:
+            return
+
+        # Outline color: light red, semi-transparent
+        outline_rgba = np.array([1.0, 0.2, 0.2, 0.5], dtype=np.float32)
+        fill_rgba = np.array([1.0, 0.15, 0.15, 0.12], dtype=np.float32)
+        line_w = 0.003
+
+        # Draw outline
+        n = len(corners)
+        for i in range(n):
+            if self.mj_scene.ngeom >= self.mj_scene.maxgeom:
+                return
+            geom = self.mj_scene.geoms[self.mj_scene.ngeom]
+            a, b = corners[i], corners[(i + 1) % n]
+            mujoco.mjv_connector(
+                geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w,
+                a[0], a[1], a[2], b[0], b[1], b[2],
+            )
+            geom.rgba[:] = outline_rgba
+            self.mj_scene.ngeom += 1
+
+        # Fill with parallel lines across the projection
+        n_fill = 12
+        for j in range(1, n_fill):
+            if self.mj_scene.ngeom >= self.mj_scene.maxgeom:
+                return
+            t = j / n_fill
+            # Interpolate along left edge (corner 0->3) and right edge (corner 1->2)
+            left = corners[0] * (1 - t) + corners[min(3, n - 1)] * t
+            right = corners[1] * (1 - t) + corners[min(2, n - 1)] * t
+            geom = self.mj_scene.geoms[self.mj_scene.ngeom]
+            mujoco.mjv_connector(
+                geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w * 0.5,
+                left[0], left[1], left[2], right[0], right[1], right[2],
+            )
+            geom.rgba[:] = fill_rgba
+            self.mj_scene.ngeom += 1
+
     def render_eye(self, eye_idx, view, fbo, width, height):
         """Render scene for one eye."""
         # Ensure our context is current (gym env may have changed it)
@@ -480,6 +562,10 @@ class VRRenderer:
         cam.elevation = np.degrees(np.arctan2(fwd_mj[2], np.sqrt(fwd_mj[0]**2 + fwd_mj[1]**2)))
 
         mujoco.mjv_updateScene(self.model, self.data, self.mj_option, None, cam, mujoco.mjtCatBit.mjCAT_ALL, self.mj_scene)
+
+        # Add wrist camera FOV overlay (VR-only, not in sim observations)
+        if self.show_wrist_cam_fov:
+            self._add_wrist_cam_fov_overlay()
 
         # Override camera
         self.mj_scene.camera[0].pos[:] = eye_pos_mj

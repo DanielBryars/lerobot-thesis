@@ -41,7 +41,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.factory import make_pre_post_processors
 
 # Import our custom ViT ACT model
-from models.act_vit import ACTViTPolicy
+from models.act_vit import ACTViTPolicy, ACTTemporalEnsembler
 
 # Import shared utilities
 from utils.constants import MOTOR_NAMES
@@ -61,6 +61,84 @@ from utils.training import (
     load_checkpoint,
     get_scene_metadata,
 )
+
+
+def run_eval_sweep(policy, preprocessor, postprocessor, device, sim,
+                   n_steps_list, ensemble_coeff, num_episodes,
+                   eval_positions, max_steps, lift_height, step, use_wandb):
+    """Run pickup eval with multiple n_action_steps + ensembling configs.
+
+    Modifies policy config temporarily for each eval config, then restores.
+    Returns dict of results.
+    """
+    from scripts.experiments.eval_pickup_model_spatial import run_pickup_episodes
+
+    original_n_action_steps = policy.config.n_action_steps
+    original_ensemble_coeff = policy.config.temporal_ensemble_coeff
+    had_ensembler = hasattr(policy, 'temporal_ensembler') and policy.temporal_ensembler is not None
+
+    results = {}
+
+    policy.eval()
+
+    # Sweep n_action_steps (no ensembling)
+    for n_steps in n_steps_list:
+        policy.config.n_action_steps = n_steps
+        policy.config.temporal_ensemble_coeff = None
+        if had_ensembler or hasattr(policy, 'temporal_ensembler'):
+            policy.temporal_ensembler = None
+
+        total_succ, total_eps = 0, 0
+        for (bx, by) in eval_positions:
+            succ, eps, _, _ = run_pickup_episodes(
+                sim, policy, preprocessor, postprocessor, device,
+                block_x=bx, block_y=by,
+                num_episodes=num_episodes,
+                max_steps=max_steps,
+                lift_height=lift_height,
+            )
+            total_succ += succ
+            total_eps += eps
+
+        rate = total_succ / total_eps if total_eps > 0 else 0
+        key = f"eval/pickup_nsteps{n_steps}"
+        results[key] = rate
+        print(f"    {key}: {rate*100:.0f}%")
+
+    # Temporal ensembling (re-predicts every step)
+    policy.config.n_action_steps = 1
+    policy.config.temporal_ensemble_coeff = ensemble_coeff
+    policy.temporal_ensembler = ACTTemporalEnsembler(ensemble_coeff, policy.config.chunk_size)
+
+    total_succ, total_eps = 0, 0
+    for (bx, by) in eval_positions:
+        succ, eps, _, _ = run_pickup_episodes(
+            sim, policy, preprocessor, postprocessor, device,
+            block_x=bx, block_y=by,
+            num_episodes=num_episodes,
+            max_steps=max_steps,
+            lift_height=lift_height,
+        )
+        total_succ += succ
+        total_eps += eps
+
+    rate = total_succ / total_eps if total_eps > 0 else 0
+    key = "eval/pickup_ensemble"
+    results[key] = rate
+    print(f"    {key}: {rate*100:.0f}%")
+
+    # Restore original config
+    policy.config.n_action_steps = original_n_action_steps
+    policy.config.temporal_ensemble_coeff = original_ensemble_coeff
+    if not had_ensembler:
+        policy.temporal_ensembler = None
+
+    # Log to wandb
+    if use_wandb:
+        wandb.log(results, step=step)
+
+    policy.train()
+    return results
 
 
 def main():
@@ -104,6 +182,18 @@ def main():
                              "Actions are supervised across subtask boundaries (like normal training).")
     parser.add_argument("--completion_weight", type=float, default=0.1,
                         help="Weight for completion loss (default: 0.1)")
+    parser.add_argument("--eval_sweep", action="store_true",
+                        help="Run pickup eval sweep after each checkpoint")
+    parser.add_argument("--eval_episodes", type=int, default=10,
+                        help="Episodes per eval config (default: 10)")
+    parser.add_argument("--eval_n_steps", type=str, default="5,10,20,40",
+                        help="Comma-separated n_action_steps to sweep (default: 5,10,20,40)")
+    parser.add_argument("--eval_ensemble_coeff", type=float, default=0.01,
+                        help="Temporal ensemble coefficient (default: 0.01)")
+    parser.add_argument("--eval_positions", type=str, default=None,
+                        help="Comma-separated x,y positions for eval (default: training positions)")
+    parser.add_argument("--eval_lift_height", type=float, default=0.02,
+                        help="Lift height threshold for pickup success (default: 0.02m)")
 
     args = parser.parse_args()
 
@@ -461,8 +551,34 @@ def main():
     else:
         print(f"Subtask chunks: disabled")
     print(f"Frozen backbone: {'yes' if args.freeze_backbone else 'no'}")
+    if args.eval_sweep:
+        print(f"Eval sweep: enabled (episodes={args.eval_episodes}, "
+              f"n_steps={args.eval_n_steps}, lift_height={args.eval_lift_height}m)")
     print("=" * 60)
     print()
+
+    # Initialize eval sim if sweep enabled
+    eval_sim = None
+    if args.eval_sweep:
+        from lerobot_robot_sim import SO100SimConfig, SO100Sim
+        scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+        eval_config = SO100SimConfig(
+            scene_xml=str(scene_path),
+            sim_cameras=["wrist_cam", "overhead_cam"],
+            camera_width=640, camera_height=480,
+        )
+        eval_sim = SO100Sim(eval_config)
+        eval_sim.connect()
+
+        # Parse eval positions
+        if args.eval_positions:
+            coords = [float(c) for c in args.eval_positions.split(",")]
+            eval_positions = [(coords[i], coords[i+1]) for i in range(0, len(coords), 2)]
+        else:
+            eval_positions = [(0.213, 0.254), (0.213, -0.047)]
+
+        eval_n_steps = [int(x) for x in args.eval_n_steps.split(",")]
+        print(f"Eval sim connected. Positions: {eval_positions}")
 
     # Training loop
     print("Starting training...")
@@ -571,6 +687,20 @@ def main():
                 best_loss=best_loss,
             )
 
+            if args.eval_sweep and eval_sim is not None:
+                print(f"  Running eval sweep at step {step}...")
+                run_eval_sweep(
+                    policy, preprocessor, postprocessor, device, eval_sim,
+                    n_steps_list=eval_n_steps,
+                    ensemble_coeff=args.eval_ensemble_coeff,
+                    num_episodes=args.eval_episodes,
+                    eval_positions=eval_positions,
+                    max_steps=60,
+                    lift_height=args.eval_lift_height,
+                    step=step,
+                    use_wandb=not args.no_wandb,
+                )
+
     pbar.close()
 
     # Save final model
@@ -593,6 +723,10 @@ def main():
     print(f"Total time: {elapsed/60:.1f} minutes")
     print(f"Best loss: {best_loss:.4f}")
     print(f"Final model: {output_dir / 'final'}")
+
+    # Cleanup eval sim
+    if eval_sim is not None:
+        eval_sim.disconnect()
 
     if not args.no_wandb:
         wandb.log({

@@ -307,6 +307,11 @@ def main():
     parser.add_argument("--block-x", type=float, default=None, help="Block center X position in meters (default: 0.217)")
     parser.add_argument("--block-y", type=float, default=None, help="Block center Y position in meters (default: 0.225)")
     parser.add_argument("--depth", action="store_true", help="Enable depth rendering for overhead camera")
+    parser.add_argument("--lift_stop", type=float, default=None,
+                        help="Auto-stop episode when block is lifted by this many cm (e.g. --lift_stop 5 for 5cm). "
+                             "For recording pickup-only demonstrations.")
+    parser.add_argument("--show-fov", action="store_true",
+                        help="Show wrist camera FOV projection on the table (light red overlay in VR)")
 
     args = parser.parse_args()
 
@@ -346,6 +351,9 @@ def main():
     sim_robot.connect()
     if args.depth:
         print("  Depth rendering enabled for overhead camera")
+    if args.show_fov and sim_robot.vr_renderer is not None:
+        sim_robot.vr_renderer.show_wrist_cam_fov = True
+        print("  Wrist camera FOV overlay enabled")
     speak("Simulation ready")
 
     # Keep VR alive during initialization
@@ -428,7 +436,10 @@ def main():
     print("VR Controls:")
     print("  SPACEBAR    - Recenter robot in front of you")
     print("  Thumbsticks - Move/rotate view (if VR controllers working)")
-    print("\nTask auto-completes when Duplo lands in bowl!")
+    if args.lift_stop:
+        print(f"\nTask auto-completes when block is lifted {args.lift_stop:.0f}cm!")
+    else:
+        print("\nTask auto-completes when Duplo lands in bowl!")
     print("=" * 60)
 
     # Keep VR alive before entering main loop
@@ -446,6 +457,12 @@ def main():
     task_complete_frames = 0
     last_action = None
     consecutive_errors = 0
+
+    # Lift-stop tracking
+    import mujoco as _mj
+    duplo_body_id = _mj.mj_name2id(sim_robot.mj_model, _mj.mjtObj.mjOBJ_BODY, "duplo")
+    initial_duplo_z = None
+    lift_threshold = args.lift_stop / 100.0 if args.lift_stop else None  # Convert cm to m
 
     # Per-episode scene info tracking
     episode_scenes = {}
@@ -519,8 +536,12 @@ def main():
                     episode_start_time = time.time()
                     episode_frames = 0
                     task_complete_frames = 0
+                    # Capture initial duplo height for lift-stop
+                    initial_duplo_z = sim_robot.mj_data.xpos[duplo_body_id][2]
                     speak("Recording")
                     print(f"\nRecording episode {successful_episodes + 1}...")
+                    if lift_threshold:
+                        print(f"  Auto-stop: lift block {args.lift_stop:.0f}cm (z > {initial_duplo_z + lift_threshold:.3f}m)")
                 elif key == b'r':
                     # Reset scene
                     sim_robot.reset_scene(
@@ -560,8 +581,14 @@ def main():
                     if episode_frames % 30 == 0:
                         print(f"  Frames: {episode_frames:4d} | Time: {elapsed:5.1f}s", end="\r")
 
-                # Check task completion
-                if sim_robot.is_task_complete():
+                # Check task completion (lift-stop or bowl completion)
+                duplo_z = sim_robot.mj_data.xpos[duplo_body_id][2]
+                if lift_threshold and initial_duplo_z is not None:
+                    task_done = (duplo_z - initial_duplo_z) >= lift_threshold
+                else:
+                    task_done = sim_robot.is_task_complete()
+
+                if task_done:
                     task_complete_frames += 1
                     if task_complete_frames >= 10:  # Debounce
                         speak("Task complete!")

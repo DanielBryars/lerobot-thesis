@@ -1,4 +1,4 @@
-# Improving Generalisation Performance of Imitation-Learnt Tasks of Small Vision-Based Policies for Robot Control Under Low-Cost Constraints
+# Can spatial generalisation of low-cost behaviour-cloned manipulation policies be significantly improved through (a) architectural changes, (b) data diversity, and (c) hierarchical decomposition — without increasing model scale?
 
 ## Background
 
@@ -7,8 +7,6 @@
 From the "Attention is All You Need" breakthrough (Vaswani et al., 2017), transformer-based architectures have spawned research into the emergent behaviour of Large Language Models. Along with Chain-of-Thought prompting (Wei et al., 2022), LLMs are now used in a variety of tasks which are transforming society in many areas. In addition to the transformer, two other ingredients are required to derive the latent knowledge and reasoning gains we have seen: lots of data and lots of compute (Kaplan et al., 2020). The volume of AI-related scientific publications has grown exponentially, with submissions to conferences such as NeurIPS and ICML roughly doubling every two to three years (Sevilla et al., 2022).
 
 The increased interest and investment in AI — global private AI investment exceeded $90 billion in 2024 (Stanford HAI, 2024) — has led to the significant availability of GPU compute, both cloud-based (e.g. vast.ai, Lambda Labs, RunPod) and in consumer hardware (e.g. NVIDIA RTX 5090 with 32GB VRAM). Open models, through platforms such as HuggingFace and Kaggle, have improved the availability of foundation models (pretrained models) which can be finetuned. These websites also provide a nexus for datasets and a community to drive progress. Experiment tracking tooling such as Weights & Biases, and advances in frameworks such as PyTorch (Paszke et al., 2019) help democratise access to AI research and development, providing access to independent researchers as well as universities and large companies.
-
-![wandb](images/pi0_so101_lerobot_training_wandb.png)
 
 ### Combining Foundation Models for Robotics
 
@@ -149,6 +147,7 @@ Training is run via train_act.py (ResNet backbone) or train_act_vit.py (ViT back
   
 These metrics — success rate, pick rate, drop rate, and per-outcome counts — are logged to Weights & Biases alongside the training loss.
 
+![wandb](images/pi0_so101_lerobot_training_wandb.png)
 
 
 

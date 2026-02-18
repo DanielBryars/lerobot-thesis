@@ -21,6 +21,7 @@ from utils.training import (
     save_checkpoint,
     load_checkpoint,
 )
+from utils.vision import ObjectDetector, Detection
 from utils.failure_analysis import (
     Outcome,
     EpisodeAnalysis,
@@ -54,6 +55,9 @@ __all__ = [
     "create_output_dir",
     "save_checkpoint",
     "load_checkpoint",
+    # Vision
+    "ObjectDetector",
+    "Detection",
     # Failure analysis
     "Outcome",
     "EpisodeAnalysis",
