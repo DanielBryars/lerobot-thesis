@@ -89,6 +89,8 @@ def main():
                         help="Add pickup location (x,y) conditioning from episode_scenes.json")
     parser.add_argument("--pos1_only", action="store_true",
                         help="Filter dataset to only include position 1 episodes (Y > 0.1)")
+    parser.add_argument("--episode_filter", type=str, default=None,
+                        help="Comma-separated episode ranges to include, e.g. '0-19,100-119,200-219'")
 
     args = parser.parse_args()
 
@@ -266,6 +268,19 @@ def main():
     if args.pos1_only and pos1_episode_indices:
         dataset = EpisodeFilterDataset(dataset, pos1_episode_indices)
 
+    # Filter to specific episode ranges if requested
+    if args.episode_filter:
+        filter_indices = set()
+        for part in args.episode_filter.split(","):
+            part = part.strip()
+            if "-" in part:
+                start, end = part.split("-", 1)
+                filter_indices.update(range(int(start), int(end) + 1))
+            else:
+                filter_indices.add(int(part))
+        print(f"Episode filter: {len(filter_indices)} episodes from ranges '{args.episode_filter}'")
+        dataset = EpisodeFilterDataset(dataset, filter_indices)
+
     # Wrap dataset with pickup coordinate conditioning if enabled
     if args.pickup_coords and episode_scenes:
         dataset = PickupCoordinateDataset(dataset, episode_scenes)
@@ -344,6 +359,7 @@ def main():
         "total_frames": len(dataset),
         "pickup_coords": args.pickup_coords,
         "pos1_only": args.pos1_only,
+        "episode_filter": args.episode_filter,
     }
 
     # Initialize WandB
@@ -370,6 +386,7 @@ def main():
                 "action_space": action_space,
                 "pickup_coords": args.pickup_coords,
                 "pos1_only": args.pos1_only,
+                "episode_filter": args.episode_filter,
             },
         )
 
@@ -391,6 +408,7 @@ def main():
     print(f"Action space: {action_space}")
     print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
     print(f"Position 1 only: {'enabled' if args.pos1_only else 'disabled'}")
+    print(f"Episode filter: {args.episode_filter or 'disabled'}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()

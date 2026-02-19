@@ -2,13 +2,25 @@
 """
 Evaluate policy spatial generalization by testing block pickup at different positions.
 
+Supports ACT, ACT-ViT (with pickup_coords, subtask, blinkering, completion head).
+
 Creates a heatmap showing success rate across the workspace:
 - Green = 100% success rate
 - Red = 0% success rate
 
 Usage:
-    # Run evaluation (headless)
+    # Basic ACT model
     python scripts/experiments/eval_spatial_generalization.py outputs/train/act_20260118_155135 --checkpoint checkpoint_045000 --episodes 20
+
+    # ACT-ViT with full pipeline (auto-detected from training_metadata.json)
+    python scripts/experiments/eval_spatial_generalization.py outputs/train/act_vit_220ep_completion_v2 --checkpoint final \
+        --grid-size 7 --episodes 10 --pickup-coords --subtask --blinkering \
+        --csv outputs/experiments/spatial_scatter_checker_14b.csv
+
+    # Dark ground scene
+    python scripts/experiments/eval_spatial_generalization.py outputs/train/act_vit_dark_ground_v4 --checkpoint final \
+        --grid-size 7 --episodes 10 --scene so101_dark_ground.xml --pickup-coords --subtask --blinkering \
+        --csv outputs/experiments/spatial_scatter_dark_ground_v4.csv
 
     # Visualize results as heatmap in MuJoCo
     python scripts/experiments/eval_spatial_generalization.py --visualize outputs/experiments/spatial_eval_XXXXXX.json
@@ -37,8 +49,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from lerobot_robot_sim import SO100Sim, SO100SimConfig
 from utils.mujoco_viz import MujocoPathRenderer
-
-MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+from utils.training import prepare_obs_for_policy, PickupCoordinateDataset
+from utils.constants import MOTOR_NAMES
 
 # Default workspace bounds (robot reach)
 # Robot base at origin, block default at (0.217, 0.225)
@@ -46,14 +58,49 @@ DEFAULT_X_RANGE = (0.15, 0.35)  # Forward from robot
 DEFAULT_Y_RANGE = (-0.15, 0.30)  # Side to side (bowl at y=-0.225, block default at y=0.225)
 DEFAULT_GRID_SIZE = 5  # 5x5 grid = 25 positions
 
+# Subtask state machine thresholds (same as run_evaluation)
+NEAR_THRESHOLD = 0.06  # 6cm - EE near block/bowl
+FAR_THRESHOLD = 0.12   # 12cm - block lifted away
+BOWL_POS = np.array([0.217, -0.225, 0.0])
 
-def load_act_policy(model_path: Path, device: torch.device):
-    """Load ACT policy and processors."""
-    from lerobot.policies.act.modeling_act import ACTPolicy
+# Completion head threshold (disabled by default: > 1.0 never triggers)
+COMPLETION_THRESHOLD = 2.0
+
+
+def load_policy(model_path: Path, device: torch.device, policy_type: str = None):
+    """Load policy and processors, auto-detecting model type from training_metadata.json."""
     from lerobot.policies.factory import make_pre_post_processors
 
-    print(f"Loading ACT from {model_path}...")
-    policy = ACTPolicy.from_pretrained(str(model_path))
+    # Auto-detect policy type from training_metadata.json
+    if policy_type is None:
+        training_metadata_path = model_path / "training_metadata.json"
+        if training_metadata_path.exists():
+            with open(training_metadata_path) as f:
+                meta = json.load(f)
+            model_type = meta.get("model_type", "").lower()
+            if model_type == "act_vit":
+                policy_type = "act_vit"
+            else:
+                policy_type = "act"
+        else:
+            policy_type = "act"
+
+    print(f"Loading {policy_type} from {model_path}...")
+
+    if policy_type == "act_vit":
+        from models.act_vit import ACTViTPolicy
+        vit_model = "vit_b_16"
+        training_metadata_path = model_path / "training_metadata.json"
+        if training_metadata_path.exists():
+            with open(training_metadata_path) as f:
+                meta = json.load(f)
+            if "vision_backbone" in meta:
+                vit_model = meta["vision_backbone"]
+        policy = ACTViTPolicy.from_pretrained(str(model_path), vit_model=vit_model)
+    else:
+        from lerobot.policies.act.modeling_act import ACTPolicy
+        policy = ACTPolicy.from_pretrained(str(model_path))
+
     policy.to(device)
     policy.eval()
 
@@ -61,24 +108,7 @@ def load_act_policy(model_path: Path, device: torch.device):
         policy.config, pretrained_path=str(model_path)
     )
 
-    return policy, preprocessor, postprocessor
-
-
-def prepare_obs(obs: dict, device: str = "cuda") -> dict:
-    """Convert sim observation to policy input format."""
-    batch = {}
-
-    # State
-    state = np.array([obs[m + ".pos"] for m in MOTOR_NAMES], dtype=np.float32)
-    batch["observation.state"] = torch.from_numpy(state).unsqueeze(0).to(device)
-
-    # Images
-    for key, value in obs.items():
-        if isinstance(value, np.ndarray) and value.ndim == 3:
-            img = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).float() / 255.0
-            batch[f"observation.images.{key}"] = img.to(device)
-
-    return batch
+    return policy, preprocessor, postprocessor, policy_type
 
 
 def run_single_episode(
@@ -92,6 +122,10 @@ def run_single_episode(
     pos_noise: float = 0.02,
     rot_noise: float = np.pi,
     max_steps: int = 300,
+    pickup_coords: bool = False,
+    subtask: bool = False,
+    blinkering: bool = False,
+    has_completion_head: bool = False,
 ) -> dict:
     """Run a single evaluation episode with block at specified position.
 
@@ -119,22 +153,82 @@ def run_single_episode(
     duplo_body_id = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "duplo")
     final_pos = sim.mj_data.xpos[duplo_body_id].copy()
 
+    # Setup subtask state machine
+    subtask_state = 0  # MOVE_TO_SOURCE
+    block_pos_3d = final_pos.copy()
+    ee_site_id = None
+
+    if subtask or pickup_coords:
+        # Find EE site for subtask distance calculations
+        for site_name in ["gripperframe", "gripper_site", "ee_site"]:
+            sid = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+            if sid != -1:
+                ee_site_id = sid
+                break
+
+    # Compute pickup coordinate tensor (constant for entire episode)
+    pickup_coord_tensor = None
+    if pickup_coords:
+        x_bounds = PickupCoordinateDataset.DEFAULT_X_BOUNDS
+        y_bounds = PickupCoordinateDataset.DEFAULT_Y_BOUNDS
+        x_norm = 2 * (final_pos[0] - x_bounds[0]) / (x_bounds[1] - x_bounds[0]) - 1
+        y_norm = 2 * (final_pos[1] - y_bounds[0]) / (y_bounds[1] - y_bounds[0]) - 1
+        x_norm = max(-1, min(1, x_norm))
+        y_norm = max(-1, min(1, y_norm))
+        pickup_coord_tensor = torch.tensor([[x_norm, y_norm]], dtype=torch.float32, device=device)
+
     # Reset policy
     policy.reset()
 
     # Run episode
     for step in range(max_steps):
         obs = sim.get_observation()
-        batch = prepare_obs(obs, device)
+        batch = prepare_obs_for_policy(obs, device)
 
-        if preprocessor is not None:
-            batch = preprocessor(batch)
+        # Compute subtask state
+        subtask_tensor = None
+        if subtask and ee_site_id is not None:
+            ee_pos = sim.mj_data.site_xpos[ee_site_id].copy()
+            dist_to_block_xy = np.linalg.norm(ee_pos[:2] - block_pos_3d[:2])
+            dist_to_block_3d = np.linalg.norm(ee_pos - block_pos_3d)
+            dist_to_bowl_xy = np.linalg.norm(ee_pos[:2] - BOWL_POS[:2])
+
+            # Forward-only state machine
+            if subtask_state == 0:  # MOVE_TO_SOURCE
+                if dist_to_block_xy < NEAR_THRESHOLD:
+                    subtask_state = 1  # -> PICK_UP
+            elif subtask_state == 1:  # PICK_UP
+                if dist_to_block_3d > FAR_THRESHOLD:
+                    subtask_state = 2  # -> MOVE_TO_DEST
+            elif subtask_state == 2:  # MOVE_TO_DEST
+                if dist_to_bowl_xy < NEAR_THRESHOLD:
+                    subtask_state = 3  # -> DROP
+
+            subtask_onehot = torch.zeros(4, dtype=torch.float32, device=device)
+            subtask_onehot[subtask_state] = 1.0
+            subtask_tensor = subtask_onehot.unsqueeze(0)  # (1, 4)
+
+        # Add environment_state (pickup coords + subtask one-hot)
+        if pickup_coord_tensor is not None and subtask_tensor is not None:
+            batch["observation.environment_state"] = torch.cat(
+                [pickup_coord_tensor, subtask_tensor], dim=1
+            )
+        elif pickup_coord_tensor is not None:
+            batch["observation.environment_state"] = pickup_coord_tensor
+        elif subtask_tensor is not None:
+            batch["observation.environment_state"] = subtask_tensor
+
+        batch = preprocessor(batch)
 
         with torch.no_grad():
-            action = policy.select_action(batch)
-
-        if postprocessor is not None:
-            action = postprocessor(action)
+            if has_completion_head:
+                action, progress = policy.select_action_with_completion(batch)
+                action = postprocessor(action)
+                if progress is not None and progress > COMPLETION_THRESHOLD:
+                    policy.reset()
+            else:
+                action = policy.select_action(batch)
+                action = postprocessor(action)
 
         action_np = action.cpu().numpy().flatten()
         action_dict = {m + ".pos": float(action_np[i]) for i, m in enumerate(MOTOR_NAMES)}
@@ -169,19 +263,48 @@ def run_spatial_evaluation(
     rot_noise: float = np.pi,
     max_steps: int = 300,
     csv_path: Path = None,
+    scene: str = None,
+    policy_type: str = None,
+    pickup_coords: bool = False,
+    subtask: bool = False,
+    blinkering: bool = False,
 ) -> dict:
     """Run full spatial generalization evaluation.
 
     Args:
         csv_path: If provided, write results incrementally to this CSV file.
-                  If the file exists, will append to it.
+        scene: Scene XML filename (e.g. 'so101_dark_ground.xml'). Default: so101_with_wrist_cam.xml
+        policy_type: 'act' or 'act_vit'. Auto-detected if None.
+        pickup_coords: Inject block position as pickup coordinates.
+        subtask: Enable subtask phase conditioning.
+        blinkering: Mask overhead camera during PICK_UP/DROP.
     """
 
     # Load policy
-    policy, preprocessor, postprocessor = load_act_policy(model_path, device)
+    policy, preprocessor, postprocessor, detected_type = load_policy(
+        model_path, device, policy_type
+    )
 
-    # Create simulation - use 640x480 to match normal eval
-    scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+    # Detect completion head
+    has_completion_head = (
+        hasattr(policy, 'model') and
+        hasattr(policy.model, 'use_completion_head') and
+        policy.model.use_completion_head
+    )
+
+    # Enable blinkering on model
+    if blinkering and hasattr(policy, 'model') and hasattr(policy.model, 'blinkering'):
+        policy.model.blinkering = True
+        print(f"  Blinkering ENABLED on model")
+    elif hasattr(policy, 'model') and hasattr(policy.model, 'blinkering'):
+        policy.model.blinkering = False
+
+    if has_completion_head:
+        print(f"  Completion head ENABLED (threshold={COMPLETION_THRESHOLD})")
+
+    # Create simulation
+    scene_filename = scene or "so101_with_wrist_cam.xml"
+    scene_path = REPO_ROOT / "scenes" / scene_filename
     sim_config = SO100SimConfig(
         scene_xml=str(scene_path),
         sim_cameras=["overhead_cam", "wrist_cam"],
@@ -196,7 +319,6 @@ def run_spatial_evaluation(
     y_positions = np.linspace(y_range[0], y_range[1], grid_size)
 
     # Create all (xi, yi, x, y) tuples and sort by distance from training position
-    # Training position was (0.217, 0.225) - start there and work outward
     TRAINING_POS = (0.217, 0.225)
     grid_order = []
     for xi, x in enumerate(x_positions):
@@ -216,6 +338,12 @@ def run_spatial_evaluation(
             "pos_noise": pos_noise,
             "rot_noise_deg": np.degrees(rot_noise),
             "max_steps": max_steps,
+            "scene": scene_filename,
+            "policy_type": detected_type,
+            "pickup_coords": pickup_coords,
+            "subtask": subtask,
+            "blinkering": blinkering,
+            "has_completion_head": has_completion_head,
         },
         "grid_positions": [],
         "episodes": [],
@@ -228,11 +356,20 @@ def run_spatial_evaluation(
     print(f"Spatial Generalization Evaluation")
     print(f"{'='*70}")
     print(f"Model: {model_path}")
+    print(f"Policy type: {detected_type}")
+    print(f"Scene: {scene_filename}")
     print(f"Grid: {grid_size}x{grid_size} = {total_positions} positions")
     print(f"Episodes per position: {episodes_per_position}")
     print(f"Total episodes: {total_episodes}")
     print(f"X range: {x_range[0]:.3f} to {x_range[1]:.3f}")
     print(f"Y range: {y_range[0]:.3f} to {y_range[1]:.3f}")
+    flags = []
+    if pickup_coords: flags.append("pickup_coords")
+    if subtask: flags.append("subtask")
+    if blinkering: flags.append("blinkering")
+    if has_completion_head: flags.append("completion_head")
+    if flags:
+        print(f"Features: {', '.join(flags)}")
     if csv_path:
         print(f"CSV output: {csv_path}")
     print(f"{'='*70}\n")
@@ -273,6 +410,10 @@ def run_spatial_evaluation(
                     block_x=x, block_y=y,
                     pos_noise=pos_noise, rot_noise=rot_noise,
                     max_steps=max_steps,
+                    pickup_coords=pickup_coords,
+                    subtask=subtask,
+                    blinkering=blinkering,
+                    has_completion_head=has_completion_head,
                 )
                 result["grid_x"] = xi
                 result["grid_y"] = yi
@@ -670,8 +811,8 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate spatial generalization")
     parser.add_argument("path", type=str, nargs="?",
                         help="Model path (for eval) or results JSON (for visualize)")
-    parser.add_argument("--checkpoint", type=str, default="checkpoint_045000",
-                        help="Checkpoint name")
+    parser.add_argument("--checkpoint", type=str, default="final",
+                        help="Checkpoint name (default: final)")
     parser.add_argument("--episodes", type=int, default=20,
                         help="Episodes per grid position")
     parser.add_argument("--grid-size", type=int, default=DEFAULT_GRID_SIZE,
@@ -694,6 +835,22 @@ def main():
                         help="Output JSON path")
     parser.add_argument("--csv", type=str, default=None,
                         help="CSV file for incremental results (appends if exists)")
+
+    # Model/scene options
+    parser.add_argument("--policy", type=str, default=None, choices=["act", "act_vit"],
+                        help="Policy type (auto-detected from training_metadata.json if not specified)")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Scene XML filename (e.g. so101_dark_ground.xml)")
+
+    # Feature flags
+    parser.add_argument("--pickup-coords", action="store_true",
+                        help="Inject pickup coordinates into environment_state")
+    parser.add_argument("--subtask", action="store_true",
+                        help="Enable subtask phase conditioning (MOVE_TO_SOURCE->PICK_UP->MOVE_TO_DEST->DROP)")
+    parser.add_argument("--blinkering", action="store_true",
+                        help="Mask overhead camera during PICK_UP/DROP subtasks")
+
+    # Visualization modes
     parser.add_argument("--visualize", action="store_true",
                         help="Visualize results from JSON file instead of running eval")
     parser.add_argument("--visualize-csv", action="store_true",
@@ -768,6 +925,11 @@ def main():
         pos_noise=args.pos_noise,
         max_steps=args.max_steps,
         csv_path=csv_path,
+        scene=args.scene,
+        policy_type=args.policy,
+        pickup_coords=args.pickup_coords,
+        subtask=args.subtask,
+        blinkering=args.blinkering,
     )
 
     # Save results

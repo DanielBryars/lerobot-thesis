@@ -599,3 +599,226 @@ The dramatic spatial generalization drop (100% → 12%) is expected because:
 | `utils/training.py` | `PickupCoordinateDataset.load_episode_scenes()` — check local cache before HuggingFace |
 | `scripts/training/train_act_vit.py` | Remove image stats from preprocessor: `stats = {k: v for k, v in stats.items() if 'observation.images' not in k}` |
 | `scripts/experiments/eval_pickup_model_spatial.py` | Added `--scene` argument for custom scene XML |
+
+---
+
+# Experiment 18: Ground Texture & Data Volume Ablations
+
+## Motivation
+
+Two key findings need deeper investigation:
+
+1. **Plain ACT on dark ground is much worse** than checker ground (50% vs 95% at training positions). Why? Is it the visual complexity, contrast, or the checker pattern providing useful spatial reference?
+2. **Pickup coordinates hurt spatial generalization** (9.2% with coords vs 23.4% without). The plain ACT model (`act_2pos_220ep`) at 23.4% spatial is our best spatially-generalizing model.
+
+This experiment runs several ablations to understand what drives spatial generalization:
+- Does **data volume** matter? (60ep subset vs 220ep)
+- Does **ground texture** matter at inference time? (cross-scene tests)
+- Does **ground texture diversity** help? (440ep combined dataset)
+
+## Baseline Models
+
+### Plain ACT on Checker Ground: `act_2pos_220ep`
+
+| Parameter | Value |
+|-----------|-------|
+| Model | `outputs/train/act_2pos_220ep` |
+| Dataset | `danbhf/sim_pick_place_2pos_220ep_v2` |
+| Training | Plain ACT (no pickup_coords, no subtask, no blinkering) |
+| Steps | 100,000 |
+| Scene (eval) | `so101_with_wrist_cam.xml` (checker ground) |
+| **Training-pos success** | **95%** (50 episodes) |
+| **Spatial gen (7x7)** | **23.4%** (best spatially-generalizing model) |
+
+### Plain ACT on Dark Ground: `act_dark_ground_220ep`
+
+| Parameter | Value |
+|-----------|-------|
+| Model | `outputs/train/act_dark_ground_220ep` |
+| Best checkpoint | `checkpoint_050000` |
+| Dataset | `danbhf/sim_pick_place_220ep_dark_ground` |
+| Training | Plain ACT (no pickup_coords, no subtask, no blinkering), 100K steps |
+| Scene (eval) | `so101_dark_ground.xml` |
+| **Training-pos success** | **50%** (50 episodes) |
+
+The 45 percentage point gap (95% checker vs 50% dark) is striking. Both models are plain ACT on the same trajectories, differing only in ground texture.
+
+---
+
+## Exp 18a: Cross-Scene Evaluation (Ground Texture Transfer)
+
+Tests whether models are texture-specific or learned generalizable features.
+
+### 18a-i: Dark Ground Model on Checker Scene
+
+```bash
+python scripts/inference/eval.py outputs/train/act_dark_ground_220ep \
+    --checkpoint checkpoint_050000 --episodes 50 --local
+```
+
+(No `--scene` flag = default checker scene `so101_with_wrist_cam.xml`)
+
+**Hypothesis**: If the model learned texture-invariant features, it should still work. If it memorized dark-ground-specific visual patterns, it will fail.
+
+**Results**: _(pending)_
+
+### 18a-ii: Checker Model on Dark Ground Scene
+
+```bash
+python scripts/inference/eval.py outputs/train/act_2pos_220ep \
+    --checkpoint final --episodes 50 --local \
+    --scene so101_dark_ground.xml
+```
+
+**Hypothesis**: Same logic -- if checker patterns are essential to the policy, this will fail on dark ground.
+
+**Results**: _(pending)_
+
+---
+
+## Exp 18b: Data Volume Ablation (60ep Subset)
+
+**Question**: Does 220 episodes "over-train" at specific positions, hurting spatial generalization? Would fewer episodes force more generalizable representations?
+
+### Episode Selection
+
+From `danbhf/sim_pick_place_2pos_220ep_v2`:
+- Episodes 0-19: Position 1 (y > 0.1) -- 20 episodes
+- Episodes 100-119: Position 2 (y <= 0.1) -- 20 episodes
+- Episodes 200-219: Random/gap-filling positions -- 20 episodes
+- **Total: 60 episodes**
+
+Implemented via `--episode_filter "0-19,100-119,200-219"` in `train_act.py`.
+
+### Training
+
+```bash
+MUJOCO_GL=egl python scripts/training/train_act.py \
+    danbhf/sim_pick_place_2pos_220ep_v2 \
+    --steps 100000 --batch_size 8 --chunk_size 100 \
+    --save_freq 10000 --num_workers 2 \
+    --episode_filter "0-19,100-119,200-219" \
+    --output_dir outputs/train/act_60ep_subset \
+    --run_name act_60ep_subset
+```
+
+**Training-pos results**: _(pending)_
+
+### Spatial Eval (7x7)
+
+```bash
+python scripts/experiments/eval_spatial_generalization.py \
+    outputs/train/act_60ep_subset --checkpoint final \
+    --grid-size 7 --episodes 10 \
+    --x-min 0.12 --x-max 0.42 --y-min -0.1 --y-max 0.35 \
+    --csv outputs/experiments/spatial_scatter_60ep_subset.csv
+```
+
+**Results**: _(pending)_
+
+---
+
+## Exp 18c: Ground Texture Diversity (440ep Combined)
+
+**Question**: Does training on both ground textures teach the model to ignore ground appearance, improving generalization?
+
+### Dataset
+
+Merged both 220ep datasets:
+
+```bash
+python scripts/tools/merge_datasets.py \
+    danbhf/sim_pick_place_2pos_220ep_v2 \
+    danbhf/sim_pick_place_220ep_dark_ground \
+    -o datasets/sim_pick_place_440ep_both_grounds \
+    --upload danbhf/sim_pick_place_440ep_both_grounds
+```
+
+- **440 episodes, ~62,420 frames**
+- Same trajectories appear twice (once per ground texture)
+- Teaches the model that ground texture is irrelevant
+
+### Training
+
+```bash
+MUJOCO_GL=egl python scripts/training/train_act.py \
+    danbhf/sim_pick_place_440ep_both_grounds \
+    --steps 100000 --batch_size 8 --chunk_size 100 \
+    --save_freq 10000 --num_workers 2 \
+    --output_dir outputs/train/act_440ep_both_grounds \
+    --run_name act_440ep_both_grounds
+```
+
+**Training-pos results**: _(pending)_
+
+### Spatial Eval (7x7)
+
+Evaluated on both scenes (model was trained on both):
+
+```bash
+# Checker scene
+python scripts/experiments/eval_spatial_generalization.py \
+    outputs/train/act_440ep_both_grounds --checkpoint final \
+    --grid-size 7 --episodes 10 \
+    --x-min 0.12 --x-max 0.42 --y-min -0.1 --y-max 0.35 \
+    --csv outputs/experiments/spatial_scatter_440ep_checker.csv
+
+# Dark ground scene
+python scripts/experiments/eval_spatial_generalization.py \
+    outputs/train/act_440ep_both_grounds --checkpoint final \
+    --grid-size 7 --episodes 10 \
+    --x-min 0.12 --x-max 0.42 --y-min -0.1 --y-max 0.35 \
+    --scene so101_dark_ground.xml \
+    --csv outputs/experiments/spatial_scatter_440ep_dark.csv
+```
+
+**Results**: _(pending)_
+
+---
+
+## Summary Table
+
+| Model | Data | Ground (train) | Ground (eval) | Training-Pos | Spatial (7x7) |
+|-------|------|----------------|---------------|-------------|---------------|
+| `act_2pos_220ep` | 220ep | Checker | Checker | **95%** | **23.4%** |
+| `act_dark_ground_220ep` | 220ep | Dark | Dark | **50%** | _(pending)_ |
+| `act_dark_ground_220ep` | 220ep | Dark | **Checker** | _(pending)_ | - |
+| `act_2pos_220ep` | 220ep | Checker | **Dark** | _(pending)_ | - |
+| `act_60ep_subset` | 60ep | Checker | Checker | _(pending)_ | _(pending)_ |
+| `act_440ep_both_grounds` | 440ep | Both | Checker | _(pending)_ | _(pending)_ |
+| `act_440ep_both_grounds` | 440ep | Both | Dark | _(pending)_ | _(pending)_ |
+
+## Models
+
+| Model | Path | Dataset | Episodes |
+|-------|------|---------|----------|
+| Plain ACT checker 220ep | `outputs/train/act_2pos_220ep` | `danbhf/sim_pick_place_2pos_220ep_v2` | 220 |
+| Plain ACT dark 220ep | `outputs/train/act_dark_ground_220ep` | `danbhf/sim_pick_place_220ep_dark_ground` | 220 |
+| Plain ACT 60ep subset | `outputs/train/act_60ep_subset` | `danbhf/sim_pick_place_2pos_220ep_v2` (filtered) | 60 |
+| Plain ACT 440ep combined | `outputs/train/act_440ep_both_grounds` | `danbhf/sim_pick_place_440ep_both_grounds` | 440 |
+
+## Code Changes
+
+| File | Change |
+|------|--------|
+| `scripts/training/train_act.py` | Added `--episode_filter` CLI arg: comma-separated ranges (e.g. `"0-19,100-119"`) |
+
+## Comparison Plots
+
+```bash
+# 60ep vs 220ep (both checker scene, plain ACT)
+python scripts/experiments/plot_spatial_scatter.py \
+    outputs/experiments/spatial_scatter_60ep_subset.csv \
+    outputs/experiments/spatial_eval_20260125_232717.csv \
+    --side-by-side \
+    --training-pos 0.213,0.254 --training-pos 0.213,-0.047 \
+    --output docs/Images/spatial_scatter_60ep_vs_220ep.png
+
+# 440ep checker vs dark (both from combined model)
+python scripts/experiments/plot_spatial_scatter.py \
+    outputs/experiments/spatial_scatter_440ep_checker.csv \
+    outputs/experiments/spatial_scatter_440ep_dark.csv \
+    --side-by-side \
+    --training-pos 0.213,0.254 --training-pos 0.213,-0.047 \
+    --output docs/Images/spatial_scatter_440ep_both_grounds.png
+```
