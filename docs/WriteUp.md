@@ -848,6 +848,11 @@ All coordinates are expressed in **normalised image space**. The response is enf
 
 This section outlines the key open problems identified so far, along with concrete next steps. It forms the basis of the experimental plan for the final two weeks before submission.
 
+
+So I should rerecord the data so that I know that the camera can SEE the block when it does the pickup, then it will have more information, and then redo the blinkering tests.
+
+Also I should try a dataset with fewer samples, so 20 from position A, 20 from position B and then 20 random?
+
 ---
 
 ### 1. Subtask Isolation: Training ACT on Individual Primitives

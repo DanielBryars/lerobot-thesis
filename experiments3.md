@@ -302,17 +302,45 @@ Baseline TinyVLA (Qwen2.5-VL-3B VLA model) against ACT-ViT for pickup task.
 VLA treats robot control as text generation: camera images + instruction -> discretized actions.
 
 ## Setup
-- **Model**: Qwen2.5-VL-3B-Instruct, fine-tuned via SFT
-- **Dataset**: `danbhf/sim_pick_place_220ep_pickup_tight` (same as Exp 15b)
+- **Model**: Qwen2.5-VL-3B-Instruct, fine-tuned with LoRA (r=16, alpha=32, q/k/v/o_proj)
+- **Dataset**: `danbhf/sim_pick_place_220ep_pickup_tight` (220 pickup-only episodes, ~202 samples)
 - **Horizon**: 8 (predicts 8 future actions per inference)
 - **Action encoding**: Discretized to 0-1000 integers, space-separated
-- **Training**: 32 epochs, batch_size=4, lr=4e-5, gradient checkpointing, SDPA attention
+- **Training**: 32 epochs, batch_size=8, lr=4e-5, gradient checkpointing, SDPA attention, cosine LR schedule
 - **No proprioception**: Vision-only (unlike ACT which uses joint state)
+- **Trainable params**: 7.37M / 3.76B (0.196% via LoRA)
+- **VRAM**: 22.2GB peak (RTX 5090 32GB)
+- **Training time**: ~42 minutes (832 steps at ~3.2s/step)
+- **GPU**: NVIDIA RTX 5090
+
+### Training Details
+
+- Full fine-tuning OOMs at 29.8GB (3.75B params in bf16 + optimizer + activations)
+- LoRA with r=16 targeting q/k/v/o_proj reduces trainable params to 7.37M (0.196%)
+- LoRA VRAM: 22.2GB with batch_size=8 (was 9.4GB with batch_size=4)
+- PyTorch 2.8.0+cu128 required for RTX 5090 (sm_120 compute capability)
+- torchcodec 0.6.0 required for LeRobot video decoding on PyTorch 2.8
+- Action mask augmentation: 40% of action tokens randomly replaced during training (regularization)
+- Constrained decoding: `NumberSpaceOnlyProcessor` restricts generation to digits, spaces, and EOS
+
+### Loss Curve
+
+| Epoch | Loss | LR |
+|-------|------|-----|
+| 0.4 | 1.501 | 1.44e-05 (warmup) |
+| 1.2 | 1.399 | 4.00e-05 (peak) |
+| 5.0 | 1.219 | 3.84e-05 |
+| 10.0 | 1.162 | 3.46e-05 |
+| 15.0 | 1.066 | 2.62e-05 |
+| 20.0 | 0.987 | 1.59e-05 |
+| 25.0 | 1.013 | 4.86e-06 |
+| 30.0 | 0.904 | 4.24e-07 |
+| 32.0 | 0.956 | 1.36e-09 |
 
 ### Comparison Table
 | | ACT-ViT (Exp 15b) | TinyVLA |
 |--|---------|---------|
-| Parameters | ~80M | ~3.75B |
+| Parameters | ~80M | ~3.75B (7.37M trainable via LoRA) |
 | Uses proprioception | Yes (joint state) | No (vision-only) |
 | Prediction horizon | 50 | 8 |
 | Action representation | Continuous (normalized) | Discretized (0-1000) |
@@ -324,12 +352,125 @@ VLA treats robot control as text generation: camera images + instruction -> disc
 | `scripts/training/train_tinyvla.py` | TinyVLA training (SFT on Qwen2.5-VL-3B) |
 | `scripts/inference/eval_tinyvla.py` | Evaluation wrapper with TinyVLAPolicy |
 
+### Models
+| Model | Location |
+|-------|----------|
+| TinyVLA LoRA adapter | `danbhf/tinyvla_pickup_lora_32ep` (HuggingFace) |
+| RunPod checkpoint | `outputs/train/tinyvla_pickup/final/` |
+
 ### Datasets
 | Dataset | Notes |
 |---------|-------|
-| `danbhf/sim_pick_place_220ep_pickup_tight` | Training data (same as Exp 15b) |
+| `danbhf/sim_pick_place_220ep_pickup_tight` | Training data (220 pickup-only episodes) |
 | `danbhf/sim_pick_place_20260218_192430` | Recorded pickup demo - NOT USABLE: block not in camera view at start |
+| `danbhf/sim_pick_place_20260218_214459` | 20-episode pickup demo recorded with `--show-fov` (wrist camera FOV overlay) |
 
 ## Results
 
-*Training in progress on RunPod RTX 5090...*
+### Exp 16a: Training-Position Pickup Evaluation
+
+```bash
+python scripts/inference/eval_tinyvla.py outputs/train/tinyvla_pickup/final \
+    --episodes 5 --pickup-only --max-steps 200 --mujoco-viewer
+```
+
+| Position | Success | Approached | Rate |
+|----------|---------|------------|------|
+| (0.213, 0.254) | 1/4 | 4 | 25% |
+| (0.213, -0.047) | 0/0 | 0 | 0% |
+| **Overall** | **1/4** | **4** | **12.5%** |
+
+### Key Observations
+
+- **Very slow inference**: ~500ms+ per generation step for 3B model locally (vs ~5ms for ACT). Each action prediction generates ~48 tokens (8 steps x 6 dims) autoregressively. The sim runs in slow motion.
+- **12.5% success** vs ACT-ViT Exp 15b's **100%** at training positions — dramatically worse.
+- Position 2 had 0 approaches (robot never reached the block in any episode).
+- The model occasionally produces valid-looking actions but lacks the precision for reliable manipulation.
+- With horizon=8 (predicts 8 actions at once, ~0.27s of motion), the model re-plans frequently but each re-plan is expensive.
+
+### Comparison: ACT-ViT vs TinyVLA
+
+| Metric | ACT-ViT (Exp 15b) | TinyVLA (Exp 16a) |
+|--------|-------------------|-------------------|
+| Training-position pickup | 100% | 12.5% |
+| Inference speed | ~5ms/step | ~500ms/step |
+| Parameters (inference) | ~80M | ~3.75B |
+| Trainable parameters | ~80M (full) | 7.37M (LoRA) |
+| Training time | ~15 min | ~42 min |
+| GPU (training) | RTX 3090 | RTX 5090 |
+
+**Conclusion**: TinyVLA with 32 epochs of LoRA fine-tuning is not competitive with ACT for this task. The 3B VLA model is both ~100x slower at inference and dramatically less accurate. The discretized action representation (integers 0-1000) likely loses precision compared to ACT's continuous output, and LoRA training of 0.2% of parameters may be insufficient for the model to learn precise manipulation. A full fine-tune or more training data/epochs might improve results, but the fundamental inference speed limitation makes VLAs impractical for real-time 30Hz control.
+
+### Exp 16b: 5x5 Spatial Grid Evaluation
+
+Attempted 5x5 spatial grid evaluation (25 positions, 5 episodes each, 200 max steps):
+
+```bash
+python scripts/inference/eval_tinyvla.py outputs/train/tinyvla_pickup/final \
+    --episodes 5 --pickup-only --max-steps 200 --grid-size 5
+```
+
+**Status**: Abandoned due to impractical inference speed. The 3B model generates at ~13 seconds per action prediction on local GPU. With 25 grid positions × 5 episodes × ~25 generations per episode = ~3,125 total generations, estimated wall time: **~11 hours**. Given the 12.5% success at training positions, spatial generalization is expected to be ~0%.
+
+---
+
+# Experiment 17: Dark Matt Ground (Reduced Reflections)
+
+## Motivation
+
+The original scene uses a checker-pattern ground with `reflectance=0.2`, which creates visual reflections in the overhead camera. These reflections are position-dependent — the same block position reflects differently depending on the viewing angle. This could encode spurious spatial features that the model memorizes, harming position-invariant generalization.
+
+**Hypothesis**: An unreflective dark matt ground will:
+1. Remove position-dependent reflection patterns from overhead camera
+2. Increase contrast between the white Duplo block and the dark surface
+3. Potentially improve spatial generalization by removing spurious visual cues
+
+## Setup
+
+### Scene Modification
+
+Created `scenes/so101_dark_ground.xml` — copy of `so101_with_wrist_cam.xml` with:
+- Ground texture: `builtin="flat" rgb1="0.12 0.12 0.12"` (uniform dark charcoal, no checker)
+- Ground material: `reflectance="0.0"` (completely non-reflective)
+
+### Dataset Re-rendering
+
+Used `scripts/recording/rerecord_dataset.py` to replay the 220-episode dataset with the new ground:
+
+```bash
+python scripts/recording/rerecord_dataset.py danbhf/sim_pick_place_2pos_220ep_v2 \
+    --scene scenes/so101_dark_ground.xml \
+    --output danbhf/sim_pick_place_220ep_dark_ground
+```
+
+This replays the exact same actions/trajectories from the original 220-episode dataset in the modified sim. Block positions are preserved from `episode_scenes.json`. Only the camera observations change (new ground appearance).
+
+- **Source**: `danbhf/sim_pick_place_2pos_220ep_v2` (220 episodes, 31,210 frames)
+- **Output**: `danbhf/sim_pick_place_220ep_dark_ground` (identical trajectories, new visuals)
+- **Subtask annotations**: Copied from source (identical episode structure)
+
+### Training Config
+
+Replicates Exp 14b (best model) with the dark ground dataset:
+
+| Parameter | Value |
+|-----------|-------|
+| Dataset | `danbhf/sim_pick_place_220ep_dark_ground` |
+| fix_state | Yes |
+| subtask | Yes |
+| blinkering | Yes |
+| subtask_chunks | Yes (completion head) |
+| no_mask_actions | Yes (auxiliary only) |
+| Steps | 50,000 |
+| batch_size | 8 |
+| chunk_size | 100 |
+
+### Evaluation Plan
+
+1. **Training-position pickup** (20 episodes each, 2 positions) — compare vs Exp 14b (85%)
+2. **5x5 spatial grid pickup** — compare vs Exp 12 (100% position-invariant pickup)
+3. **Full pick-and-place** (20 episodes) — compare vs Exp 14b (85%)
+
+## Results
+
+*Training in progress...*

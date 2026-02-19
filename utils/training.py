@@ -393,7 +393,7 @@ class PickupCoordinateDataset(torch.utils.data.Dataset):
 
     @classmethod
     def load_episode_scenes(cls, dataset_repo_id: str) -> dict:
-        """Load episode_scenes.json from HuggingFace dataset.
+        """Load episode_scenes.json from local cache or HuggingFace dataset.
 
         Args:
             dataset_repo_id: HuggingFace dataset ID (e.g., 'danbhf/sim_pick_place_2pos_220ep')
@@ -401,8 +401,18 @@ class PickupCoordinateDataset(torch.utils.data.Dataset):
         Returns:
             Dict mapping episode_index (str) -> scene info
         """
-        from huggingface_hub import hf_hub_download
+        # Try local cache first
+        try:
+            from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME
+            local_path = HF_LEROBOT_HOME / dataset_repo_id / 'meta' / 'episode_scenes.json'
+            if local_path.exists():
+                with open(local_path) as f:
+                    return json.load(f)
+        except Exception:
+            pass
 
+        # Fall back to HuggingFace download
+        from huggingface_hub import hf_hub_download
         try:
             scenes_path = hf_hub_download(
                 dataset_repo_id,

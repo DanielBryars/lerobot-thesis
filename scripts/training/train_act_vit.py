@@ -367,6 +367,11 @@ def main():
     # Create processors
     import copy
     stats = copy.deepcopy(dict(dataset_metadata.stats))
+    # Remove image stats so normalizer passes images through in [0, 1] range.
+    # ViT backbone handles its own normalization. Newer lerobot datasets include
+    # image mean/std in stats.json, which causes MEAN_STD normalization that produces
+    # extreme values (e.g., overhead_cam std=0.004 → normalized range [-60, +190]).
+    stats = {k: v for k, v in stats.items() if 'observation.images' not in k}
     # pickup_coord_stats contains merged stats if both pickup_coords and subtask are enabled
     if pickup_coord_stats:
         stats.update(pickup_coord_stats)

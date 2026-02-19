@@ -237,6 +237,8 @@ def main():
                         help="Wait for training to finish before evaluating")
     parser.add_argument("--record", type=str, default=None,
                         help="Record episodes to LeRobot dataset at this path")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Scene XML filename (e.g. so101_dark_ground.xml)")
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -277,7 +279,8 @@ def main():
     # Create simulation
     from lerobot_robot_sim import SO100SimConfig, SO100Sim
 
-    scene_path = REPO_ROOT / "scenes" / "so101_with_wrist_cam.xml"
+    scene_name = args.scene or "so101_with_wrist_cam.xml"
+    scene_path = REPO_ROOT / "scenes" / scene_name
     config = SO100SimConfig(
         scene_xml=str(scene_path),
         sim_cameras=["wrist_cam", "overhead_cam"],

@@ -91,11 +91,11 @@ class TinyVLAPolicy:
         self.model.to(self.device)
         self.model.eval()
 
-        # Load processor (try checkpoint first, fall back to base model)
-        if (model_path / "tokenizer_config.json").exists():
-            self.processor = AutoProcessor.from_pretrained(str(model_path))
+        # Load processor - for LoRA checkpoints always use base model (checkpoint lacks preprocessor_config.json)
+        if is_lora:
+            self.processor = AutoProcessor.from_pretrained(base_model_name)
         else:
-            self.processor = AutoProcessor.from_pretrained(base_model_name if is_lora else str(model_path))
+            self.processor = AutoProcessor.from_pretrained(str(model_path))
         if self.processor.tokenizer.pad_token is None:
             self.processor.tokenizer.pad_token = self.processor.tokenizer.eos_token
 
