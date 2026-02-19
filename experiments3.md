@@ -461,16 +461,141 @@ Replicates Exp 14b (best model) with the dark ground dataset:
 | blinkering | Yes |
 | subtask_chunks | Yes (completion head) |
 | no_mask_actions | Yes (auxiliary only) |
+| pickup_coords | Yes |
 | Steps | 50,000 |
 | batch_size | 8 |
 | chunk_size | 100 |
 
-### Evaluation Plan
+## Bug Discovery: Image Normalization Destroys ViT Performance
 
-1. **Training-position pickup** (20 episodes each, 2 positions) — compare vs Exp 14b (85%)
-2. **5x5 spatial grid pickup** — compare vs Exp 12 (100% position-invariant pickup)
-3. **Full pick-and-place** (20 episodes) — compare vs Exp 14b (85%)
+### The Problem
 
-## Results
+Initial training (v1-v3) produced models with 0-10% success — a catastrophic drop from Exp 14b's 85%. Investigation revealed **two bugs**:
 
-*Training in progress...*
+1. **Local dataset path bug**: `PickupCoordinateDataset.load_episode_scenes()` only checked HuggingFace (404 for local-only datasets), silently disabling `--pickup_coords`. Fixed to also check local cache at `HF_LEROBOT_HOME`.
+
+2. **Image normalization bug** (critical): The re-rendered dataset (newer LeRobot format) includes image mean/std in `stats.json`. The preprocessor applies MEAN_STD normalization to images:
+   - Overhead cam stats: **mean≈0.248, std≈0.004** (nearly uniform dark pixels)
+   - Normalization: `(pixel - 0.248) / 0.004` → values in range **[-60, +190]**
+   - This completely overwhelms the ViT backbone which expects [0, 1] input
+
+   The original Exp 14b dataset (older LeRobot format) had **no image stats** in its preprocessor, so images passed through in raw [0, 1] range. The ViT backbone fine-tuned successfully on these natural pixel values.
+
+### Root Cause
+
+LeRobot v3.0 datasets compute image statistics (mean, std per channel) and store them in `stats.json`. When the preprocessor is created with `make_pre_post_processors(cfg, dataset_stats=stats)`, these image stats get baked in, causing MEAN_STD normalization on images. For the dark ground overhead camera, the extremely low std (0.004) causes numerical explosion.
+
+### Fix
+
+Remove image stats from the preprocessor stats before creating it:
+```python
+stats = {k: v for k, v in stats.items() if 'observation.images' not in k}
+```
+
+This ensures images pass through in [0, 1] range (matching Exp 14b behavior). The ViT backbone handles its own feature normalization via learned layer norms.
+
+### Ablation Results
+
+| Version | Image Stats | pickup_coords | Success Rate |
+|---------|-------------|---------------|-------------|
+| v1 (dark ground, broken) | Yes (bug) | No (load bug) | **10%** |
+| v2 (pickup_coords fix only) | Yes (bug) | No (still broken) | **10%** |
+| v3 (both bugs present) | Yes (bug) | Yes | **0%** |
+| **v4 (both fixed)** | **No (correct)** | **Yes** | **66%** |
+| Exp 14b (checker ground) | No (old format) | Yes | **65-85%** |
+
+**The image normalization bug accounted for a ~60 percentage point drop in performance.**
+
+## Results (v4 — Corrected Model)
+
+### Exp 17a: Training-Position Full Pick-and-Place (50 episodes)
+
+```bash
+python scripts/inference/eval.py outputs/train/act_vit_dark_ground_v4 --local \
+    --checkpoint final --episodes 50 --scene so101_dark_ground.xml \
+    --blinkering --subtask --pickup-coords
+```
+
+| Metric | Dark Ground (v4) | Exp 14b (Checker) |
+|--------|-----------------|-------------------|
+| **Success Rate** | **66%** | **65-85%** |
+| Pick Rate | 80% | 85-95% |
+| Drop Rate | 17.5% | 10-12% |
+| Never Picked Up | 20% | 5-15% |
+| Avg Steps (success) | 145 | 108 |
+
+**Conclusion**: Dark ground model performance is comparable to checker ground (within sampling variance). The dark ground does not significantly improve or harm full-task performance.
+
+### Exp 17b: Blinkering Comparison (20 episodes)
+
+| Config | Success | Pick Rate | Drop Rate |
+|--------|---------|-----------|-----------|
+| With blinkering | 60% | 75% | 20% |
+| Without blinkering | 60% | 85% | 12% |
+
+Blinkering shows no benefit on dark ground (unlike checker ground where it doubled success in Exp 12). The uniform dark ground already provides less distracting visual features, so masking the overhead camera during PICK_UP/DROP adds no value.
+
+### Exp 17c: 5x5 Spatial Grid Pickup
+
+```bash
+python scripts/experiments/eval_pickup_model_spatial.py outputs/train/act_vit_dark_ground_v4 \
+    --checkpoint final --grid-size 5 --episodes 5 --scene so101_dark_ground.xml
+```
+
+**Note**: The spatial eval does NOT inject pickup_coords — it tests vision-only spatial generalization.
+
+```
+Pickup Success Grid (% success):
+     Y\X 0.10 0.16 0.22 0.29 0.35
+0.38      .    .    .    .    .
+0.30      .    .    .    .    .
+0.23      .  100    .  100    .
+0.15      .    .    .    .    .
+0.08      .    .    .  100    .
+
+Approach Rate Grid (% reached block):
+     Y\X 0.10 0.16 0.22 0.29 0.35
+0.38      .    .    .    .    .
+0.30      .    .    .    .    .
+0.23    100  100  100  100    .
+0.15      .  100  100  100    .
+0.08      .  100  100  100    .
+```
+
+| Metric | Dark Ground (v4) | Exp 12 (Checker) |
+|--------|-----------------|------------------|
+| Overall pickup | **12%** (3/25) | **100%** at reachable |
+| Approach rate | **40%** | N/A (full task) |
+| Positions with success | 3/25 | All reachable |
+
+The dramatic spatial generalization drop (100% → 12%) is expected because:
+1. The spatial eval doesn't inject `pickup_coords` — the model was trained WITH coords and depends on them
+2. Exp 12's 100% spatial pickup was from a model that used subtask conditioning (including coords) during the full eval
+3. The dark ground provides fewer spatial reference points (no checker pattern) for vision-only localization
+
+## Key Findings
+
+1. **Image normalization is critical for ViT-based policies**: MEAN_STD normalizing images with dataset statistics can destroy performance when camera variance is low (dark/uniform backgrounds). Always pass images to ViT in [0, 1] range.
+
+2. **Dark ground ≈ checker ground for full-task performance**: 66% vs 65-85% — no significant difference when the model has pickup_coords and subtask conditioning.
+
+3. **Blinkering is unnecessary on dark ground**: The uniform dark background already reduces distracting visual features, making overhead camera masking redundant.
+
+4. **Dark ground does NOT improve spatial generalization**: The hypothesis that removing checker reflections would help was not supported. Spatial performance is limited by the model's dependence on pickup_coords rather than visual features.
+
+## Models
+
+| Model | Path | Notes |
+|-------|------|-------|
+| v1 (broken) | `outputs/train/act_vit_dark_ground` | No pickup_coords, image norm bug |
+| v2 (broken) | `outputs/train/act_vit_dark_ground_v2` | No pickup_coords (load_episode_scenes bug) |
+| v3 (broken) | `outputs/train/act_vit_dark_ground_v3` | Image norm bug |
+| **v4 (correct)** | `outputs/train/act_vit_dark_ground_v4` | Both bugs fixed, **66% success** |
+
+## Code Fixes
+
+| File | Fix |
+|------|-----|
+| `utils/training.py` | `PickupCoordinateDataset.load_episode_scenes()` — check local cache before HuggingFace |
+| `scripts/training/train_act_vit.py` | Remove image stats from preprocessor: `stats = {k: v for k, v in stats.items() if 'observation.images' not in k}` |
+| `scripts/experiments/eval_pickup_model_spatial.py` | Added `--scene` argument for custom scene XML |
