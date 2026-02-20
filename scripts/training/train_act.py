@@ -48,6 +48,7 @@ from utils.constants import MOTOR_NAMES
 from utils.ik_solver import IKSolver
 from utils.training import (
     CachedDataset,
+    DeltaActionDataset,
     DiskCachedDataset,
     EpisodeFilterDataset,
     PickupCoordinateDataset,
@@ -91,6 +92,8 @@ def main():
                         help="Filter dataset to only include position 1 episodes (Y > 0.1)")
     parser.add_argument("--episode_filter", type=str, default=None,
                         help="Comma-separated episode ranges to include, e.g. '0-19,100-119,200-219'")
+    parser.add_argument("--delta_actions", action="store_true",
+                        help="Use delta/relative actions instead of absolute (predicts frame-to-frame changes)")
 
     args = parser.parse_args()
 
@@ -205,6 +208,17 @@ def main():
     policy.train()
     policy.to(device)
 
+    # Get action dimension from output features
+    action_dim = output_features['action'].shape[0]
+
+    # Compute delta action stats if enabled
+    delta_action_stats = None
+    if args.delta_actions:
+        print("Computing delta action stats...")
+        delta_action_stats = DeltaActionDataset.compute_stats(
+            args.dataset, action_dim=action_dim, num_samples=10000
+        )
+
     # Create pre/post processors for normalization
     # If using joint actions, rename stats key from action_joints to action
     import copy
@@ -215,6 +229,9 @@ def main():
         elif 'action' in stats:
             # Remove EE action stats if present (wrong shape)
             del stats['action']
+    # Update action stats for delta actions
+    if delta_action_stats:
+        stats.update(delta_action_stats)
     # Add pickup coordinate stats if enabled
     if pickup_coord_stats:
         stats.update(pickup_coord_stats)
@@ -285,6 +302,11 @@ def main():
     if args.pickup_coords and episode_scenes:
         dataset = PickupCoordinateDataset(dataset, episode_scenes)
 
+    # Add delta action transformation
+    if args.delta_actions:
+        print("Wrapping dataset with DeltaActionDataset")
+        dataset = DeltaActionDataset(dataset, action_dim=action_dim)
+
     # Create dataloader
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -319,20 +341,12 @@ def main():
                     if key.startswith("observation.images.")]
 
     # Determine action space type
-    action_feature = output_features.get('action')
-    if action_feature:
-        action_dim = action_feature.shape[0] if hasattr(action_feature, 'shape') else len(action_feature.shape)
-        # Check the actual shape from the feature
-        action_shape = list(action_feature.shape) if hasattr(action_feature, 'shape') else action_feature.shape
-        action_dim = action_shape[0] if action_shape else 0
-        if action_dim == 8:
-            action_space = "end-effector (8-dim: xyz + quat + gripper)"
-        elif action_dim == 6:
-            action_space = "joint (6-dim: normalized joints)"
-        else:
-            action_space = f"unknown ({action_dim}-dim)"
+    if action_dim == 8:
+        action_space = "end-effector (8-dim: xyz + quat + gripper)"
+    elif action_dim == 6:
+        action_space = "joint (6-dim: normalized joints)"
     else:
-        action_space = "unknown"
+        action_space = f"unknown ({action_dim}-dim)"
 
     # Extract camera resolutions from input features
     camera_resolutions = {}
@@ -360,6 +374,7 @@ def main():
         "pickup_coords": args.pickup_coords,
         "pos1_only": args.pos1_only,
         "episode_filter": args.episode_filter,
+        "delta_actions": args.delta_actions,
     }
 
     # Initialize WandB
@@ -387,6 +402,7 @@ def main():
                 "pickup_coords": args.pickup_coords,
                 "pos1_only": args.pos1_only,
                 "episode_filter": args.episode_filter,
+                "delta_actions": args.delta_actions,
             },
         )
 
@@ -409,6 +425,7 @@ def main():
     print(f"Pickup coords: {'enabled' if args.pickup_coords else 'disabled'}")
     print(f"Position 1 only: {'enabled' if args.pos1_only else 'disabled'}")
     print(f"Episode filter: {args.episode_filter or 'disabled'}")
+    print(f"Delta actions: {'enabled' if args.delta_actions else 'disabled'}")
     print(f"WandB: {'disabled' if args.no_wandb else args.wandb_project}")
     print("=" * 60)
     print()
