@@ -27,8 +27,11 @@ Usage:
         --resume outputs/train/octo_XXXX/checkpoint_010000
 """
 
+import logging
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+# Suppress verbose per-step warnings from octo-pytorch about missing observation keys
+logging.getLogger("root").setLevel(logging.ERROR)
 
 import argparse
 import json
@@ -389,12 +392,56 @@ def main():
     best_loss = float("inf")
     running_loss = 0.0
     start_time = time.time()
+    window_size = 2  # observation history length
+
+    # Enable cudnn benchmark for consistent input sizes
+    torch.backends.cudnn.benchmark = True
+
+    # Pre-compute task dict once (same instruction for all samples)
+    # The LanguageTokenizerPt runs T5 encoder on every forward pass if
+    # language_instruction is a dict. We pre-encode through T5 and cache
+    # the hidden states as a tensor to skip T5 on every step.
+    def detach_nested(d):
+        """Recursively detach tensors in a nested dict."""
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, torch.Tensor):
+                result[k] = v.detach()
+            elif isinstance(v, dict):
+                result[k] = detach_nested(v)
+            else:
+                result[k] = v
+        return result
+
+    print("  Pre-computing task embeddings (including T5 encoding)...")
+    with torch.no_grad():
+        task_template = model.create_tasks(
+            texts=[args.instruction] * args.batch_size, device=device
+        )
+        # Pre-encode language instruction through T5 encoder
+        # This converts the dict of token IDs → T5 hidden states tensor
+        task_tokenizers = model.module.octo_transformer.task_tokenizers
+        lang_tokenizer = task_tokenizers["language"] if "language" in task_tokenizers else None
+        if lang_tokenizer is not None and hasattr(lang_tokenizer, 'hf_model') and lang_tokenizer.hf_model is not None:
+            lang_input = task_template["language_instruction"]
+            if isinstance(lang_input, dict):
+                # Move T5 inputs to same device as T5 model
+                t5_device = next(lang_tokenizer.hf_model.parameters()).device
+                lang_input_device = {k: v.to(t5_device) if isinstance(v, torch.Tensor) else v
+                                     for k, v in lang_input.items()}
+                t5_output = lang_tokenizer.hf_model(**lang_input_device).last_hidden_state
+                task_template["language_instruction"] = t5_output.detach().to(device)
+                print(f"    T5 hidden states cached: {t5_output.shape}")
+    cached_task = detach_nested(task_template)
+    print("  Task embeddings cached (T5 will NOT re-run per step).")
 
     data_iter = cycle(dataloader)
     pbar = tqdm(total=args.steps, initial=start_step, desc="Training")
 
     while step < args.steps:
+        t0 = time.time()
         batch = next(data_iter)
+        t_data = time.time()
 
         # Build Octo observation dict
         observations = {
@@ -406,12 +453,17 @@ def main():
         if not args.no_proprio and "proprio" in batch:
             observations["proprio"] = batch["proprio"].to(device)
 
-        # Build task dict (language instruction)
-        task = model.create_tasks(texts=[args.instruction] * batch["action"].shape[0], device=device)
+        # Reuse pre-computed task embeddings
+        task = cached_task
 
-        # Actions and masks
+        # Actions and masks — Octo expects window dimension: (B, W, H, D)
         gt_actions = batch["action"].to(device)  # (B, horizon, D)
-        action_pad_mask = batch["action_pad_mask"].to(device)  # (B, horizon)
+        gt_actions = gt_actions.unsqueeze(1).expand(-1, window_size, -1, -1)  # (B, W, H, D)
+
+        action_pad_mask = batch["action_pad_mask"].to(device).bool()  # (B, horizon)
+        action_pad_mask = action_pad_mask.unsqueeze(1).expand(-1, window_size, -1)  # (B, W, H)
+        action_pad_mask = action_pad_mask.unsqueeze(-1).expand(-1, -1, -1, gt_actions.shape[-1])  # (B, W, H, D)
+        t_transfer = time.time()
 
         # Forward pass
         _, head_outputs = model(
@@ -423,6 +475,8 @@ def main():
             train=True,
             verbose=False,
         )
+        torch.cuda.synchronize()
+        t_forward = time.time()
 
         loss = head_outputs["action"][0]
         info = head_outputs["action"][1]
@@ -430,6 +484,8 @@ def main():
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        torch.cuda.synchronize()
+        t_backward = time.time()
         grad_norm = torch.nn.utils.clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad],
             max_norm=args.grad_clip,
@@ -441,6 +497,13 @@ def main():
         running_loss += loss.item()
         step += 1
         pbar.update(1)
+
+        # Timing diagnostics for first 5 steps
+        if step <= 5:
+            t_end = time.time()
+            print(f"  Step {step} timing: data={t_data-t0:.3f}s  transfer={t_transfer-t_data:.3f}s  "
+                  f"fwd={t_forward-t_transfer:.3f}s  bwd={t_backward-t_forward:.3f}s  "
+                  f"opt={t_end-t_backward:.3f}s  total={t_end-t0:.3f}s  loss={loss.item():.4f}")
 
         # WandB logging
         if use_wandb:

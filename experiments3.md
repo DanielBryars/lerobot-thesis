@@ -660,7 +660,7 @@ python scripts/inference/eval.py outputs/train/act_dark_ground_220ep \
 
 **Hypothesis**: If the model learned texture-invariant features, it should still work. If it memorized dark-ground-specific visual patterns, it will fail.
 
-**Results**: _(pending)_
+**Results**: **0% success** (0/50). Never picked up in any episode. Max block height 0.009m (never lifted). The dark ground model is completely texture-specific — its visual features are useless on the checker ground.
 
 ### 18a-ii: Checker Model on Dark Ground Scene
 
@@ -672,7 +672,26 @@ python scripts/inference/eval.py outputs/train/act_2pos_220ep \
 
 **Hypothesis**: Same logic -- if checker patterns are essential to the policy, this will fail on dark ground.
 
-**Results**: _(pending)_
+**Results**: **40% success** (20/50). Pick rate 76%, drop rate 37%. The checker model degrades but still partially works on dark ground — its visual features transfer better than the reverse direction.
+
+| Outcome | Count |
+|---------|-------|
+| Success | 20 |
+| Never picked up | 12 |
+| Dropped during transport | 13 |
+| Missed goal | 1 |
+| Timeout | 4 |
+
+### 18a Summary
+
+| Model (trained on) | Eval Scene | Success | Transfer Loss |
+|---------------------|------------|---------|--------------|
+| Dark ground → Dark ground | Same | 50% | baseline |
+| **Dark ground → Checker** | **Cross** | **0%** | **-50pp (total failure)** |
+| Checker → Checker | Same | 95% | baseline |
+| **Checker → Dark ground** | **Cross** | **40%** | **-55pp** |
+
+**Key finding**: Both models lose performance on cross-scene transfer, but the asymmetry is striking. The checker model retains 40% on dark ground (still picks up 76% of the time), while the dark ground model gets 0% on checker (never even picks up). The checker pattern provides richer, more transferable visual features. The uniform dark ground produces fragile representations that are completely scene-specific.
 
 ---
 
@@ -781,9 +800,9 @@ python scripts/experiments/eval_spatial_generalization.py \
 | Model | Data | Ground (train) | Ground (eval) | Training-Pos | Spatial (7x7) |
 |-------|------|----------------|---------------|-------------|---------------|
 | `act_2pos_220ep` | 220ep | Checker | Checker | **95%** | **23.4%** |
-| `act_dark_ground_220ep` | 220ep | Dark | Dark | **50%** | _(pending)_ |
-| `act_dark_ground_220ep` | 220ep | Dark | **Checker** | _(pending)_ | - |
-| `act_2pos_220ep` | 220ep | Checker | **Dark** | _(pending)_ | - |
+| `act_dark_ground_220ep` | 220ep | Dark | Dark | **50%** | **14.1%** |
+| `act_dark_ground_220ep` | 220ep | Dark | **Checker** | **0%** | - |
+| `act_2pos_220ep` | 220ep | Checker | **Dark** | **40%** | - |
 | `act_60ep_subset` | 60ep | Checker | Checker | _(pending)_ | _(pending)_ |
 | `act_440ep_both_grounds` | 440ep | Both | Checker | _(pending)_ | _(pending)_ |
 | `act_440ep_both_grounds` | 440ep | Both | Dark | _(pending)_ | _(pending)_ |
