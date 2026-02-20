@@ -68,8 +68,13 @@ def load_episode_scenes(source_dataset_id: str, local_root: Path = None) -> dict
     return {}
 
 
-def is_in_fov(cam_pos, cam_mat, block_pos, model, cam_id):
-    """Check if block_pos is inside the wrist camera's FOV cone."""
+def is_in_fov(cam_pos, cam_mat, block_pos, model, cam_id, max_distance=0.15):
+    """Check if block_pos is inside the wrist camera's FOV cone and close enough.
+
+    Args:
+        max_distance: Maximum distance from camera to block (meters). Prevents
+            triggering when the block is technically in the cone but far away.
+    """
     fovy_rad = np.radians(model.cam_fovy[cam_id])
     aspect = 640.0 / 480.0
     half_fovy = fovy_rad / 2
@@ -85,8 +90,13 @@ def is_in_fov(cam_pos, cam_mat, block_pos, model, cam_id):
     if local[2] >= 0:
         return False
 
-    # Check angular bounds
+    # Check distance
     depth = -local[2]
+    dist = np.linalg.norm(delta)
+    if dist > max_distance:
+        return False
+
+    # Check angular bounds
     return (abs(local[0]) / depth < np.tan(half_fovx) and
             abs(local[1]) / depth < np.tan(half_fovy))
 
@@ -120,6 +130,12 @@ def main():
         type=float,
         default=0.03,
         help="Block must be lifted this many meters above initial z (default: 0.03)",
+    )
+    parser.add_argument(
+        "--max-distance",
+        type=float,
+        default=0.15,
+        help="Max distance (m) from wrist cam to block for FOV trigger (default: 0.15)",
     )
     parser.add_argument(
         "--max-episodes",
@@ -273,7 +289,7 @@ def main():
             if start_frame is None:
                 cam_pos = sim_robot.mj_data.cam_xpos[wrist_cam_id].copy()
                 cam_mat = sim_robot.mj_data.cam_xmat[wrist_cam_id].copy()
-                if is_in_fov(cam_pos, cam_mat, block_pos, sim_robot.mj_model, wrist_cam_id):
+                if is_in_fov(cam_pos, cam_mat, block_pos, sim_robot.mj_model, wrist_cam_id, args.max_distance):
                     start_frame = frame_offset
 
             # Check lift (only after FOV entry)
