@@ -100,7 +100,7 @@ def push_file(channel, local_path, remote_path):
 def main():
     # Files relative to REMOTE_BASE (/root/lerobot-thesis)
     files = [
-        "scripts/remote/profile_forward.py",
+        "scripts/remote/runpod_launch_training7.sh",
     ]
 
     # Extra files with explicit (local_path, remote_path) pairs

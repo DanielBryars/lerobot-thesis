@@ -475,7 +475,6 @@ def main():
             train=True,
             verbose=False,
         )
-        torch.cuda.synchronize()
         t_forward = time.time()
 
         loss = head_outputs["action"][0]
@@ -484,7 +483,6 @@ def main():
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
-        torch.cuda.synchronize()
         t_backward = time.time()
         grad_norm = torch.nn.utils.clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad],
