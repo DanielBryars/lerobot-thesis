@@ -100,7 +100,7 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path, max_episodes_li
     # Track offsets
     episode_offset = 0
     frame_offset = 0
-    chunk_idx = 0
+    video_chunk_offset = 0
 
     all_data_dfs = []
     all_episodes_dfs = []
@@ -200,31 +200,38 @@ def merge_datasets(dataset_paths: list[Path], output_path: Path, max_episodes_li
             episodes_adjusted['dataset_from_index'] = episodes_adjusted['dataset_from_index'] + frame_offset
             episodes_adjusted['dataset_to_index'] = episodes_adjusted['dataset_to_index'] + frame_offset
 
-            # Update video chunk indices
-            for video_key in video_keys:
-                chunk_col = f'videos/{video_key}/chunk_index'
-                if chunk_col in episodes_adjusted.columns:
-                    episodes_adjusted[chunk_col] = chunk_idx
+        # Remap video chunk indices (always, even for first dataset if offset > 0)
+        max_src_chunk = 0
+        for video_key in video_keys:
+            chunk_col = f'videos/{video_key}/chunk_index'
+            if chunk_col in episodes_adjusted.columns:
+                src_max = int(episodes_adjusted[chunk_col].max())
+                max_src_chunk = max(max_src_chunk, src_max)
+                if video_chunk_offset > 0:
+                    episodes_adjusted[chunk_col] = episodes_adjusted[chunk_col] + video_chunk_offset
 
         all_episodes_dfs.append(episodes_adjusted)
 
-        # Copy videos
+        # Copy ALL video chunks from source dataset
         for video_key in video_keys:
-            src = ds_path / "videos" / video_key / "chunk-000" / "file-000.mp4"
-            if src.exists():
-                if chunk_idx == 0:
-                    dst = output_path / "videos" / video_key / "chunk-000" / "file-000.mp4"
-                else:
-                    chunk_dir = output_path / "videos" / video_key / f"chunk-{chunk_idx:03d}"
-                    chunk_dir.mkdir(parents=True, exist_ok=True)
-                    dst = chunk_dir / "file-000.mp4"
-                shutil.copy2(src, dst)
-                print(f"  Copied {video_key} to chunk-{chunk_idx:03d}")
+            src_video_dir = ds_path / "videos" / video_key
+            if not src_video_dir.exists():
+                continue
+            for src_chunk_dir in sorted(src_video_dir.iterdir()):
+                if not src_chunk_dir.is_dir() or not src_chunk_dir.name.startswith("chunk-"):
+                    continue
+                src_chunk_idx = int(src_chunk_dir.name.split("-")[1])
+                dst_chunk_idx = src_chunk_idx + video_chunk_offset
+                dst_chunk_dir = output_path / "videos" / video_key / f"chunk-{dst_chunk_idx:03d}"
+                dst_chunk_dir.mkdir(parents=True, exist_ok=True)
+                for src_file in src_chunk_dir.iterdir():
+                    shutil.copy2(src_file, dst_chunk_dir / src_file.name)
+            print(f"  Copied {video_key} chunks 0-{max_src_chunk} -> {video_chunk_offset}-{video_chunk_offset + max_src_chunk}")
 
         # Update offsets
         episode_offset += infos[ds_idx]['total_episodes']
         frame_offset += infos[ds_idx]['total_frames']
-        chunk_idx += 1
+        video_chunk_offset += max_src_chunk + 1
 
     # Merge all dataframes
     print("\nMerging data...")
