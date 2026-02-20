@@ -311,7 +311,7 @@ def main():
                         help="Auto-stop episode when block is lifted by this many cm (e.g. --lift_stop 5 for 5cm). "
                              "For recording pickup-only demonstrations.")
     parser.add_argument("--show-fov", action="store_true",
-                        help="Show wrist camera FOV projection on the table (light red overlay in VR)")
+                        help="Show camera FOV projections on the table (red=wrist, blue=overhead, VR only)")
 
     args = parser.parse_args()
 
@@ -353,7 +353,8 @@ def main():
         print("  Depth rendering enabled for overhead camera")
     if args.show_fov and sim_robot.vr_renderer is not None:
         sim_robot.vr_renderer.show_wrist_cam_fov = True
-        print("  Wrist camera FOV overlay enabled")
+        sim_robot.vr_renderer.show_overhead_cam_fov = True
+        print("  Camera FOV overlays enabled (red=wrist, blue=overhead)")
     speak("Simulation ready")
 
     # Keep VR alive during initialization

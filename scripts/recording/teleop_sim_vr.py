@@ -141,9 +141,11 @@ class VRRenderer:
         self.last_head_pos = None
         self.last_head_fwd = None  # Head forward direction in XR coords
 
-        # Wrist camera FOV overlay
+        # Camera FOV overlays
         self.show_wrist_cam_fov = False
+        self.show_overhead_cam_fov = False
         self._wrist_cam_id = None
+        self._overhead_cam_id = None
 
     def init_all(self):
         """Initialize GLFW, OpenXR, and MuJoCo rendering."""
@@ -484,10 +486,10 @@ class VRRenderer:
         if len(corners) < 3:
             return
 
-        # Outline color: light red, semi-transparent
-        outline_rgba = np.array([1.0, 0.2, 0.2, 0.9], dtype=np.float32)
-        fill_rgba = np.array([1.0, 0.15, 0.15, 0.2], dtype=np.float32)
-        line_w = 0.003
+        # Outline color: red, more visible
+        outline_rgba = np.array([1.0, 0.15, 0.15, 1.0], dtype=np.float32)
+        fill_rgba = np.array([1.0, 0.1, 0.1, 0.35], dtype=np.float32)
+        line_w = 0.005
 
         # Draw outline
         n = len(corners)
@@ -510,6 +512,83 @@ class VRRenderer:
                 return
             t = j / n_fill
             # Interpolate along left edge (corner 0->3) and right edge (corner 1->2)
+            left = corners[0] * (1 - t) + corners[min(3, n - 1)] * t
+            right = corners[1] * (1 - t) + corners[min(2, n - 1)] * t
+            geom = self.mj_scene.geoms[self.mj_scene.ngeom]
+            mujoco.mjv_connector(
+                geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w * 0.5,
+                left, right,
+            )
+            geom.rgba[:] = fill_rgba
+            self.mj_scene.ngeom += 1
+
+    def _add_overhead_cam_fov_overlay(self):
+        """Add overhead camera FOV projection as a blue overlay on the table."""
+        if self._overhead_cam_id is None:
+            self._overhead_cam_id = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_CAMERA, "overhead_cam"
+            )
+        cam_id = self._overhead_cam_id
+        if cam_id < 0:
+            return
+
+        cam_pos = self.data.cam_xpos[cam_id].copy()
+        cam_mat = self.data.cam_xmat[cam_id].reshape(3, 3)
+
+        # Camera FOV parameters
+        fovy_rad = np.radians(self.model.cam_fovy[cam_id])
+        aspect = 640.0 / 480.0
+        half_fovy = fovy_rad / 2
+        half_fovx = np.arctan(np.tan(half_fovy) * aspect)
+
+        # Corner rays in camera frame (X=right, Y=up, -Z=forward)
+        tx, ty = np.tan(half_fovx), np.tan(half_fovy)
+        rays_cam = [
+            np.array([-tx, -ty, -1.0]),  # bottom-left
+            np.array([ tx, -ty, -1.0]),  # bottom-right
+            np.array([ tx,  ty, -1.0]),  # top-right
+            np.array([-tx,  ty, -1.0]),  # top-left
+        ]
+
+        # Intersect rays with table plane (z = table_z)
+        table_z = 0.015
+        corners = []
+        for ray_cam in rays_cam:
+            ray_world = cam_mat @ ray_cam
+            if abs(ray_world[2]) < 1e-6:
+                continue
+            t = (table_z - cam_pos[2]) / ray_world[2]
+            if t > 0:
+                corners.append(cam_pos + t * ray_world)
+
+        if len(corners) < 3:
+            return
+
+        # Outline color: blue
+        outline_rgba = np.array([0.2, 0.4, 1.0, 1.0], dtype=np.float32)
+        fill_rgba = np.array([0.15, 0.3, 1.0, 0.15], dtype=np.float32)
+        line_w = 0.005
+
+        # Draw outline
+        n = len(corners)
+        for i in range(n):
+            if self.mj_scene.ngeom >= self.mj_scene.maxgeom:
+                return
+            geom = self.mj_scene.geoms[self.mj_scene.ngeom]
+            a, b = corners[i], corners[(i + 1) % n]
+            mujoco.mjv_connector(
+                geom, mujoco.mjtGeom.mjGEOM_CAPSULE, line_w,
+                a, b,
+            )
+            geom.rgba[:] = outline_rgba
+            self.mj_scene.ngeom += 1
+
+        # Fill with parallel lines across the projection
+        n_fill = 16
+        for j in range(1, n_fill):
+            if self.mj_scene.ngeom >= self.mj_scene.maxgeom:
+                return
+            t = j / n_fill
             left = corners[0] * (1 - t) + corners[min(3, n - 1)] * t
             right = corners[1] * (1 - t) + corners[min(2, n - 1)] * t
             geom = self.mj_scene.geoms[self.mj_scene.ngeom]
@@ -563,9 +642,11 @@ class VRRenderer:
 
         mujoco.mjv_updateScene(self.model, self.data, self.mj_option, None, cam, mujoco.mjtCatBit.mjCAT_ALL, self.mj_scene)
 
-        # Add wrist camera FOV overlay (VR-only, not in sim observations)
+        # Add camera FOV overlays (VR-only, not in sim observations)
         if self.show_wrist_cam_fov:
             self._add_wrist_cam_fov_overlay()
+        if self.show_overhead_cam_fov:
+            self._add_overhead_cam_fov_overlay()
 
         # Override camera
         self.mj_scene.camera[0].pos[:] = eye_pos_mj

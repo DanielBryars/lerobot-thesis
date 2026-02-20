@@ -803,7 +803,7 @@ python scripts/experiments/eval_spatial_generalization.py \
 | `act_dark_ground_220ep` | 220ep | Dark | Dark | **50%** | **14.1%** |
 | `act_dark_ground_220ep` | 220ep | Dark | **Checker** | **0%** | - |
 | `act_2pos_220ep` | 220ep | Checker | **Dark** | **40%** | - |
-| `act_60ep_subset` | 60ep | Checker | Checker | _(pending)_ | _(pending)_ |
+| `act_60ep_subset` | 60ep | Checker | Checker | **46%** | **8.6%** |
 | `act_440ep_both_grounds` | 440ep | Both | Checker | _(pending)_ | _(pending)_ |
 | `act_440ep_both_grounds` | 440ep | Both | Dark | _(pending)_ | _(pending)_ |
 
